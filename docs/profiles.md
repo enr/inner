@@ -79,10 +79,24 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `ssh-keys` | `~/.ssh/` directory (read-only) |
 | `git-credentials` | Git credential store / helpers |
 | `gpg-keys` | GPG keyring |
-| `docker-socket` | `/var/run/docker.sock` |
-| `podman-socket` | `/run/user/$UID/podman/podman.sock` |
+| `docker-socket` | `/var/run/docker.sock` (Docker daemon socket) |
+| `podman-socket` | `/run/user/$UID/podman/podman.sock` (Podman rootless socket, per-user path) |
 | `nested-user-ns` | Unprivileged user namespaces inside sandbox (required for Podman) |
 | `netrc` | `~/.netrc` |
+
+The two socket entries are distinct because they point to different paths: `docker-socket` is the system-level Docker daemon socket, while `podman-socket` is the per-user Podman rootless socket.
+
+> **Note on `DOCKER_HOST`:** unlocking `podman-socket` only bind-mounts the socket file into the sandbox. The `DOCKER_HOST` variable is **not** set automatically — you must add it explicitly in `[env]` so that Docker-compatible clients find the socket:
+>
+> ```toml
+> [sandbox]
+> allow = ["podman-socket", "nested-user-ns"]
+>
+> [env]
+> set = { "DOCKER_HOST" = "unix:///run/user/${UID}/podman/podman.sock" }
+> ```
+>
+> `inner` expands `${UID}` to the current user ID at runtime. The built-in `claude-containers` profile already includes this setup.
 
 ```toml
 [sandbox]
