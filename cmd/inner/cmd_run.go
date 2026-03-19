@@ -50,12 +50,20 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 
-	// 3. Apply CLI overrides.
+	// 3. Default workdir to cwd so the user lands in a writable directory.
+	// applyOverrides is a pure function (no I/O), so we resolve the cwd here.
+	if flags.workdir == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			flags.workdir = cwd
+		}
+	}
+
+	// 4. Apply CLI overrides.
 	if err := applyOverrides(rc, flags, extraArgs); err != nil {
 		return err
 	}
 
-	// 4. Resolve empty entrypoint cmd to $SHELL (same logic as the isolator).
+	// 5. Resolve empty entrypoint cmd to $SHELL (same logic as the isolator).
 	//    Must happen before prepareInteractiveShell so it can detect the binary.
 	if rc.Entrypoint.Cmd == "" {
 		rc.Entrypoint.Cmd = os.Getenv("SHELL")
