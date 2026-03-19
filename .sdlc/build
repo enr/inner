@@ -14,9 +14,11 @@ BIN_DIR="bin"
 MODULE="github.com/enr/inner"
 VERSION_PKG="${MODULE}/internal/version"
 
-# Version: use APP_VERSION env var if set, otherwise derive from git tags.
+# Version: use APP_VERSION env var if set, otherwise read VERSION file, otherwise derive from git tags.
 if [ -n "${APP_VERSION:-}" ]; then
     app_version="${APP_VERSION}"
+elif [ -f "${prj_home}/VERSION" ]; then
+    app_version="$(cat "${prj_home}/VERSION" | tr -d '[:space:]')"
 else
     app_version="$(git describe --tags --always --dirty 2>/dev/null || echo "dev")"
 fi
