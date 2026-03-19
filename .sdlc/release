@@ -75,8 +75,8 @@ function cleanup() {
 trap cleanup EXIT
 trap cleanup SIGINT
 
-git commit -a -m "release ${release_version}"
+# git commit -a -m "release ${release_version}"
 git tag "${tag_name}"
-git commit -a -m "${snapshot_commit_prefix} back to snapshot"
-git push
+# git commit -a -m "${snapshot_commit_prefix} back to snapshot"
+# git push
 git push --tags
