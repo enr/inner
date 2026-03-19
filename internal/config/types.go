@@ -15,13 +15,18 @@ type Profile struct {
 	Verify        VerifyConfig          `toml:"verify"`
 }
 
+// ValidAllowKeys is the exhaustive set of keys accepted in [sandbox].allow.
+var ValidAllowKeys = []string{
+	"ssh-keys", "git-credentials", "gpg-keys",
+	"docker-socket", "podman-socket", "nested-user-ns", "netrc",
+}
+
 // SandboxConfig controls high-level sandbox capabilities.
 type SandboxConfig struct {
 	Network   bool     `toml:"network"`
 	Clipboard bool     `toml:"clipboard"`
 	// Allow lists sensitive resources that are normally hidden but explicitly
-	// permitted in this sandbox. Valid keys: "ssh-keys", "git-credentials",
-	// "gpg-keys", "docker-socket", "podman-socket", "nested-user-ns", "netrc".
+	// permitted in this sandbox. Valid keys are listed in ValidAllowKeys.
 	Allow []string `toml:"allow"`
 }
 

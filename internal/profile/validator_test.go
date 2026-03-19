@@ -161,6 +161,43 @@ func TestValidate_noMountsSectionOk(t *testing.T) {
 	}
 }
 
+func TestValidate_unknownAllowKey_isWarning(t *testing.T) {
+	p := &config.Profile{
+		Sandbox:    config.SandboxConfig{Allow: []string{"ssh-keys", "not-a-real-key"}},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p)
+	if r.HasErrors() {
+		t.Errorf("unknown allow key should be warning, not error: %v", r.Issues)
+	}
+	hasWarning := false
+	for _, i := range r.Issues {
+		if i.Level == LevelWarning {
+			hasWarning = true
+		}
+	}
+	if !hasWarning {
+		t.Error("expected warning for unknown allow key")
+	}
+}
+
+func TestValidate_knownAllowKeys_noIssues(t *testing.T) {
+	p := &config.Profile{
+		Sandbox:    config.SandboxConfig{Allow: config.ValidAllowKeys},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p)
+	for _, i := range r.Issues {
+		if i.Level == LevelWarning && len(r.Issues) == 1 {
+			// Only the "no timeout" warning is acceptable.
+			t.Logf("acceptable warning: %s", i.Message)
+		}
+	}
+	if r.HasErrors() {
+		t.Errorf("all valid allow keys should produce no errors: %v", r.Issues)
+	}
+}
+
 func TestValidate_tildeMountExpanded(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/enr/inner/internal/config"
@@ -87,10 +88,19 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return fmt.Errorf("preparing interactive shell: %w", err)
 	}
 
-	// 7. Validate — print warnings, never fatal.
+	// 7. Validate — print all issues; block on unknown allow keys or errors.
 	if p, err := a.loader.LoadProfile(profileName); err == nil {
-		for _, issue := range profile.Validate(p).Issues {
+		result := profile.Validate(p)
+		for _, issue := range result.Issues {
 			fmt.Fprintf(w, "profile %s\n", issue)
+		}
+		if result.HasErrors() {
+			return fmt.Errorf("profile %q has errors, aborting", profileName)
+		}
+		for _, key := range p.Sandbox.Allow {
+			if !slices.Contains(config.ValidAllowKeys, key) {
+				return fmt.Errorf("profile %q: unknown allow key %q — fix the profile or remove the key", profileName, key)
+			}
 		}
 	}
 

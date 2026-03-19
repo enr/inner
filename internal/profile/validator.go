@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 
 	"github.com/enr/inner/internal/config"
 )
@@ -69,7 +70,14 @@ func Validate(p *config.Profile) Result {
 		}
 	}
 
-	// 2. Verify entrypoint.cmd is reachable in PATH (warning only).
+	// 2. Warn on unknown sandbox.allow keys.
+	for _, key := range p.Sandbox.Allow {
+		if !slices.Contains(config.ValidAllowKeys, key) {
+			r.addWarning(fmt.Sprintf("unknown allow key %q (valid keys: %v)", key, config.ValidAllowKeys))
+		}
+	}
+
+	// 3. Verify entrypoint.cmd is reachable in PATH (warning only).
 	if p.Entrypoint.Cmd != "" {
 		if _, err := exec.LookPath(p.Entrypoint.Cmd); err != nil {
 			r.addWarning(fmt.Sprintf("entrypoint command %q not found in PATH", p.Entrypoint.Cmd))

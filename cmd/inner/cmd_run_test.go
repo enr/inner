@@ -275,3 +275,21 @@ func TestRunSandbox_missingProfile(t *testing.T) {
 		t.Fatal("expected error for missing profile")
 	}
 }
+
+func TestRunSandbox_unknownAllowKey_blocked(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "badallow", `
+[entrypoint]
+interactive = true
+[sandbox]
+allow = ["ssh-keys", "not-a-valid-key"]
+`)
+	var buf bytes.Buffer
+	err := app.runSandbox(&buf, runCLIFlags{profile: "badallow", dryRun: true}, nil)
+	if err == nil {
+		t.Fatal("expected error for unknown allow key, got nil")
+	}
+	if !strings.Contains(err.Error(), "not-a-valid-key") {
+		t.Errorf("error should mention the bad key, got: %v", err)
+	}
+}
