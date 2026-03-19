@@ -28,6 +28,9 @@ type RunConfig struct {
 	Workdir string
 	// VerifyCustomChecks holds user-defined checks declared in [verify.custom].
 	VerifyCustomChecks []CustomCheck
+	// Experimental is true when the profile is marked experimental = true.
+	// inner run refuses to start when this is set.
+	Experimental bool
 }
 
 // Mount describes a single filesystem bind mount.

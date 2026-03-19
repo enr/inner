@@ -5,6 +5,9 @@ type Profile struct {
 	SchemaVersion string                `toml:"schema_version"`
 	Name          string                `toml:"name"`
 	Description   string                `toml:"description"`
+	// Experimental marks a profile as not yet ready for use.
+	// inner run refuses to start with an explicit error message.
+	Experimental  bool                  `toml:"experimental"`
 	Sandbox       SandboxConfig         `toml:"sandbox"`
 	Mounts        map[string]MountEntry `toml:"mounts"`
 	Env           EnvConfig             `toml:"env"`

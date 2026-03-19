@@ -51,6 +51,9 @@ func (a *App) profileList(w io.Writer) error {
 		desc := ""
 		if p, err := a.loader.LoadProfile(name); err == nil {
 			desc = p.Description
+			if p.Experimental {
+				desc = "[experimental] " + desc
+			}
 		}
 		fmt.Fprintf(tw, "%s\t%s\n", name, desc)
 	}

@@ -116,6 +116,7 @@ func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
 		Noop:               p.Noop,
 		Allow:              p.Sandbox.Allow,
 		VerifyCustomChecks: p.Verify.Custom.Checks,
+		Experimental:       p.Experimental,
 	}
 
 	// Mounts: expand paths, default mode to "ro".

@@ -1,6 +1,7 @@
 schema_version = "1"
-name = "claude-interactive"
-description = "Interactive Claude Code agent (network enabled)"
+name          = "claude-interactive"
+description   = "Interactive Claude Code agent (network enabled)"
+experimental  = true  # hangs on PTY allocation — not yet ready for use
 
 [sandbox]
 network   = true
