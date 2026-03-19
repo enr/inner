@@ -116,7 +116,7 @@ func (r Report) Render(w io.Writer, suggest bool) {
 		}
 
 		if c.AllowOverride {
-			fmt.Fprintf(w, "%s  %-8s  %s: esplicitamente permessa nel profilo\n", symbol, c.Severity, c.Name)
+			fmt.Fprintf(w, "%s  %-8s  %s: explicitly allowed in profile\n", symbol, c.Severity, c.Name)
 		} else {
 			fmt.Fprintf(w, "%s  %-8s  %s\n", symbol, c.Severity, c.Name)
 		}
@@ -142,15 +142,15 @@ func (r Report) Render(w io.Writer, suggest bool) {
 
 	total := len(r.Results)
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "Risultato: %d/%d check passati\n", passed, total)
+	fmt.Fprintf(w, "Result: %d/%d checks passed\n", passed, total)
 	fmt.Fprintf(w, "CRITICAL: %d   HIGH: %d   MEDIUM: %d\n",
 		counts[SeverityCritical], counts[SeverityHigh], counts[SeverityMedium])
 	fmt.Fprintln(w)
 
 	if r.Conformant() {
-		fmt.Fprintln(w, "[ok]  sandbox conforme")
+		fmt.Fprintln(w, "[ok]  sandbox conformant")
 	} else {
-		fmt.Fprintln(w, "[??]  sandbox non conforme")
+		fmt.Fprintln(w, "[??]  sandbox non-conformant")
 	}
 }
 
@@ -241,16 +241,16 @@ func (c *Checker) Run() Report {
 // ── Built-in checks ───────────────────────────────────────────────────────────
 
 func (c *Checker) checkNoRoot() CheckResult {
-	r := CheckResult{ID: "no-root", Name: "user non è root", Severity: SeverityCritical}
+	r := CheckResult{ID: "no-root", Name: "user is not root", Severity: SeverityCritical}
 	r.Passed = os.Getuid() != 0
 	if !r.Passed {
-		r.Detail = "processo in esecuzione come root (uid 0)"
+		r.Detail = "process running as root (uid 0)"
 	}
 	return r
 }
 
 func (c *Checker) checkUsrReadonly() CheckResult {
-	r := CheckResult{ID: "usr-readonly", Name: "/usr è read-only", Severity: SeverityCritical}
+	r := CheckResult{ID: "usr-readonly", Name: "/usr is read-only", Severity: SeverityCritical}
 	probe, err := os.CreateTemp(c.usrDir(), ".inner-probe-*")
 	if err != nil {
 		r.Passed = true // can't write → read-only, as expected
@@ -258,7 +258,7 @@ func (c *Checker) checkUsrReadonly() CheckResult {
 		probe.Close()
 		os.Remove(probe.Name()) //nolint:errcheck
 		r.Passed = false
-		r.Detail = c.usrDir() + " è scrivibile"
+		r.Detail = c.usrDir() + " is writable"
 	}
 	return r
 }
@@ -266,7 +266,7 @@ func (c *Checker) checkUsrReadonly() CheckResult {
 func (c *Checker) checkGitCredentials() CheckResult {
 	r := CheckResult{
 		ID:       "git-credentials",
-		Name:     "git credentials non esposte",
+		Name:     "git credentials not exposed",
 		Severity: SeverityCritical,
 		Suggest:  suggestAllow("git-credentials"),
 	}
@@ -274,7 +274,7 @@ func (c *Checker) checkGitCredentials() CheckResult {
 	info, err := os.Stat(path)
 	if err == nil && info.Size() > 0 {
 		r.Passed = false
-		r.Detail = "~/.git-credentials trovata"
+		r.Detail = "~/.git-credentials found"
 		return r
 	}
 	r.Passed = true
@@ -284,7 +284,7 @@ func (c *Checker) checkGitCredentials() CheckResult {
 func (c *Checker) checkSSHKeys() CheckResult {
 	r := CheckResult{
 		ID:       "ssh-keys",
-		Name:     "~/.ssh non accessibile",
+		Name:     "~/.ssh not accessible",
 		Severity: SeverityHigh,
 		Suggest:  suggestAllow("ssh-keys"),
 	}
@@ -297,7 +297,7 @@ func (c *Checker) checkSSHKeys() CheckResult {
 	for _, e := range entries {
 		if isPrivateKeyFile(e.Name()) {
 			r.Passed = false
-			r.Detail = "~/.ssh/" + e.Name() + " trovata"
+			r.Detail = "~/.ssh/" + e.Name() + " found"
 			return r
 		}
 	}
@@ -318,7 +318,7 @@ func isPrivateKeyFile(name string) bool {
 func (c *Checker) checkGPGKeys() CheckResult {
 	r := CheckResult{
 		ID:       "gpg-keys",
-		Name:     "~/.gnupg non accessibile",
+		Name:     "~/.gnupg not accessible",
 		Severity: SeverityHigh,
 		Suggest:  suggestAllow("gpg-keys"),
 	}
@@ -329,12 +329,12 @@ func (c *Checker) checkGPGKeys() CheckResult {
 		return r
 	}
 	r.Passed = false
-	r.Detail = fmt.Sprintf("~/.gnupg non vuota (%d elementi)", len(entries))
+	r.Detail = fmt.Sprintf("~/.gnupg not empty (%d entries)", len(entries))
 	return r
 }
 
 func (c *Checker) checkEnvSecrets() CheckResult {
-	r := CheckResult{ID: "env-secrets", Name: "nessun secret nelle env vars", Severity: SeverityHigh}
+	r := CheckResult{ID: "env-secrets", Name: "no secrets in env vars", Severity: SeverityHigh}
 	patterns := []string{"PASSWORD", "SECRET", "TOKEN", "CREDENTIAL", "PRIVATE_KEY"}
 	var found []string
 	for _, env := range os.Environ() {
@@ -349,7 +349,7 @@ func (c *Checker) checkEnvSecrets() CheckResult {
 	}
 	if len(found) > 0 {
 		r.Passed = false
-		r.Detail = "env vars con nome sensibile: " + strings.Join(found, ", ")
+		r.Detail = "env vars with sensitive names: " + strings.Join(found, ", ")
 		return r
 	}
 	r.Passed = true
@@ -359,13 +359,13 @@ func (c *Checker) checkEnvSecrets() CheckResult {
 func (c *Checker) checkDockerSocket() CheckResult {
 	r := CheckResult{
 		ID:       "docker-socket",
-		Name:     "docker socket non accessibile",
+		Name:     "docker socket not accessible",
 		Severity: SeverityMedium,
 		Suggest:  suggestAllow("docker-socket"),
 	}
 	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
 		r.Passed = false
-		r.Detail = "/var/run/docker.sock accessibile"
+		r.Detail = "/var/run/docker.sock accessible"
 		return r
 	}
 	r.Passed = true
@@ -375,7 +375,7 @@ func (c *Checker) checkDockerSocket() CheckResult {
 func (c *Checker) checkNetrc() CheckResult {
 	r := CheckResult{
 		ID:       "netrc",
-		Name:     "~/.netrc non accessibile",
+		Name:     "~/.netrc not accessible",
 		Severity: SeverityMedium,
 		Suggest:  suggestAllow("netrc"),
 	}
@@ -383,7 +383,7 @@ func (c *Checker) checkNetrc() CheckResult {
 	info, err := os.Stat(path)
 	if err == nil && info.Size() > 0 {
 		r.Passed = false
-		r.Detail = "~/.netrc trovata"
+		r.Detail = "~/.netrc found"
 		return r
 	}
 	r.Passed = true
@@ -391,16 +391,16 @@ func (c *Checker) checkNetrc() CheckResult {
 }
 
 func (c *Checker) checkShimsActive() CheckResult {
-	r := CheckResult{ID: "shims-active", Name: "shim attivi nel PATH", Severity: SeverityMedium}
+	r := CheckResult{ID: "shims-active", Name: "shims active in PATH", Severity: SeverityMedium}
 	shimPath := c.shimMountPath()
 	if !strings.HasPrefix(os.Getenv("PATH"), shimPath) {
 		r.Passed = false
-		r.Detail = "PATH non inizia con " + shimPath
+		r.Detail = "PATH does not start with " + shimPath
 		return r
 	}
 	if _, err := os.Stat(shimPath); err != nil {
 		r.Passed = false
-		r.Detail = shimPath + " non trovata nel filesystem"
+		r.Detail = shimPath + " not found in filesystem"
 		return r
 	}
 	r.Passed = true
@@ -408,10 +408,10 @@ func (c *Checker) checkShimsActive() CheckResult {
 }
 
 func (c *Checker) checkNetworkPolicy() CheckResult {
-	r := CheckResult{ID: "network-policy", Name: "rete ristretta", Severity: SeverityMedium}
+	r := CheckResult{ID: "network-policy", Name: "network restricted", Severity: SeverityMedium}
 	if c.NetworkEnabled {
 		r.Passed = true
-		r.Detail = "network=true nel profilo"
+		r.Detail = "network=true in profile"
 		return r
 	}
 	conn, err := c.dial("tcp", "8.8.8.8:53", 2*time.Second)
@@ -421,7 +421,7 @@ func (c *Checker) checkNetworkPolicy() CheckResult {
 	}
 	conn.Close()
 	r.Passed = false
-	r.Detail = "connessione TCP a 8.8.8.8:53 riuscita"
+	r.Detail = "TCP connection to 8.8.8.8:53 succeeded"
 	return r
 }
 
@@ -436,7 +436,7 @@ func (c *Checker) runCustomCheck(cc config.CustomCheck) CheckResult {
 	cmd := exec.Command("sh", "-c", cc.Cmd)
 	r.Passed = cmd.Run() == nil
 	if !r.Passed {
-		r.Detail = "comando uscito con errore"
+		r.Detail = "command exited with error"
 	}
 	return r
 }
@@ -445,7 +445,7 @@ func (c *Checker) runCustomCheck(cc config.CustomCheck) CheckResult {
 
 func suggestAllow(key string) string {
 	return fmt.Sprintf(
-		"per nasconderla (raccomandato):\n  non aggiungere nulla — è il comportamento di default\n\nper permetterla esplicitamente se l'agente ne ha bisogno:\n  [sandbox]\n  allow = [\"%s\"]",
+		"to hide it (recommended):\n  add nothing — this is the default behaviour\n\nto explicitly allow it if the agent needs it:\n  [sandbox]\n  allow = [\"%s\"]",
 		key,
 	)
 }

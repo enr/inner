@@ -415,8 +415,8 @@ func TestReport_conformant_false_on_failure(t *testing.T) {
 
 func TestReport_render_includesSummary(t *testing.T) {
 	r := Report{Results: []CheckResult{
-		{ID: "no-root", Name: "user non è root", Passed: true, Severity: SeverityCritical},
-		{ID: "ssh-keys", Name: "~/.ssh non accessibile", Passed: false, Severity: SeverityHigh, Detail: "~/.ssh/id_ed25519 trovata"},
+		{ID: "no-root", Name: "user is not root", Passed: true, Severity: SeverityCritical},
+		{ID: "ssh-keys", Name: "~/.ssh not accessible", Passed: false, Severity: SeverityHigh, Detail: "~/.ssh/id_ed25519 found"},
 	}}
 	var buf bytes.Buffer
 	r.Render(&buf, false)
@@ -433,10 +433,10 @@ func TestReport_render_suggest_includesSnippet(t *testing.T) {
 	r := Report{Results: []CheckResult{
 		{
 			ID:       "ssh-keys",
-			Name:     "~/.ssh non accessibile",
+			Name:     "~/.ssh not accessible",
 			Passed:   false,
 			Severity: SeverityHigh,
-			Detail:   "~/.ssh/id_ed25519 trovata",
+			Detail:   "~/.ssh/id_ed25519 found",
 			Suggest:  suggestAllow("ssh-keys"),
 		},
 	}}
@@ -446,11 +446,12 @@ func TestReport_render_suggest_includesSnippet(t *testing.T) {
 	if !strings.Contains(out, `allow = ["ssh-keys"]`) {
 		t.Errorf("expected TOML snippet in suggest output, got: %s", out)
 	}
+
 }
 
 func TestReport_render_allowOverride_showsInfo(t *testing.T) {
 	r := Report{Results: []CheckResult{
-		{ID: "ssh-keys", Name: "~/.ssh non accessibile", Passed: true,
+		{ID: "ssh-keys", Name: "~/.ssh not accessible", Passed: true,
 			Severity: SeverityInfo, AllowOverride: true},
 	}}
 	var buf bytes.Buffer
@@ -459,7 +460,7 @@ func TestReport_render_allowOverride_showsInfo(t *testing.T) {
 	if !strings.Contains(out, "[--]") {
 		t.Errorf("expected [--] symbol for INFO override, got: %s", out)
 	}
-	if !strings.Contains(out, "esplicitamente permessa") {
-		t.Errorf("expected 'esplicitamente permessa' in output, got: %s", out)
+	if !strings.Contains(out, "explicitly allowed") {
+		t.Errorf("expected 'explicitly allowed' in output, got: %s", out)
 	}
 }
