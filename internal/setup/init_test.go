@@ -25,7 +25,7 @@ func TestInit_installsDefaultProfiles(t *testing.T) {
 	if err := Init(dir); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	for _, name := range []string{"default", "claude-interactive", "claude-one-shot", "shell", "claude-containers"} {
+	for _, name := range []string{"default", "claude-interactive", "claude-one-shot", "shell", "claude-containers", "gemini-interactive", "gemini-one-shot", "shell-containers"} {
 		p := filepath.Join(dir, "profiles", name+".toml")
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("expected profile %s.toml to be installed: %v", name, err)

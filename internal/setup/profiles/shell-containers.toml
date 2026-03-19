@@ -1,0 +1,39 @@
+schema_version = "1"
+name        = "shell-containers"
+description = "Interactive bash shell with Podman rootless container support"
+
+[sandbox]
+network = true
+allow   = ["nested-user-ns", "podman-socket"]
+
+# ${UID} is expanded at load time to the numeric UID of the current user.
+# Requires `podman system service` running on the host before `inner run`.
+[mounts]
+"/run/user/${UID}/podman/podman.sock" = { dest = "/run/user/${UID}/podman/podman.sock", mode = "rw" }
+"~/.local/share/containers"           = { dest = "~/.local/share/containers", mode = "rw" }
+"~/.config/containers"                = { dest = "~/.config/containers",      mode = "rw" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+set      = { "DOCKER_HOST" = "unix:///run/user/${UID}/podman/podman.sock" }
+
+[entrypoint]
+cmd         = "/bin/bash"
+args        = []
+interactive = true
+
+[output]
+summary         = false
+log             = "~/.inner/logs/"
+timeout_seconds = 0
+
+[noop]
+block   = ["apt-get", "apt", "yum", "dnf", "brew"]
+rewrite = { "docker" = "podman", "docker-compose" = "podman-compose" }
+
+[verify.custom]
+checks = [
+  { name = "podman socket raggiungibile", cmd = "test -S /run/user/${UID}/podman/podman.sock", severity = "critical" },
+  { name = "podman API risponde",         cmd = "curl -sf --unix-socket /run/user/${UID}/podman/podman.sock http://localhost/version", severity = "critical" },
+]

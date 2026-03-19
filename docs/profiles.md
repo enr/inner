@@ -17,6 +17,8 @@ A **profile** is a TOML file that fully describes a sandbox environment. Profile
 | `claude-one-shot` | Claude Code non-interactive, `--dangerously-skip-permissions` |
 | `claude-containers` | Claude Code with Podman rootless container support |
 | `gemini-interactive` | Gemini CLI interactive session, network enabled |
+| `gemini-one-shot` | Gemini CLI non-interactive, `--yolo` |
+| `shell-containers` | Interactive bash shell with Podman rootless container support |
 
 Inspect any built-in profile:
 
