@@ -29,7 +29,7 @@ inner run [flags] [-- extra-args]
 | `--workdir` | `-w` | path | — | Mount PATH read-write inside the sandbox (at the same path); also sets the initial working directory |
 | `--network` | | bool | profile default | Enable network access |
 | `--no-network` | | bool | — | Disable network access |
-| `--interactive` | `-i` | bool | profile default | Force interactive mode (allocate PTY) |
+| `--interactive` | `-i` | bool | profile default | Force interactive mode (connect stdin/stdout directly to the sandbox) |
 | `--no-interactive` | | bool | — | Force non-interactive mode |
 | `--mount` | `-m` | string | — | Additional mount in `SRC:DEST[:MODE]` format (mode: `ro`\|`rw`). Repeatable. |
 | `--env` | `-e` | string | — | Set an environment variable as `KEY=VAL`. Repeatable. |
@@ -304,17 +304,17 @@ The `~/.inner` directory itself is never deleted — only its contents are archi
 Example output:
 
 ```
-backup salvato in: /home/alice/.inner/backups/20260319-142301
-profile claude-containers: installato
-profile claude-interactive: installato
-profile claude-one-shot: installato
-profile default: installato
-profile gemini-interactive: installato
-profile shell: installato
-config: creata
+backup saved to: /home/alice/.inner/backups/20260319-142301
+profile claude-containers: installed
+profile claude-interactive: installed
+profile claude-one-shot: installed
+profile default: installed
+profile gemini-interactive: installed
+profile shell: installed
+config: created
 
-reset completato.
-per annullare: mv /home/alice/.inner/backups/20260319-142301/* /home/alice/.inner/
+reset complete.
+to undo: mv /home/alice/.inner/backups/20260319-142301/* /home/alice/.inner/
 ```
 
 ### Undoing a reset
@@ -376,10 +376,12 @@ Checks performed:
 
 - `bwrap` binary found and version reported
 - Unprivileged user namespaces supported
-- `~/.inner/profiles/` directory exists
+- `~/.inner/profiles/` directory exists and each profile is validated (unknown `allow` keys, missing mounts, etc.)
 - `~/.inner/logs/` directory exists
 - `ANTHROPIC_API_KEY` environment variable set
 - `claude` binary found on `$PATH`
+- `GEMINI_API_KEY` environment variable set
+- `gemini` binary found on `$PATH`
 - Display server available (Wayland or X11, for clipboard forwarding)
 
 ---
