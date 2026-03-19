@@ -20,17 +20,17 @@ func (a *App) reset_(w io.Writer, force bool) error {
 
 	// If ~/.inner does not exist at all, just init.
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		fmt.Fprintln(w, "~/.inner non esiste, eseguo init...")
+		fmt.Fprintln(w, "~/.inner does not exist, running init...")
 		return a.init_(w)
 	}
 
 	if !force {
-		fmt.Fprintf(w, "questo comando archivia il contenuto di %s e ricrea la configurazione di default.\n", dir)
-		fmt.Fprint(w, "continuare? [s/N] ")
+		fmt.Fprintf(w, "this command archives the contents of %s and recreates the default configuration.\n", dir)
+		fmt.Fprint(w, "continue? [y/N] ")
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')
-		if strings.ToLower(strings.TrimSpace(answer)) != "s" {
-			fmt.Fprintln(w, "annullato.")
+		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+			fmt.Fprintln(w, "aborted.")
 			return nil
 		}
 	}
@@ -38,7 +38,7 @@ func (a *App) reset_(w io.Writer, force bool) error {
 	// Collect entries to back up (everything except backups/ itself).
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("leggendo %s: %w", dir, err)
+		return fmt.Errorf("reading %s: %w", dir, err)
 	}
 
 	var toMove []string
@@ -53,7 +53,7 @@ func (a *App) reset_(w io.Writer, force bool) error {
 	timestamp := time.Now().Format("20060102-150405")
 	backupDir := filepath.Join(dir, "backups", timestamp)
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
-		return fmt.Errorf("creando backup dir: %w", err)
+		return fmt.Errorf("creating backup dir: %w", err)
 	}
 
 	// Move each entry into the backup.
@@ -61,7 +61,7 @@ func (a *App) reset_(w io.Writer, force bool) error {
 		src := filepath.Join(dir, name)
 		dst := filepath.Join(backupDir, name)
 		if err := os.Rename(src, dst); err != nil {
-			return fmt.Errorf("spostando %s: %w", name, err)
+			return fmt.Errorf("moving %s: %w", name, err)
 		}
 	}
 
@@ -76,16 +76,16 @@ func (a *App) reset_(w io.Writer, force bool) error {
 	}
 
 	for _, name := range r.ProfilesInstalled {
-		fmt.Fprintf(w, "profile %s: installato\n", name)
+		fmt.Fprintf(w, "profile %s: installed\n", name)
 	}
 	if r.ConfigCreated {
-		fmt.Fprintln(w, "config: creata")
+		fmt.Fprintln(w, "config: created")
 	}
 
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "reset completato.")
+	fmt.Fprintln(w, "reset complete.")
 	if len(toMove) > 0 {
-		fmt.Fprintf(w, "per annullare: mv %s/* %s/\n", backupDir, dir)
+		fmt.Fprintf(w, "to undo: mv %s/* %s/\n", backupDir, dir)
 	}
 	return nil
 }
@@ -95,17 +95,17 @@ func (a *App) newResetCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "reset",
-		Short: "Archivia ~/.inner e ripristina la configurazione di default",
-		Long: `Sposta il contenuto di ~/.inner in ~/.inner/backups/<datetime>/ e
-ricrea profili e configurazione di default tramite init.
+		Short: "Archive ~/.inner and restore the default configuration",
+		Long: `Moves the contents of ~/.inner into ~/.inner/backups/<datetime>/ and
+recreates default profiles and configuration via init.
 
-Utile per aggiornare i profili built-in dopo un upgrade o per ripartire
-da zero senza perdere la storia (il backup resta in ~/.inner/backups/).`,
+Useful for updating built-in profiles after an upgrade or starting fresh
+without losing history (the backup remains in ~/.inner/backups/).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.reset_(cmd.OutOrStdout(), force)
 		},
 	}
 
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Salta la richiesta di conferma")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip the confirmation prompt")
 	return cmd
 }
