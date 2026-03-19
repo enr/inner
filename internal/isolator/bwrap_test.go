@@ -3,6 +3,7 @@ package isolator
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/enr/inner/internal/config"
@@ -12,6 +13,21 @@ import (
 // testIsolator creates a BwrapIsolator without requiring bwrap on the host.
 func testIsolator(info runtime.RuntimeInfo) *BwrapIsolator {
 	return newBwrapIsolatorWithInfo("/fake/bwrap", info)
+}
+
+// testIsolatorAllExist creates a BwrapIsolator where every path is reported as existing.
+// Used to test sensitive resource hiding without needing real filesystem paths.
+func testIsolatorAllExist(info runtime.RuntimeInfo) *BwrapIsolator {
+	iso := newBwrapIsolatorWithInfo("/fake/bwrap", info)
+	iso.statFn = func(string) (os.FileInfo, error) { return nil, nil }
+	return iso
+}
+
+// testIsolatorNoneExist creates a BwrapIsolator where no path exists.
+func testIsolatorNoneExist(info runtime.RuntimeInfo) *BwrapIsolator {
+	iso := newBwrapIsolatorWithInfo("/fake/bwrap", info)
+	iso.statFn = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	return iso
 }
 
 // cmdArgs returns the bwrap arguments (everything after the bwrap binary path).
@@ -338,6 +354,190 @@ func TestBuild_entrypointEmptyCmd_fallbackToSh(t *testing.T) {
 	afterSep := args[sep+1:]
 	if len(afterSep) == 0 || afterSep[0] != "/bin/sh" {
 		t.Errorf("expected /bin/sh as final fallback, got %v", afterSep)
+	}
+}
+
+// ── Sensitive resource hiding ─────────────────────────────────────────────────
+
+func TestBuild_sensitiveHidden_byDefault(t *testing.T) {
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	// Directories must be overlaid with tmpfs.
+	for _, flag := range []string{"--tmpfs"} {
+		if !hasFlag(args, flag) {
+			t.Errorf("expected %s in args when sensitive paths exist, got %v", flag, args)
+		}
+	}
+	// At least one --bind /dev/null must be present (for file/socket resources).
+	if !hasSeq(args, "--bind", "/dev/null") {
+		t.Errorf("expected --bind /dev/null for file/socket resources, got %v", args)
+	}
+}
+
+func TestBuild_sshKeys_hiddenByDefault(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	sshPath := home + "/.ssh"
+	if !hasSeq(args, "--tmpfs", sshPath) {
+		t.Errorf("expected --tmpfs %s to hide ssh-keys, got %v", sshPath, args)
+	}
+}
+
+func TestBuild_sshKeys_allowedNotHidden(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"ssh-keys"},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	sshPath := home + "/.ssh"
+	if hasSeq(args, "--tmpfs", sshPath) {
+		t.Errorf("unexpected --tmpfs %s when ssh-keys is in Allow, got %v", sshPath, args)
+	}
+}
+
+func TestBuild_dockerSocket_hiddenByDefault(t *testing.T) {
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if !hasSeq(args, "--bind", "/dev/null", "/var/run/docker.sock") {
+		t.Errorf("expected /var/run/docker.sock to be shadowed, got %v", args)
+	}
+}
+
+func TestBuild_dockerSocket_allowedNotHidden(t *testing.T) {
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"docker-socket"},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if hasSeq(args, "--bind", "/dev/null", "/var/run/docker.sock") {
+		t.Errorf("unexpected docker socket shadow when docker-socket is in Allow, got %v", args)
+	}
+}
+
+func TestBuild_netrc_hiddenByDefault(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	netrcPath := home + "/.netrc"
+	if !hasSeq(args, "--bind", "/dev/null", netrcPath) {
+		t.Errorf("expected --bind /dev/null %s, got %v", netrcPath, args)
+	}
+}
+
+func TestBuild_sensitiveResources_nonexistentSkipped(t *testing.T) {
+	// When paths don't exist, no hide args should be added.
+	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if hasSeq(args, "--bind", "/dev/null") {
+		t.Errorf("unexpected --bind /dev/null when no sensitive paths exist, got %v", args)
+	}
+	// Count --tmpfs args: only /tmp should be present (base), not sensitive dirs.
+	count := 0
+	for i, a := range args {
+		if a == "--tmpfs" && i+1 < len(args) && args[i+1] != "/tmp" {
+			count++
+		}
+	}
+	if count > 0 {
+		t.Errorf("unexpected --tmpfs for sensitive dirs when paths don't exist, got %v", args)
+	}
+}
+
+func TestBuild_partialAllow(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"ssh-keys"}, // only ssh-keys allowed
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	// ssh-keys: not hidden.
+	if hasSeq(args, "--tmpfs", home+"/.ssh") {
+		t.Errorf("ssh-keys should not be hidden when in Allow, got %v", args)
+	}
+	// gpg-keys: still hidden.
+	if !hasSeq(args, "--tmpfs", home+"/.gnupg") {
+		t.Errorf("gpg-keys should still be hidden when not in Allow, got %v", args)
+	}
+}
+
+// ── Shim dir ──────────────────────────────────────────────────────────────────
+
+func TestBuild_shimDir_mountAndPath(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		ShimDir:    "/tmp/inner-shims-test",
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	if !hasSeq(args, "--ro-bind", "/tmp/inner-shims-test", "/run/inner-shims") {
+		t.Errorf("expected shim dir ro-bind, got %v", args)
+	}
+	// PATH must be set and start with /run/inner-shims.
+	idx := slices.Index(args, "PATH")
+	if idx == -1 || args[idx-1] != "--setenv" {
+		t.Fatalf("expected --setenv PATH in args %v", args)
+	}
+	pathVal := args[idx+1]
+	if !strings.HasPrefix(pathVal, "/run/inner-shims:") {
+		t.Errorf("PATH %q should start with /run/inner-shims:", pathVal)
+	}
+}
+
+func TestBuild_noShimDir_noPathOverride(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		ShimDir:    "",
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	if hasSeq(args, "--ro-bind", "/run/inner-shims") {
+		t.Errorf("unexpected shim dir bind when ShimDir is empty, got %v", args)
+	}
+	// No explicit PATH override added.
+	idx := slices.Index(args, "PATH")
+	if idx != -1 && args[idx-1] == "--setenv" {
+		t.Errorf("unexpected --setenv PATH when ShimDir is empty, got %v", args)
+	}
+}
+
+func TestBuild_shimDir_pathPreservesProfilePath(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		ShimDir: "/tmp/inner-shims-test",
+		Env: config.EnvConfig{
+			Set: map[string]string{"PATH": "/custom/bin:/usr/bin"},
+		},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	// Find the PATH setenv that comes after the shim dir bind.
+	// There may be multiple --setenv PATH entries; the last one wins in bwrap.
+	// We verify the last one has the custom path appended.
+	lastPathVal := ""
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--setenv" && i+2 < len(args) && args[i+1] == "PATH" {
+			lastPathVal = args[i+2]
+		}
+	}
+	if !strings.HasPrefix(lastPathVal, "/run/inner-shims:") {
+		t.Errorf("PATH should start with /run/inner-shims:, got %q", lastPathVal)
+	}
+	if !strings.Contains(lastPathVal, "/custom/bin") {
+		t.Errorf("PATH should contain original /custom/bin, got %q", lastPathVal)
 	}
 }
 

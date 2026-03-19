@@ -21,6 +21,9 @@ type RunOptions struct {
 	Timeout     int    // seconds; 0 = no timeout
 	LogDir      string // empty = no log file
 	RunID       string // if empty, auto-generated via GenerateRunID()
+	// Cleanups are called in order after the process exits, regardless of exit code.
+	// Errors are collected but do not affect the RunResult.
+	Cleanups []func() error
 }
 
 // RunResult holds the outcome of a completed run.
@@ -79,6 +82,16 @@ func (l *Launcher) Run(cmd *exec.Cmd, opts RunOptions) (RunResult, error) {
 		exitCode, err = l.runInteractive(cmd, opts.Timeout, logFile)
 	} else {
 		exitCode, err = l.runNonInteractive(cmd, opts.Timeout, logFile)
+	}
+
+	var cleanupErrs []error
+	for _, fn := range opts.Cleanups {
+		if e := fn(); e != nil {
+			cleanupErrs = append(cleanupErrs, e)
+		}
+	}
+	if err == nil && len(cleanupErrs) > 0 {
+		err = fmt.Errorf("cleanup errors: %v", cleanupErrs)
 	}
 
 	return RunResult{ExitCode: exitCode, RunID: runID, LogPath: logPath}, err

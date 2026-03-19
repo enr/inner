@@ -98,12 +98,15 @@ func (l *Loader) Build(profileName string) (*RunConfig, error) {
 // applying path expansion.
 func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
 	cfg := &RunConfig{
-		Network:    p.Sandbox.Network,
-		Clipboard:  p.Sandbox.Clipboard,
-		Env:        p.Env,
-		Git:        p.Git,
-		LogSummary: p.Output.Summary,
-		Timeout:    p.Output.TimeoutSeconds,
+		Network:            p.Sandbox.Network,
+		Clipboard:          p.Sandbox.Clipboard,
+		Env:                p.Env,
+		Git:                p.Git,
+		LogSummary:         p.Output.Summary,
+		Timeout:            p.Output.TimeoutSeconds,
+		Noop:               p.Noop,
+		Allow:              p.Sandbox.Allow,
+		VerifyCustomChecks: p.Verify.Custom.Checks,
 	}
 
 	// Mounts: expand paths, default mode to "ro".

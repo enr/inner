@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
 
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/runtime"
@@ -13,6 +16,24 @@ import (
 type BwrapIsolator struct {
 	bwrapPath string
 	info      runtime.RuntimeInfo
+	// statFn checks whether a path exists. Defaults to os.Lstat.
+	// Overridable in tests to avoid filesystem dependencies.
+	statFn func(string) (os.FileInfo, error)
+}
+
+// pathExists reports whether the path exists on the host.
+func (b *BwrapIsolator) pathExists(path string) bool {
+	stat := b.statFn
+	if stat == nil {
+		stat = os.Lstat
+	}
+	_, err := stat(path)
+	return err == nil
+}
+
+// isAllowed reports whether key is present in the allow list.
+func isAllowed(allow []string, key string) bool {
+	return slices.Contains(allow, key)
 }
 
 // NewBwrapIsolator creates a BwrapIsolator after verifying that bwrap is
@@ -99,6 +120,62 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			args = append(args, "--ro-bind", "/tmp/.X11-unix", "/tmp/.X11-unix")
 			args = append(args, "--setenv", "DISPLAY", b.info.X11Display)
 		}
+	}
+
+	// ── Sensitive resource hiding ────────────────────────────────────────────
+	// These resources are hidden by default using tmpfs overlays (directories)
+	// or /dev/null binds (files and sockets). Hiding is skipped when:
+	//   a) the key is listed in cfg.Allow, or
+	//   b) the path does not exist on the host (nothing to hide).
+	// "nested-user-ns" is a valid allow key but has no hide action (TODO bwrap flag).
+	{
+		home, _ := os.UserHomeDir()
+		uid := strconv.Itoa(os.Getuid())
+
+		type sensitiveEntry struct {
+			key  string
+			path string
+			dir  bool // true → --tmpfs; false → --bind /dev/null
+		}
+		sensitive := []sensitiveEntry{
+			{"ssh-keys", filepath.Join(home, ".ssh"), true},
+			{"gpg-keys", filepath.Join(home, ".gnupg"), true},
+			{"git-credentials", filepath.Join(home, ".git-credentials"), false},
+			{"netrc", filepath.Join(home, ".netrc"), false},
+			{"docker-socket", "/var/run/docker.sock", false},
+			{"podman-socket", "/run/user/" + uid + "/podman/podman.sock", false},
+		}
+		for _, r := range sensitive {
+			if isAllowed(cfg.Allow, r.key) {
+				continue
+			}
+			if !b.pathExists(r.path) {
+				continue
+			}
+			if r.dir {
+				args = append(args, "--tmpfs", r.path)
+			} else {
+				args = append(args, "--bind", "/dev/null", r.path)
+			}
+		}
+	}
+
+	// ── Shim dir ─────────────────────────────────────────────────────────────
+	// Mount the shim directory read-only at a fixed path inside the sandbox,
+	// then prepend it to PATH so shims take precedence over real binaries.
+	if cfg.ShimDir != "" {
+		args = append(args, "--ro-bind", cfg.ShimDir, "/run/inner-shims")
+
+		// Determine the PATH that will be active inside the sandbox.
+		// Priority: explicitly set in profile → inherited from host → hard default.
+		sandboxPath := cfg.Env.Set["PATH"]
+		if sandboxPath == "" {
+			sandboxPath = os.Getenv("PATH")
+		}
+		if sandboxPath == "" {
+			sandboxPath = "/usr/local/bin:/usr/bin:/bin"
+		}
+		args = append(args, "--setenv", "PATH", "/run/inner-shims:"+sandboxPath)
 	}
 
 	// ── Git config injection ─────────────────────────────────────────────────

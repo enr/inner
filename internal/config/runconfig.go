@@ -14,6 +14,17 @@ type RunConfig struct {
 	LogDir        string
 	LogSummary    bool
 	Timeout       int // seconds; 0 = no timeout
+
+	// Noop describes which commands to block or rewrite inside the sandbox.
+	Noop NoopConfig
+	// Allow lists sensitive resources explicitly permitted in this sandbox.
+	// See SandboxConfig.Allow for valid keys.
+	Allow []string
+	// ShimDir is the path to the directory containing shim scripts.
+	// Empty if no noop config is active. Set by cmd_run.go after shim.Builder.Build().
+	ShimDir string
+	// VerifyCustomChecks holds user-defined checks declared in [verify.custom].
+	VerifyCustomChecks []CustomCheck
 }
 
 // Mount describes a single filesystem bind mount.

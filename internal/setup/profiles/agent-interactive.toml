@@ -22,3 +22,6 @@ interactive = true
 summary         = false
 log             = "~/.inner/logs/"
 timeout_seconds = 0
+
+[noop]
+block = ["apt-get", "apt", "yum", "dnf", "brew"]

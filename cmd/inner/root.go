@@ -26,6 +26,7 @@ func buildRootCmd(app *App) *cobra.Command {
 	root.AddCommand(app.newConfigCmd())
 	root.AddCommand(app.newDoctorCmd())
 	root.AddCommand(app.newLogCmd())
+	root.AddCommand(app.newVerifyCmd())
 	return root
 }
 

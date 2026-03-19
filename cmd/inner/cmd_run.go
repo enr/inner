@@ -11,6 +11,7 @@ import (
 	"github.com/enr/inner/internal/git"
 	"github.com/enr/inner/internal/profile"
 	"github.com/enr/inner/internal/setup"
+	"github.com/enr/inner/internal/shim"
 	"github.com/spf13/cobra"
 )
 
@@ -75,7 +76,18 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		}
 	}
 
-	// 7. Sanitize gitconfig if configured.
+	// 7. Build shim dir from [noop] config.
+	var cleanups []func() error
+	if len(rc.Noop.Block) > 0 || len(rc.Noop.Rewrite) > 0 {
+		shimDir, err := shim.Builder{}.Build(rc.Noop)
+		if err != nil {
+			return fmt.Errorf("building shim dir: %w", err)
+		}
+		rc.ShimDir = shimDir
+		cleanups = append(cleanups, func() error { return os.RemoveAll(shimDir) })
+	}
+
+	// 8. Sanitize gitconfig if configured.
 	if rc.Git != nil {
 		gitPath, err := git.Sanitize(rc.Git)
 		if err != nil {
@@ -116,6 +128,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		Interactive: rc.Entrypoint.Interactive,
 		Timeout:     rc.Timeout,
 		LogDir:      rc.LogDir,
+		Cleanups:    cleanups,
 	})
 	if err != nil {
 		return err

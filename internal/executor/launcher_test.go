@@ -180,6 +180,61 @@ func TestLauncher_noTimeout_processRunsToCompletion(t *testing.T) {
 	}
 }
 
+// ── Cleanups ──────────────────────────────────────────────────────────────────
+
+func TestLauncher_cleanups_calledAfterRun(t *testing.T) {
+	l, _, _ := newTestLauncher()
+	called := false
+	_, err := l.Run(exec.Command("true"), RunOptions{
+		Cleanups: []func() error{
+			func() error { called = true; return nil },
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !called {
+		t.Error("expected cleanup to be called")
+	}
+}
+
+func TestLauncher_cleanups_calledEvenOnNonZeroExit(t *testing.T) {
+	l, _, _ := newTestLauncher()
+	called := false
+	result, err := l.Run(exec.Command("sh", "-c", "exit 1"), RunOptions{
+		Cleanups: []func() error{
+			func() error { called = true; return nil },
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.ExitCode != 1 {
+		t.Errorf("ExitCode = %d, want 1", result.ExitCode)
+	}
+	if !called {
+		t.Error("expected cleanup to be called even on non-zero exit")
+	}
+}
+
+func TestLauncher_cleanups_multipleCalledInOrder(t *testing.T) {
+	l, _, _ := newTestLauncher()
+	var order []int
+	_, err := l.Run(exec.Command("true"), RunOptions{
+		Cleanups: []func() error{
+			func() error { order = append(order, 1); return nil },
+			func() error { order = append(order, 2); return nil },
+			func() error { order = append(order, 3); return nil },
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(order) != 3 || order[0] != 1 || order[1] != 2 || order[2] != 3 {
+		t.Errorf("cleanups called in wrong order: %v", order)
+	}
+}
+
 // ── waitExitCode ──────────────────────────────────────────────────────────────
 
 func TestWaitExitCode_zero(t *testing.T) {

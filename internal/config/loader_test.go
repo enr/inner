@@ -187,3 +187,105 @@ func TestBuild_defaultProfileName(t *testing.T) {
 		t.Fatal("expected non-nil RunConfig")
 	}
 }
+
+func TestBuild_noopBlock(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `
+[noop]
+block = ["apt-get", "apt", "brew"]
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("p")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.Noop.Block) != 3 {
+		t.Fatalf("Noop.Block len = %d, want 3", len(rc.Noop.Block))
+	}
+	if rc.Noop.Block[0] != "apt-get" {
+		t.Errorf("Noop.Block[0] = %q, want %q", rc.Noop.Block[0], "apt-get")
+	}
+}
+
+func TestBuild_noopRewrite(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `
+[noop]
+rewrite = { "docker" = "podman", "rm" = "rm -i" }
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("p")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.Noop.Rewrite) != 2 {
+		t.Fatalf("Noop.Rewrite len = %d, want 2", len(rc.Noop.Rewrite))
+	}
+	if rc.Noop.Rewrite["docker"] != "podman" {
+		t.Errorf("Noop.Rewrite[docker] = %q, want %q", rc.Noop.Rewrite["docker"], "podman")
+	}
+}
+
+func TestBuild_sandboxAllow(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `
+[sandbox]
+allow = ["ssh-keys", "netrc"]
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("p")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.Allow) != 2 {
+		t.Fatalf("Allow len = %d, want 2", len(rc.Allow))
+	}
+	if rc.Allow[0] != "ssh-keys" {
+		t.Errorf("Allow[0] = %q, want %q", rc.Allow[0], "ssh-keys")
+	}
+}
+
+func TestBuild_verifyCustomChecks(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `
+[verify.custom]
+checks = [
+  { name = "Output dir scrivibile", cmd = "touch /workspace/.test", severity = "critical" },
+  { name = "Nessun .env",           cmd = "! find /workspace -name '.env'", severity = "high" },
+]
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("p")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.VerifyCustomChecks) != 2 {
+		t.Fatalf("VerifyCustomChecks len = %d, want 2", len(rc.VerifyCustomChecks))
+	}
+	check := rc.VerifyCustomChecks[0]
+	if check.Name != "Output dir scrivibile" {
+		t.Errorf("Name = %q, want %q", check.Name, "Output dir scrivibile")
+	}
+	if check.Severity != "critical" {
+		t.Errorf("Severity = %q, want %q", check.Severity, "critical")
+	}
+}
+
+func TestBuild_emptyNoop(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `name = "p"`)
+	l := NewLoader(dir)
+	rc, err := l.Build("p")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.Noop.Block) != 0 {
+		t.Errorf("expected empty Noop.Block, got %v", rc.Noop.Block)
+	}
+	if len(rc.Allow) != 0 {
+		t.Errorf("expected empty Allow, got %v", rc.Allow)
+	}
+	if len(rc.VerifyCustomChecks) != 0 {
+		t.Errorf("expected empty VerifyCustomChecks, got %v", rc.VerifyCustomChecks)
+	}
+}

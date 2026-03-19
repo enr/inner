@@ -11,12 +11,46 @@ type Profile struct {
 	Git           *GitConfig            `toml:"git"`
 	Entrypoint    EntrypointConfig      `toml:"entrypoint"`
 	Output        OutputConfig          `toml:"output"`
+	Noop          NoopConfig            `toml:"noop"`
+	Verify        VerifyConfig          `toml:"verify"`
 }
 
 // SandboxConfig controls high-level sandbox capabilities.
 type SandboxConfig struct {
-	Network   bool `toml:"network"`
-	Clipboard bool `toml:"clipboard"`
+	Network   bool     `toml:"network"`
+	Clipboard bool     `toml:"clipboard"`
+	// Allow lists sensitive resources that are normally hidden but explicitly
+	// permitted in this sandbox. Valid keys: "ssh-keys", "git-credentials",
+	// "gpg-keys", "docker-socket", "podman-socket", "nested-user-ns", "netrc".
+	Allow []string `toml:"allow"`
+}
+
+// NoopConfig controls command shimming inside the sandbox.
+// Block replaces a binary with a script that prints an error and exits 1.
+// Rewrite replaces a binary with a script that delegates to another command.
+// A user-declared [noop] section replaces the built-in defaults entirely.
+type NoopConfig struct {
+	Block   []string          `toml:"block"`
+	Rewrite map[string]string `toml:"rewrite"`
+}
+
+// VerifyConfig holds custom sandbox verification checks declared in the profile.
+type VerifyConfig struct {
+	Custom VerifyCustomConfig `toml:"custom"`
+}
+
+// VerifyCustomConfig is the [verify.custom] sub-table.
+type VerifyCustomConfig struct {
+	Checks []CustomCheck `toml:"checks"`
+}
+
+// CustomCheck is a user-defined sandbox check executed by inner verify.
+// Cmd is a shell expression; exit 0 means pass, non-zero means fail.
+// Severity is one of "critical", "high", "medium".
+type CustomCheck struct {
+	Name     string `toml:"name"`
+	Cmd      string `toml:"cmd"`
+	Severity string `toml:"severity"`
 }
 
 // MountEntry is a single entry in the [mounts] table.
