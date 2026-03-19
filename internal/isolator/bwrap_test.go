@@ -73,8 +73,8 @@ func TestBuild_baseFlags(t *testing.T) {
 		{"--ro-bind", "/", "/"},
 		{"--proc", "/proc"},
 		{"--dev", "/dev"},
+		{"--dev-bind", "/dev/pts", "/dev/pts"},
 		{"--tmpfs", "/tmp"},
-		{"--unshare-pid"},
 		{"--die-with-parent"},
 	} {
 		if !hasSeq(args, seq...) {
@@ -94,6 +94,26 @@ func TestBuild_separatorPresent(t *testing.T) {
 }
 
 // ── Network ───────────────────────────────────────────────────────────────────
+
+func TestBuild_noPidUnshare_interactive(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "claude", Interactive: true},
+	})
+	if hasFlag(args, "--unshare-pid") {
+		t.Errorf("--unshare-pid must not be present for interactive runs: setsid() breaks TUI apps")
+	}
+}
+
+func TestBuild_pidUnshare_nonInteractive(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "claude", Interactive: false},
+	})
+	if !hasFlag(args, "--unshare-pid") {
+		t.Errorf("expected --unshare-pid for non-interactive runs, got %v", args)
+	}
+}
 
 func TestBuild_networkDisabled(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})

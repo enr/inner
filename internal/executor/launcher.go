@@ -10,9 +10,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
-
-	"github.com/creack/pty"
-	"golang.org/x/term"
 )
 
 // RunOptions configures a single sandbox execution.
@@ -123,34 +120,24 @@ func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, log *os.File
 	return waitExitCode(cmd)
 }
 
-// ── Interactive (PTY) ─────────────────────────────────────────────────────────
+// ── Interactive ───────────────────────────────────────────────────────────────
 
-func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, log *os.File) (int, error) {
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return -1, fmt.Errorf("starting pty: %w", err)
-	}
-	defer ptmx.Close()
+// runInteractive connects the process directly to the host terminal (no
+// intermediate PTY). This lets TUI applications (claude, gemini, bash) take
+// full control of the terminal via tcsetattr/ioctl without going through an
+// additional PTY layer that would cause session-leader / ttyname issues when
+// combined with bwrap's --unshare-pid internal fork.
+//
+// Consequence: output cannot be tee'd to a log file during an interactive
+// session (piping stdout would turn it into a non-TTY from the app's
+// perspective and break TUI rendering). The log parameter is ignored.
+func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, _ *os.File) (int, error) {
+	cmd.Stdin = l.Stdin
+	cmd.Stdout = l.Stdout
+	cmd.Stderr = l.Stderr
 
-	// Window resize forwarding — only when Stdin is a real file descriptor.
-	if stdinFile, ok := l.Stdin.(*os.File); ok {
-		winchCh := make(chan os.Signal, 1)
-		signal.Notify(winchCh, syscall.SIGWINCH)
-		defer signal.Stop(winchCh)
-		go func() {
-			for range winchCh {
-				_ = pty.InheritSize(stdinFile, ptmx)
-			}
-		}()
-		_ = pty.InheritSize(stdinFile, ptmx)
-
-		// Raw mode — only when stdin is an actual terminal.
-		if term.IsTerminal(int(stdinFile.Fd())) {
-			old, err := term.MakeRaw(int(stdinFile.Fd()))
-			if err == nil {
-				defer term.Restore(int(stdinFile.Fd()), old) //nolint:errcheck
-			}
-		}
+	if err := cmd.Start(); err != nil {
+		return -1, fmt.Errorf("starting process: %w", err)
 	}
 
 	done := make(chan struct{})
@@ -158,16 +145,6 @@ func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, log *os.File) (
 
 	forwardSignals(cmd, done)
 	applyTimeout(cmd, timeoutSec, done)
-
-	// Forward stdin → PTY master (fire-and-forget goroutine).
-	go func() { _, _ = io.Copy(ptmx, l.Stdin) }()
-
-	// Forward PTY master → stdout (and optionally log); blocks until PTY closes.
-	dst := l.Stdout
-	if log != nil {
-		dst = io.MultiWriter(l.Stdout, log)
-	}
-	_, _ = io.Copy(dst, ptmx)
 
 	return waitExitCode(cmd)
 }

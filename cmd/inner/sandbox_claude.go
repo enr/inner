@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -93,7 +94,9 @@ func prepareClaude(src string) (string, func(), error) {
 	}
 
 	// ── Optional: user settings ───────────────────────────────────────────────
-	_ = copyFile(filepath.Join(src, "settings.json"), filepath.Join(tmp, "settings.json"))
+	// Copy settings.json but strip keys that would start external processes
+	// (plugins, MCP servers) which hang inside the sandbox.
+	_ = copySettingsStripped(filepath.Join(src, "settings.json"), filepath.Join(tmp, "settings.json"))
 
 	// ── Optional: skill definitions ───────────────────────────────────────────
 	_ = copyDir(filepath.Join(src, "skills"), filepath.Join(tmp, "skills"))
@@ -159,6 +162,28 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.WriteFile(dst, data, info.Mode())
+}
+
+// copySettingsStripped copies src to dst as JSON with keys that would start
+// external processes (enabledPlugins, mcpServers) removed. These cause MCP
+// servers to be launched at interactive startup, which hangs inside the sandbox.
+// If src doesn't exist or can't be parsed, dst is left as a minimal empty object.
+func copySettingsStripped(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
+	}
+	delete(settings, "enabledPlugins")
+	delete(settings, "mcpServers")
+	out, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, out, 0o644)
 }
 
 func copyDir(src, dst string) error {

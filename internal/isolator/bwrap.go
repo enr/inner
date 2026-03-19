@@ -74,6 +74,15 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// Re-mount /proc, /dev, /tmp so the sandbox is functional.
 	args = append(args, "--proc", "/proc")
 	args = append(args, "--dev", "/dev")
+	// Expose the host's /dev/pts entries inside the sandbox so that
+	// interactive TUI apps (e.g. claude, which embeds Node.js) can resolve
+	// the controlling-terminal path returned by ttyname_r(). Without this,
+	// ttyname_r() returns a path like /dev/pts/5 that doesn't exist in the
+	// fresh devtmpfs created by --dev, causing TUI initialisation to fail.
+	// Note: this is safe because --unshare-pid is not set for interactive
+	// runs; the PID-namespace fork that previously caused devpts lock
+	// contention is absent.
+	args = append(args, "--dev-bind", "/dev/pts", "/dev/pts")
 	args = append(args, "--tmpfs", "/tmp")
 
 	// ── Additional mounts ────────────────────────────────────────────────────
@@ -89,9 +98,18 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		}
 	}
 
-	// ── PID isolation ────────────────────────────────────────────────────────
-	args = append(args, "--unshare-pid")
+	// ── Process lifecycle ────────────────────────────────────────────────────
+	// --die-with-parent: sandbox is killed if the inner process crashes.
+	//
+	// --unshare-pid is applied only for non-interactive runs. When enabled,
+	// bwrap forks internally and the child calls setsid(), creating a new
+	// session with no controlling terminal. Interactive TUI apps (Node.js /
+	// claude, gemini) call open("/dev/tty") at startup to initialise raw mode;
+	// without a controlling terminal they receive ENXIO and hang with no output.
 	args = append(args, "--die-with-parent")
+	if !cfg.Entrypoint.Interactive {
+		args = append(args, "--unshare-pid")
+	}
 
 	// ── Network ──────────────────────────────────────────────────────────────
 	if !cfg.Network {
