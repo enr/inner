@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/enr/inner/internal/config"
@@ -192,6 +193,9 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 	// needing to create a new directory (which would fail on a ro root).
 	if flags.workdir != "" {
 		expanded := config.ExpandPath(flags.workdir)
+		if abs, err := filepath.Abs(expanded); err == nil {
+			expanded = abs
+		}
 		rc.Mounts = append(rc.Mounts, config.Mount{
 			Src:  expanded,
 			Dest: expanded,
