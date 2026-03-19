@@ -77,6 +77,10 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	args = append(args, "--tmpfs", "/tmp")
 
 	// ── Additional mounts ────────────────────────────────────────────────────
+	// Note: all destination paths must already exist in the sandbox root.
+	// Because the base is --ro-bind / /, every host path is available.
+	// Mounting to a non-existent path (e.g. /workspace) is not supported:
+	// bwrap cannot mkdir on a read-only root.
 	for _, m := range cfg.Mounts {
 		if m.Mode == "rw" {
 			args = append(args, "--bind", m.Src, m.Dest)
@@ -182,6 +186,11 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	if cfg.GitConfigPath != "" {
 		args = append(args, "--ro-bind", cfg.GitConfigPath, cfg.GitConfigPath)
 		args = append(args, "--setenv", "GIT_CONFIG_GLOBAL", cfg.GitConfigPath)
+	}
+
+	// ── Working directory ────────────────────────────────────────────────────
+	if cfg.Workdir != "" {
+		args = append(args, "--chdir", cfg.Workdir)
 	}
 
 	// ── Entrypoint ───────────────────────────────────────────────────────────

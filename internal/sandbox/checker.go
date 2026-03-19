@@ -108,11 +108,11 @@ func (r Report) Render(w io.Writer, suggest bool) {
 		var symbol string
 		switch {
 		case c.AllowOverride:
-			symbol = "ℹ"
+			symbol = "[--]"
 		case c.Passed:
-			symbol = "✓"
+			symbol = "[ok]"
 		default:
-			symbol = "✗"
+			symbol = "[!!]"
 		}
 
 		if c.AllowOverride {
@@ -122,7 +122,7 @@ func (r Report) Render(w io.Writer, suggest bool) {
 		}
 
 		if c.Detail != "" && !c.AllowOverride {
-			fmt.Fprintf(w, "             → %s\n", c.Detail)
+			fmt.Fprintf(w, "             -> %s\n", c.Detail)
 		}
 
 		if suggest && !c.Passed && !c.AllowOverride && c.Suggest != "" {
@@ -148,9 +148,9 @@ func (r Report) Render(w io.Writer, suggest bool) {
 	fmt.Fprintln(w)
 
 	if r.Conformant() {
-		fmt.Fprintln(w, "✓  sandbox conforme")
+		fmt.Fprintln(w, "[ok]  sandbox conforme")
 	} else {
-		fmt.Fprintln(w, "⚠  sandbox non conforme")
+		fmt.Fprintln(w, "[??]  sandbox non conforme")
 	}
 }
 

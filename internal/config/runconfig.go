@@ -23,6 +23,9 @@ type RunConfig struct {
 	// ShimDir is the path to the directory containing shim scripts.
 	// Empty if no noop config is active. Set by cmd_run.go after shim.Builder.Build().
 	ShimDir string
+	// Workdir is the directory to chdir into inside the sandbox after mounting.
+	// Empty means no chdir (process inherits the caller's working directory).
+	Workdir string
 	// VerifyCustomChecks holds user-defined checks declared in [verify.custom].
 	VerifyCustomChecks []CustomCheck
 }

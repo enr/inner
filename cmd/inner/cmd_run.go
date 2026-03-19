@@ -55,7 +55,16 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 
-	// 4. Set sandbox PS1 so the user can tell they are inside inner.
+	// 4. Resolve empty entrypoint cmd to $SHELL (same logic as the isolator).
+	//    Must happen before prepareInteractiveShell so it can detect the binary.
+	if rc.Entrypoint.Cmd == "" {
+		rc.Entrypoint.Cmd = os.Getenv("SHELL")
+		if rc.Entrypoint.Cmd == "" {
+			rc.Entrypoint.Cmd = "/bin/sh"
+		}
+	}
+
+	// 5. Set sandbox PS1 so the user can tell they are inside inner.
 	//    Only applied if PS1 is not already explicitly set in the profile.
 	if _, ok := rc.Env.Set["PS1"]; !ok {
 		if rc.Env.Set == nil {
@@ -64,19 +73,19 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		rc.Env.Set["PS1"] = sandboxPS1()
 	}
 
-	// 5. For interactive bash: inject --init-file so PS1 survives ~/.bashrc.
+	// 6. For interactive bash: inject --init-file so PS1 survives ~/.bashrc.
 	if err := prepareInteractiveShell(rc, a.loader.Dir, rc.Env.Set["PS1"]); err != nil {
 		return fmt.Errorf("preparing interactive shell: %w", err)
 	}
 
-	// 6. Validate — print warnings, never fatal.
+	// 7. Validate — print warnings, never fatal.
 	if p, err := a.loader.LoadProfile(profileName); err == nil {
 		for _, issue := range profile.Validate(p).Issues {
 			fmt.Fprintf(w, "profile %s\n", issue)
 		}
 	}
 
-	// 7. Build shim dir from [noop] config.
+	// 8. Build shim dir from [noop] config.
 	var cleanups []func() error
 	if len(rc.Noop.Block) > 0 || len(rc.Noop.Rewrite) > 0 {
 		shimDir, err := shim.Builder{}.Build(rc.Noop)
@@ -87,7 +96,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		cleanups = append(cleanups, func() error { return os.RemoveAll(shimDir) })
 	}
 
-	// 8. Sanitize gitconfig if configured.
+	// 9. Sanitize gitconfig if configured.
 	if rc.Git != nil {
 		gitPath, err := git.Sanitize(rc.Git)
 		if err != nil {
@@ -97,7 +106,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		rc.GitConfigPath = gitPath
 	}
 
-	// 8. Sandbox ~/.claude — replace the real dir with a temporary clone that
+	// 10. Sandbox ~/.claude — replace the real dir with a temporary clone that
 	//    contains only auth credentials, settings, and skills; everything else
 	//    (sessions, history, projects, …) starts fresh.
 	cleanupClaude, err := applyClaude(rc)
@@ -106,7 +115,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 	defer cleanupClaude()
 
-	// 9. Create isolator and build the sandbox command.
+	// 11. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
 	if err != nil {
 		return fmt.Errorf("isolator: %w", err)
@@ -116,13 +125,13 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return fmt.Errorf("building sandbox command: %w", err)
 	}
 
-	// 8. Dry-run: print the full command and exit.
+	// 12. Dry-run: print profile, effective config, and sandbox command.
 	if flags.dryRun {
-		fmt.Fprintln(w, strings.Join(cmd.Args, " "))
+		printDryRun(w, profileName, a.loader.ProfilePath(profileName), a.loader.GlobalConfigPath(), rc, cmd.Args)
 		return nil
 	}
 
-	// 9. Launch.
+	// 13. Launch.
 	launcher := a.launcherFn()
 	result, err := launcher.Run(cmd, executor.RunOptions{
 		Interactive: rc.Entrypoint.Interactive,
@@ -161,13 +170,18 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 		rc.Timeout = flags.timeout
 	}
 
-	// Workdir (-w PATH) → mount at /workspace rw.
+	// Workdir (-w PATH) → mount at the same path rw.
+	// We use src==dest because bwrap's base is --ro-bind / /, so the path
+	// already exists in the sandbox; bwrap can bind-mount rw over it without
+	// needing to create a new directory (which would fail on a ro root).
 	if flags.workdir != "" {
+		expanded := config.ExpandPath(flags.workdir)
 		rc.Mounts = append(rc.Mounts, config.Mount{
-			Src:  config.ExpandPath(flags.workdir),
-			Dest: "/workspace",
+			Src:  expanded,
+			Dest: expanded,
 			Mode: "rw",
 		})
+		rc.Workdir = expanded
 	}
 
 	// Additional mounts (-m SRC:DEST[:MODE]).
@@ -231,6 +245,77 @@ func parseEnvVar(s string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
+// printDryRun writes a human-readable summary of what inner run would do.
+func printDryRun(w io.Writer, profileName, profilePath, globalConfigPath string, rc *config.RunConfig, cmdArgs []string) {
+	fmt.Fprintf(w, "profile:      %s\n", profileName)
+	fmt.Fprintf(w, "profile path: %s\n", profilePath)
+	fmt.Fprintf(w, "global config: %s\n", globalConfigPath)
+	fmt.Fprintln(w)
+
+	fmt.Fprintf(w, "entrypoint: %s\n", rc.Entrypoint.Cmd)
+	if len(rc.Entrypoint.Args) > 0 {
+		fmt.Fprintf(w, "args:       %s\n", strings.Join(rc.Entrypoint.Args, " "))
+	}
+	fmt.Fprintf(w, "interactive: %v\n", rc.Entrypoint.Interactive)
+	if rc.Workdir != "" {
+		fmt.Fprintf(w, "workdir:     %s\n", rc.Workdir)
+	}
+	fmt.Fprintf(w, "network:     %v\n", rc.Network)
+	fmt.Fprintf(w, "clipboard:   %v\n", rc.Clipboard)
+	if rc.Timeout > 0 {
+		fmt.Fprintf(w, "timeout:     %ds\n", rc.Timeout)
+	} else {
+		fmt.Fprintln(w, "timeout:     none")
+	}
+	fmt.Fprintln(w)
+
+	if len(rc.Mounts) > 0 {
+		fmt.Fprintln(w, "mounts:")
+		for _, m := range rc.Mounts {
+			fmt.Fprintf(w, "  %s -> %s (%s)\n", m.Src, m.Dest, m.Mode)
+		}
+		fmt.Fprintln(w)
+	}
+
+	if rc.Env.Clear || len(rc.Env.Inherit) > 0 || len(rc.Env.Set) > 0 {
+		fmt.Fprintln(w, "env:")
+		if rc.Env.Clear {
+			fmt.Fprintln(w, "  clearenv: true")
+		}
+		if len(rc.Env.Inherit) > 0 {
+			fmt.Fprintf(w, "  inherit: %s\n", strings.Join(rc.Env.Inherit, ", "))
+		}
+		for k, v := range rc.Env.Set {
+			fmt.Fprintf(w, "  %s = %s\n", k, v)
+		}
+		fmt.Fprintln(w)
+	}
+
+	if len(rc.Noop.Block) > 0 || len(rc.Noop.Rewrite) > 0 {
+		fmt.Fprintln(w, "noop:")
+		if len(rc.Noop.Block) > 0 {
+			fmt.Fprintf(w, "  block: %s\n", strings.Join(rc.Noop.Block, ", "))
+		}
+		for from, to := range rc.Noop.Rewrite {
+			fmt.Fprintf(w, "  rewrite: %s -> %s\n", from, to)
+		}
+		fmt.Fprintln(w)
+	}
+
+	if len(rc.Allow) > 0 {
+		fmt.Fprintf(w, "allow: %s\n", strings.Join(rc.Allow, ", "))
+		fmt.Fprintln(w)
+	}
+
+	if rc.LogDir != "" {
+		fmt.Fprintf(w, "log dir: %s\n", rc.LogDir)
+		fmt.Fprintln(w)
+	}
+
+	fmt.Fprintln(w, "bwrap command:")
+	fmt.Fprintf(w, "  %s\n", strings.Join(cmdArgs, " "))
+}
+
 // ── Cobra wiring (thin) ───────────────────────────────────────────────────────
 
 func (a *App) newRunCmd() *cobra.Command {
@@ -249,7 +334,7 @@ to the entrypoint command.`,
 	}
 
 	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", "Profile to use (default: \"default\")")
-	cmd.Flags().StringVarP(&flags.workdir, "workdir", "w", "", "Mount PATH as /workspace (rw)")
+	cmd.Flags().StringVarP(&flags.workdir, "workdir", "w", "", "Mount PATH read-write in the sandbox (at the same path)")
 	cmd.Flags().BoolVar(&flags.networkOn, "network", false, "Enable network access")
 	cmd.Flags().BoolVar(&flags.networkOff, "no-network", false, "Disable network access")
 	cmd.Flags().BoolVarP(&flags.interactive, "interactive", "i", false, "Force interactive mode")

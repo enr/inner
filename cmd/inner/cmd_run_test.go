@@ -153,7 +153,9 @@ func TestApplyOverrides_workdir(t *testing.T) {
 		t.Fatalf("expected 1 mount, got %d", len(rc.Mounts))
 	}
 	m := rc.Mounts[0]
-	if m.Src != "/my/project" || m.Dest != "/workspace" || m.Mode != "rw" {
+	// dest == src: bwrap cannot mkdir on a ro root, so workdir is mounted
+	// at the same path as the host (which already exists via --ro-bind / /).
+	if m.Src != "/my/project" || m.Dest != "/my/project" || m.Mode != "rw" {
 		t.Errorf("unexpected mount: %+v", m)
 	}
 }

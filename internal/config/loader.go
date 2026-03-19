@@ -97,10 +97,19 @@ func (l *Loader) Build(profileName string) (*RunConfig, error) {
 // toRunConfig converts a loaded Profile (and GlobalConfig) into a RunConfig,
 // applying path expansion.
 func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
+	// Expand ~ and ${UID} in env.set values (e.g. DOCKER_HOST with socket paths).
+	expandedEnv := p.Env
+	if len(p.Env.Set) > 0 {
+		expandedEnv.Set = make(map[string]string, len(p.Env.Set))
+		for k, v := range p.Env.Set {
+			expandedEnv.Set[k] = ExpandPath(v)
+		}
+	}
+
 	cfg := &RunConfig{
 		Network:            p.Sandbox.Network,
 		Clipboard:          p.Sandbox.Clipboard,
-		Env:                p.Env,
+		Env:                expandedEnv,
 		Git:                p.Git,
 		LogSummary:         p.Output.Summary,
 		Timeout:            p.Output.TimeoutSeconds,

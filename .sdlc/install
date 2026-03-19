@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+tool_source="${BASH_SOURCE[0]}"
+while [ -h "$tool_source" ]; do tool_source="$(readlink "$tool_source")"; done
+sdlc_dir="$( cd -P "$( dirname "$tool_source" )" && pwd )"
+prj_home="$( cd -P "$( dirname "$sdlc_dir" )" && pwd )"
+
+cd "${prj_home}"
+
+default_install_dir="${HOME}/bin"
+install_dir="${1:-${default_install_dir}}"
+install_dir="$(realpath "${install_dir}")"
+echo "==> install to ${install_dir}"
+
+./.sdlc/build
+cp "bin/inner" "${install_dir}/"
+inner version
+

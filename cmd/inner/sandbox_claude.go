@@ -32,9 +32,10 @@ func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
 	}
 
 	initPath := filepath.Join(innerDir, "shell-init.sh")
+	// Do NOT source ~/.bashrc: it could export personal data (API keys, tokens,
+	// private paths) that clearenv+inherit is designed to keep out of the sandbox.
+	// bash --init-file replaces ~/.bashrc, so only this file runs.
 	content := "# inner sandbox — shell initialization\n" +
-		"# Sources the real ~/.bashrc then overrides PS1.\n" +
-		"[ -f \"$HOME/.bashrc\" ] && source \"$HOME/.bashrc\"\n" +
 		"PS1=" + fmt.Sprintf("%q", ps1) + "\n"
 
 	if err := os.WriteFile(initPath, []byte(content), 0o755); err != nil {

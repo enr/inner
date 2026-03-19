@@ -35,8 +35,12 @@ func (a *App) configShow(w io.Writer) error {
 		}
 		return err
 	}
+	content := string(data)
+	if f, ok := w.(*os.File); ok && isTTY(f) {
+		content = highlightTOML(content)
+	}
 	fmt.Fprintf(w, "# %s\n", path)
-	_, err = fmt.Fprint(w, string(data))
+	_, err = fmt.Fprint(w, content)
 	return err
 }
 

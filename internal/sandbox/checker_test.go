@@ -424,7 +424,7 @@ func TestReport_render_includesSummary(t *testing.T) {
 	if !strings.Contains(out, "1/2") {
 		t.Errorf("expected '1/2' in output, got: %s", out)
 	}
-	if !strings.Contains(out, "⚠") {
+	if !strings.Contains(out, "[??]") {
 		t.Errorf("expected non-conformant indicator, got: %s", out)
 	}
 }
@@ -456,8 +456,8 @@ func TestReport_render_allowOverride_showsInfo(t *testing.T) {
 	var buf bytes.Buffer
 	r.Render(&buf, false)
 	out := buf.String()
-	if !strings.Contains(out, "ℹ") {
-		t.Errorf("expected ℹ symbol for INFO override, got: %s", out)
+	if !strings.Contains(out, "[--]") {
+		t.Errorf("expected [--] symbol for INFO override, got: %s", out)
 	}
 	if !strings.Contains(out, "esplicitamente permessa") {
 		t.Errorf("expected 'esplicitamente permessa' in output, got: %s", out)

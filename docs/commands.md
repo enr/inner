@@ -26,7 +26,7 @@ inner run [flags] [-- extra-args]
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
 | `--profile` | `-p` | string | `default` | Profile to use |
-| `--workdir` | `-w` | path | — | Mount PATH as `/workspace` (read-write) |
+| `--workdir` | `-w` | path | — | Mount PATH read-write inside the sandbox (at the same path); also sets the initial working directory |
 | `--network` | | bool | profile default | Enable network access |
 | `--no-network` | | bool | — | Disable network access |
 | `--interactive` | `-i` | bool | profile default | Force interactive mode (allocate PTY) |
@@ -241,6 +241,66 @@ inner log clean --dry-run --older-than 7
 # Actually delete logs older than 14 days
 inner log clean --older-than 14
 ```
+
+---
+
+## `inner init`
+
+Initialize (or re-initialize) the `~/.inner` directory:
+
+```bash
+inner init
+```
+
+Creates `~/.inner/` and its subdirectories, installs the built-in profiles, and writes a
+starter `config.toml` if none exists. Already-present files are never overwritten.
+
+Example output on a fresh install:
+
+```
+dir: /home/alice/.inner
+created dirs: /home/alice/.inner/profiles, /home/alice/.inner/logs, /home/alice/.inner/directives
+config: created
+profile agent-containers: installed
+profile agent-interactive: installed
+profile default: installed
+profile one-shot: installed
+profile shell: installed
+```
+
+Example output when everything already exists:
+
+```
+dir: /home/alice/.inner
+config: already exists (skipped)
+profile agent-containers: already exists (skipped)
+profile agent-interactive: already exists (skipped)
+profile default: already exists (skipped)
+profile one-shot: already exists (skipped)
+profile shell: already exists (skipped)
+```
+
+### Resetting to defaults
+
+If you have not customized any files in `~/.inner/` and want to start fresh (for example,
+to pick up updated built-in profiles after an upgrade), it is safe to delete the entire
+directory and re-run `inner init`:
+
+```bash
+rm -rf ~/.inner
+inner init
+```
+
+**What to preserve before deleting:**
+
+| Path | Preserve if... |
+|------|----------------|
+| `~/.inner/config.toml` | You have changed `log_dir` or other settings |
+| `~/.inner/profiles/*.toml` | You have edited or added custom profiles |
+| `~/.inner/logs/` | You want to keep run history |
+
+The `~/.inner/directives/` directory holds custom verification directives; back it up if
+you have added any.
 
 ---
 

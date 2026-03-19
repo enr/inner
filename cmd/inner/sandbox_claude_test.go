@@ -183,13 +183,14 @@ func TestPrepareInteractiveShell_injectsBashInitFile(t *testing.T) {
 	if len(rc.Entrypoint.Args) < 2 || rc.Entrypoint.Args[0] != "--init-file" {
 		t.Errorf("expected --init-file as first arg, got: %v", rc.Entrypoint.Args)
 	}
-	// Init file must exist and contain PS1 and source of .bashrc.
+	// Init file must exist, set PS1, and NOT source ~/.bashrc
+	// (sourcing it would leak personal data that clearenv is meant to block).
 	content, err := os.ReadFile(rc.Entrypoint.Args[1])
 	if err != nil {
 		t.Fatalf("reading init file: %v", err)
 	}
-	if !strings.Contains(string(content), ".bashrc") {
-		t.Error("init file should source .bashrc")
+	if strings.Contains(string(content), ".bashrc") {
+		t.Error("init file must not source .bashrc (would leak env vars past clearenv)")
 	}
 	if !strings.Contains(string(content), "PS1=") {
 		t.Error("init file should set PS1")

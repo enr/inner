@@ -21,16 +21,16 @@ func (a *App) doctor(w io.Writer) error {
 
 	// ── bwrap ────────────────────────────────────────────────────────────────
 	if info.BwrapAvailable {
-		fmt.Fprintf(w, "✓ bwrap: v%s (%s)\n", info.BwrapVersion, info.BwrapPath)
+		fmt.Fprintf(w, "[ok]  bwrap: v%s (%s)\n", info.BwrapVersion, info.BwrapPath)
 	} else {
-		fmt.Fprintln(w, "✗ bwrap: not found in PATH")
+		fmt.Fprintln(w, "[!!]  bwrap: not found in PATH")
 	}
 
 	// ── user namespaces ──────────────────────────────────────────────────────
 	if info.UserNSEnabled {
-		fmt.Fprintln(w, "✓ user namespaces: enabled")
+		fmt.Fprintln(w, "[ok]  user namespaces: enabled")
 	} else {
-		fmt.Fprintln(w, "✗ user namespaces: disabled (bwrap requires unprivileged user namespaces)")
+		fmt.Fprintln(w, "[!!]  user namespaces: disabled (bwrap requires unprivileged user namespaces)")
 	}
 
 	// ── auto-init and profiles dir ───────────────────────────────────────────
@@ -39,7 +39,7 @@ func (a *App) doctor(w io.Writer) error {
 	profilesDir := a.loader.ProfilesDir()
 	entries, err := os.ReadDir(profilesDir)
 	if err != nil {
-		fmt.Fprintf(w, "✗ profiles: cannot read %s: %v\n", profilesDir, err)
+		fmt.Fprintf(w, "[!!]  profiles: cannot read %s: %v\n", profilesDir, err)
 	} else {
 		count := 0
 		for _, e := range entries {
@@ -47,39 +47,49 @@ func (a *App) doctor(w io.Writer) error {
 				count++
 			}
 		}
-		fmt.Fprintf(w, "✓ profiles: %d profile(s) in %s\n", count, profilesDir)
+		fmt.Fprintf(w, "[ok]  profiles: %d profile(s) in %s\n", count, profilesDir)
 	}
 
 	// ── logs dir ─────────────────────────────────────────────────────────────
 	logsDir := filepath.Join(a.loader.Dir, "logs")
 	if _, err := os.Stat(logsDir); err == nil {
-		fmt.Fprintf(w, "✓ logs dir: %s\n", logsDir)
+		fmt.Fprintf(w, "[ok]  logs dir: %s\n", logsDir)
 	} else {
-		fmt.Fprintf(w, "⚠ logs dir: %s (will be created on first run)\n", logsDir)
+		fmt.Fprintf(w, "[??]  logs dir: %s (will be created on first run)\n", logsDir)
 	}
 
-	// ── ANTHROPIC_API_KEY ────────────────────────────────────────────────────
+	// ── Claude ───────────────────────────────────────────────────────────────
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		fmt.Fprintln(w, "✓ ANTHROPIC_API_KEY: set")
+		fmt.Fprintln(w, "[ok]  ANTHROPIC_API_KEY: set")
 	} else {
-		fmt.Fprintln(w, "⚠ ANTHROPIC_API_KEY: not set (required for Claude agents)")
+		fmt.Fprintln(w, "[??]  ANTHROPIC_API_KEY: not set (required for Claude agents)")
+	}
+	if claudePath, err := exec.LookPath("claude"); err == nil {
+		fmt.Fprintf(w, "[ok]  claude: %s\n", claudePath)
+	} else {
+		fmt.Fprintln(w, "[??]  claude: not found in PATH (required for agent profiles)")
 	}
 
-	// ── claude binary ────────────────────────────────────────────────────────
-	if claudePath, err := exec.LookPath("claude"); err == nil {
-		fmt.Fprintf(w, "✓ claude: %s\n", claudePath)
+	// ── Gemini ───────────────────────────────────────────────────────────────
+	if os.Getenv("GEMINI_API_KEY") != "" {
+		fmt.Fprintln(w, "[ok]  GEMINI_API_KEY: set")
 	} else {
-		fmt.Fprintln(w, "⚠ claude: not found in PATH (required for agent profiles)")
+		fmt.Fprintln(w, "[??]  GEMINI_API_KEY: not set (required for Gemini agents)")
+	}
+	if geminiPath, err := exec.LookPath("gemini"); err == nil {
+		fmt.Fprintf(w, "[ok]  gemini: %s\n", geminiPath)
+	} else {
+		fmt.Fprintln(w, "[??]  gemini: not found in PATH (required for Gemini agent profiles)")
 	}
 
 	// ── display server ───────────────────────────────────────────────────────
 	switch info.Display {
 	case runtime.DisplayWayland:
-		fmt.Fprintf(w, "✓ display: wayland (%s)\n", info.WaylandSocket)
+		fmt.Fprintf(w, "[ok]  display: wayland (%s)\n", info.WaylandSocket)
 	case runtime.DisplayX11:
-		fmt.Fprintf(w, "✓ display: x11 (%s)\n", info.X11Display)
+		fmt.Fprintf(w, "[ok]  display: x11 (%s)\n", info.X11Display)
 	default:
-		fmt.Fprintln(w, "⚠ display: no display server detected (clipboard forwarding unavailable)")
+		fmt.Fprintln(w, "[??]  display: no display server detected (clipboard forwarding unavailable)")
 	}
 
 	return nil
