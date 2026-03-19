@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/enr/inner/internal/profile"
 	"github.com/enr/inner/internal/runtime"
 	"github.com/enr/inner/internal/setup"
 	"github.com/spf13/cobra"
@@ -48,6 +49,22 @@ func (a *App) doctor(w io.Writer) error {
 			}
 		}
 		fmt.Fprintf(w, "[ok]  profiles: %d profile(s) in %s\n", count, profilesDir)
+
+		// Validate each profile and surface any issues.
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".toml") {
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), ".toml")
+			p, err := a.loader.LoadProfile(name)
+			if err != nil {
+				fmt.Fprintf(w, "[!!]  profile %q: %v\n", name, err)
+				continue
+			}
+			for _, issue := range profile.Validate(p).Issues {
+				fmt.Fprintf(w, "[??]  profile %q: %s\n", name, issue)
+			}
+		}
 	}
 
 	// ── logs dir ─────────────────────────────────────────────────────────────
