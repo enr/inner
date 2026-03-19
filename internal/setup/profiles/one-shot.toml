@@ -1,0 +1,24 @@
+schema_version = "1"
+name = "one-shot"
+description = "Non-interactive Claude Code agent (dangerously-skip-permissions)"
+
+[sandbox]
+network   = true
+clipboard = false
+
+[mounts]
+"~/.claude" = { dest = "~/.claude", mode = "rw" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+
+[entrypoint]
+cmd         = "claude"
+args        = ["--dangerously-skip-permissions"]
+interactive = false
+
+[output]
+summary         = true
+log             = "~/.inner/logs/"
+timeout_seconds = 0

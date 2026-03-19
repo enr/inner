@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -e
+
+tool_source="${BASH_SOURCE[0]}"
+while [ -h "$tool_source" ] ; do tool_source="$(readlink "$tool_source")"; done
+sdlc_dir="$( cd -P "$( dirname "$tool_source" )" && pwd )"
+prj_home="$( cd -P "$( dirname "$sdlc_dir" )" && pwd )"
+
+echo "Project home ${prj_home}"
+cd "${prj_home}"
+
+hash grep 2>/dev/null || {
+  echo 'No Grep executable: aborting release'
+  exit 1
+}
+
+hash git 2>/dev/null || {
+  echo 'No Git executable: aborting release'
+  exit 1
+}
+
+git rev-parse --abbrev-ref --symbolic-full-name '@{u}' || {
+  echo 'No upstream set for current branch: aborting release'
+  exit 1
+}
+
+upstream='@{u}'
+local_branch=$(git rev-parse @)
+remote_branch=$(git rev-parse "$upstream")
+BASE=$(git merge-base @ "$upstream")
+
+[[ "$local_branch" = "$remote_branch" ]] || {
+  echo "Local branch ${local_branch} and remote ${remote_branch} are not aligned: aborting release"
+  exit 1
+}
+
+release_suffix=''
+snapshot_commit_prefix='[skip ci]'
+
+[[ -n "$1" ]] || {
+  echo 'Missing release version: aborting release'
+  echo "Release version should be in the format 1.2.3 : pom version will be set to 1.2.3${release_suffix} and the tag will be v1.2.3${release_suffix}"
+  exit 1
+}
+release_version="${1}${release_suffix}"
+echo "Release version ${release_version}"
+
+[[ -n "$2" ]] || {
+  echo 'Missing snapshot version: aborting release'
+  echo 'Snapshot version should be in the format 1.2.3 : pom version will be set to 1.2.3-SNAPSHOT after the RELEASE tag'
+  exit 1
+}
+snapshot_version="${2}-SNAPSHOT"
+echo "Snapshot version ${snapshot_version}"
+
+tag_name="v${release_version}"
+tag_exists=$(git tag -l "${tag_name}")
+[[ -n "$tag_exists" ]] && {
+  echo "Tag ${tag_name} exists: aborting release"
+  exit 1
+}
+
+echo "Release ${release_version} (tag ${tag_name}) and back to ${snapshot_version}"
+
+git_dirty=$(git status --porcelain)
+[[ -n "$git_dirty" ]] && {
+  echo 'Uncommitted changes detected: aborting release'
+  exit 1
+}
+
+function cleanup() {
+    echo "Cleanup..."
+}
+trap cleanup EXIT
+trap cleanup SIGINT
+
+git commit -a -m "release ${release_version}"
+git tag "${tag_name}"
+git commit -a -m "${snapshot_commit_prefix} back to snapshot"
+git push
+git push --tags

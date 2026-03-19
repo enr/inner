@@ -1,0 +1,24 @@
+schema_version = "1"
+name = "agent-interactive"
+description = "Interactive Claude Code agent (network enabled)"
+
+[sandbox]
+network   = true
+clipboard = false
+
+[mounts]
+"~/.claude" = { dest = "~/.claude", mode = "rw" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+
+[entrypoint]
+cmd         = "claude"
+args        = []
+interactive = true
+
+[output]
+summary         = false
+log             = "~/.inner/logs/"
+timeout_seconds = 0

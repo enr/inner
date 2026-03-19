@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -e
+
+tool_source="${BASH_SOURCE[0]}"
+while [ -h "$tool_source" ] ; do tool_source="$(readlink "$tool_source")"; done
+sdlc_dir="$( cd -P "$( dirname "$tool_source" )" && pwd )"
+prj_home="$( cd -P "$( dirname "$sdlc_dir" )" && pwd )"
+
+cd "${prj_home}"
+
+go run ./cmd/inner "$@"

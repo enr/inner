@@ -1,0 +1,21 @@
+schema_version = "1"
+name = "shell"
+description = "Interactive bash shell in sandbox (no network)"
+
+[sandbox]
+network   = false
+clipboard = false
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+args        = []
+interactive = true
+
+[output]
+summary         = false
+log             = "~/.inner/logs/"
+timeout_seconds = 0
