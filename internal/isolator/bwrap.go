@@ -86,14 +86,17 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	args = append(args, "--tmpfs", "/tmp")
 
 	// ── Additional mounts ────────────────────────────────────────────────────
-	// Note: all destination paths must already exist in the sandbox root.
-	// Because the base is --ro-bind / /, every host path is available.
-	// Mounting to a non-existent path (e.g. /workspace) is not supported:
-	// bwrap cannot mkdir on a read-only root.
+	// tmpfs mounts are emitted first so that subsequent bind mounts can land
+	// inside them (bwrap processes args left-to-right).
+	for _, m := range cfg.Mounts {
+		if m.Mode == "tmpfs" {
+			args = append(args, "--tmpfs", m.Dest)
+		}
+	}
 	for _, m := range cfg.Mounts {
 		if m.Mode == "rw" {
 			args = append(args, "--bind", m.Src, m.Dest)
-		} else {
+		} else if m.Mode != "tmpfs" {
 			args = append(args, "--ro-bind", m.Src, m.Dest)
 		}
 	}

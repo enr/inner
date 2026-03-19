@@ -57,6 +57,10 @@ func Validate(p *config.Profile) Result {
 
 	// 1. Verify mount source paths exist on the host (after expansion).
 	for src, entry := range p.Mounts {
+		if entry.Mode == "tmpfs" {
+			// tmpfs mounts have no host source — skip existence check.
+			continue
+		}
 		expanded := config.ExpandPath(src)
 		if _, err := os.Stat(expanded); err != nil {
 			if os.IsNotExist(err) {
@@ -66,7 +70,7 @@ func Validate(p *config.Profile) Result {
 			}
 		}
 		if entry.Mode != "" && entry.Mode != "ro" && entry.Mode != "rw" {
-			r.addError(fmt.Sprintf("mount %q has invalid mode %q (must be \"ro\" or \"rw\")", src, entry.Mode))
+			r.addError(fmt.Sprintf("mount %q has invalid mode %q (must be \"ro\", \"rw\", or \"tmpfs\")", src, entry.Mode))
 		}
 	}
 

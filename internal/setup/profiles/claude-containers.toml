@@ -9,9 +9,13 @@ allow   = ["nested-user-ns", "podman-socket"]
 # ${UID} is expanded at load time to the numeric UID of the current user.
 # Requires `podman system service` running on the host before `inner run`.
 [mounts]
-"/run/user/${UID}/podman/podman.sock" = { dest = "/run/user/${UID}/podman/podman.sock", mode = "rw" }
-"~/.local/share/containers"           = { dest = "~/.local/share/containers", mode = "rw" }
-"~/.config/containers"                = { dest = "~/.config/containers",      mode = "rw" }
+# tmpfs on /run/user/${UID} gives podman a writable area to create its
+# runtime state (libpod/, containers/, …). The socket is then bind-mounted
+# on top; bwrap processes tmpfs before bind mounts so the ordering is safe.
+"/run/user/${UID}"                    = { dest = "/run/user/${UID}",                    mode = "tmpfs" }
+"/run/user/${UID}/podman/podman.sock" = { dest = "/run/user/${UID}/podman/podman.sock", mode = "rw"   }
+"~/.local/share/containers"           = { dest = "~/.local/share/containers",           mode = "rw"   }
+"~/.config/containers"                = { dest = "~/.config/containers",                mode = "rw"   }
 
 [env]
 clearenv = true
