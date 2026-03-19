@@ -110,7 +110,7 @@ Mount host paths into the sandbox. Keys are host paths, values are mount descrip
 
 Paths support `~` expansion.
 
-The `--workdir` flag at runtime is a shorthand for adding a `rw` mount at `/workspace`.
+The `--workdir` flag at runtime is a shorthand for adding a `rw` mount of PATH at the same path inside the sandbox (e.g. `-w ~/my-project` mounts `~/my-project` → `~/my-project`).
 
 ---
 
