@@ -160,29 +160,54 @@ inner profile clone claude-interactive my-agent
 
 ## `inner verify`
 
-Run security checks inside a sandbox to detect exposed sensitive resources.
+Run security checks **inside** a sandbox to detect exposed sensitive resources and
+misconfigurations.
 
 ```
 inner verify [flags]
 ```
+
+### How it works
+
+`inner verify` is always run from the **host**. It:
+
+1. Builds a real sandbox using the given profile (same as `inner run`).
+2. Launches `inner verify --inside` **inside** that sandbox.
+3. The checks execute within the sandboxed environment and their output is forwarded to the terminal.
+
+This means the checks probe what a real agent run would actually see — not the host environment.
 
 ### Flags
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
 | `--profile` | `-p` | string | `default` | Profile to verify |
-| `--suggest` | | bool | false | Print TOML fix snippets for failed checks |
+| `--suggest` | | bool | false | Print TOML snippets for failed checks |
 
 ### What it checks
 
-- SSH keys (`~/.ssh/`)
-- Git credentials and credential helpers
-- GPG keys
-- Docker socket
-- Podman socket
-- `.netrc`
+| Check | Severity | Description |
+|-------|----------|-------------|
+| user is not root | CRITICAL | Process must not run as uid 0 |
+| /usr is read-only | CRITICAL | Base filesystem must not be writable |
+| git credentials not exposed | CRITICAL | `~/.git-credentials` must be absent or empty |
+| `~/.ssh` not accessible | HIGH | No private key files visible in `~/.ssh/` |
+| `~/.gnupg` not accessible | HIGH | `~/.gnupg/` must be empty |
+| no secrets in env vars | HIGH | No env var names containing `PASSWORD`, `SECRET`, `TOKEN`, etc. |
+| docker socket not accessible | MEDIUM | `/var/run/docker.sock` must not be reachable |
+| `~/.netrc` not accessible | MEDIUM | `~/.netrc` must be absent or empty |
+| shims active in PATH | MEDIUM | Shim directory must be first in `PATH` |
+| network restricted | MEDIUM | TCP connection to 8.8.8.8:53 must fail |
 
 Custom checks can be added to a profile under `[verify.custom]` — see [Profiles](profiles.md).
+
+### Output symbols
+
+| Symbol | Meaning |
+|--------|---------|
+| `[ok]` | Check passed |
+| `[!!]` | Check failed |
+| `[--]` | Resource explicitly allowed via `[sandbox].allow` — downgraded to INFO, does not count as failure |
 
 ### Examples
 
@@ -197,7 +222,7 @@ inner verify -p claude-interactive
 inner verify -p claude-interactive --suggest
 ```
 
-Exit code is `1` if any check fails.
+Exit code is `1` if any check fails and is not overridden by `[sandbox].allow`.
 
 ---
 
