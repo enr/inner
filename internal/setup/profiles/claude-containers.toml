@@ -1,5 +1,5 @@
 schema_version = "1"
-name        = "agent-containers"
+name        = "claude-containers"
 description = "Agent con supporto container via podman rootless"
 
 [sandbox]

@@ -115,7 +115,15 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 	defer cleanupClaude()
 
-	// 11. Create isolator and build the sandbox command.
+	// 11. Sandbox ~/.gemini — replace the real dir with a temporary clone that
+	//    contains only settings.json; auth is handled via GEMINI_API_KEY env var.
+	cleanupGemini, err := applyGemini(rc)
+	if err != nil {
+		return fmt.Errorf("sandboxing gemini home: %w", err)
+	}
+	defer cleanupGemini()
+
+	// 12. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
 	if err != nil {
 		return fmt.Errorf("isolator: %w", err)
@@ -125,13 +133,13 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return fmt.Errorf("building sandbox command: %w", err)
 	}
 
-	// 12. Dry-run: print profile, effective config, and sandbox command.
+	// 13. Dry-run: print profile, effective config, and sandbox command.
 	if flags.dryRun {
 		printDryRun(w, profileName, a.loader.ProfilePath(profileName), a.loader.GlobalConfigPath(), rc, cmd.Args)
 		return nil
 	}
 
-	// 13. Launch.
+	// 14. Launch.
 	launcher := a.launcherFn()
 	result, err := launcher.Run(cmd, executor.RunOptions{
 		Interactive: rc.Entrypoint.Interactive,

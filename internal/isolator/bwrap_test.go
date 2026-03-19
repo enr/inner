@@ -483,17 +483,20 @@ func TestBuild_shimDir_mountAndPath(t *testing.T) {
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
 
-	if !hasSeq(args, "--ro-bind", "/tmp/inner-shims-test", "/run/inner-shims") {
+	if !hasSeq(args, "--ro-bind", "/tmp/inner-shims-test", "/tmp/inner-shims") {
 		t.Errorf("expected shim dir ro-bind, got %v", args)
 	}
-	// PATH must be set and start with /run/inner-shims.
+	if !hasSeq(args, "--dir", "/tmp/inner-shims") {
+		t.Errorf("expected --dir /tmp/inner-shims before ro-bind, got %v", args)
+	}
+	// PATH must be set and start with /tmp/inner-shims.
 	idx := slices.Index(args, "PATH")
 	if idx == -1 || args[idx-1] != "--setenv" {
 		t.Fatalf("expected --setenv PATH in args %v", args)
 	}
 	pathVal := args[idx+1]
-	if !strings.HasPrefix(pathVal, "/run/inner-shims:") {
-		t.Errorf("PATH %q should start with /run/inner-shims:", pathVal)
+	if !strings.HasPrefix(pathVal, "/tmp/inner-shims:") {
+		t.Errorf("PATH %q should start with /tmp/inner-shims:", pathVal)
 	}
 }
 
@@ -504,7 +507,7 @@ func TestBuild_noShimDir_noPathOverride(t *testing.T) {
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
 
-	if hasSeq(args, "--ro-bind", "/run/inner-shims") {
+	if hasSeq(args, "--ro-bind", "/tmp/inner-shims") {
 		t.Errorf("unexpected shim dir bind when ShimDir is empty, got %v", args)
 	}
 	// No explicit PATH override added.
@@ -533,8 +536,8 @@ func TestBuild_shimDir_pathPreservesProfilePath(t *testing.T) {
 			lastPathVal = args[i+2]
 		}
 	}
-	if !strings.HasPrefix(lastPathVal, "/run/inner-shims:") {
-		t.Errorf("PATH should start with /run/inner-shims:, got %q", lastPathVal)
+	if !strings.HasPrefix(lastPathVal, "/tmp/inner-shims:") {
+		t.Errorf("PATH should start with /tmp/inner-shims:, got %q", lastPathVal)
 	}
 	if !strings.Contains(lastPathVal, "/custom/bin") {
 		t.Errorf("PATH should contain original /custom/bin, got %q", lastPathVal)

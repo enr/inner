@@ -13,14 +13,15 @@ A **profile** is a TOML file that fully describes a sandbox environment. Profile
 |------|-------------|
 | `default` | Interactive bash shell, no network, package managers blocked |
 | `shell` | Explicit bash shell, no network |
-| `agent-interactive` | Claude Code interactive session, network enabled |
-| `one-shot` | Claude Code non-interactive, `--dangerously-skip-permissions` |
-| `agent-containers` | Claude Code with Podman rootless container support |
+| `claude-interactive` | Claude Code interactive session, network enabled |
+| `claude-one-shot` | Claude Code non-interactive, `--dangerously-skip-permissions` |
+| `claude-containers` | Claude Code with Podman rootless container support |
+| `gemini-interactive` | Gemini CLI interactive session, network enabled |
 
 Inspect any built-in profile:
 
 ```bash
-inner profile show agent-interactive
+inner profile show claude-interactive
 ```
 
 ---
@@ -225,6 +226,105 @@ checks = [
 
 ---
 
+## Claude Code sandbox (`~/.claude`)
+
+The agent profiles (`claude-interactive`, `claude-one-shot`) declare a mount for `~/.claude`:
+
+```toml
+[mounts]
+"~/.claude" = { dest = "~/.claude", mode = "rw" }
+```
+
+This looks like the entire directory is shared, but `inner` intercepts it at runtime and
+**replaces the mount with a sanitized temporary clone**. The real `~/.claude` is never
+mounted into the sandbox and is never modified by the agent.
+
+### What the clone contains
+
+| Path | Source | Why |
+|------|--------|-----|
+| `.credentials.json` | copied from `~/.claude` | Required — auth token for Anthropic API |
+| `settings.json` | copied from `~/.claude` | Optional — user preferences (theme, model, …) |
+| `skills/` | copied from `~/.claude` | Optional — user-defined skill definitions |
+| `sessions/`, `cache/`, `projects/`, `tasks/`, `history/`, … | created empty | Fresh state for this run |
+
+The files are **copied** from the originals before the sandbox starts, so the originals
+remain untouched even if the agent writes to its own copies.
+
+### Lifecycle
+
+```
+inner run -p claude-interactive
+  └─ prepareClaude()
+       ├─ create /tmp/inner-claude-XXXXXX/
+       ├─ copy .credentials.json  (from ~/.claude)
+       ├─ copy settings.json      (from ~/.claude, if present)
+       ├─ copy skills/            (from ~/.claude, if present)
+       └─ mkdir sessions/ cache/ projects/ tasks/ …  (empty)
+  └─ mount /tmp/inner-claude-XXXXXX -> ~/.claude inside sandbox
+  └─ [agent runs, writes sessions/tasks/cache to the clone]
+  └─ sandbox exits -> rm -rf /tmp/inner-claude-XXXXXX
+     ~/.claude on the host is untouched
+```
+
+### Consequences
+
+- The agent **can authenticate** (credentials are present in the clone).
+- The agent **cannot read** previous sessions, history, or project state from the host.
+- Any session data or tasks the agent writes **disappear** when the sandbox exits.
+- The host `~/.claude` stays **pristine** regardless of what the agent does.
+
+If you need session data to persist across runs, copy the relevant files out of the
+sandbox before it exits, or review captured output with `inner log show`.
+
+---
+
+## Gemini CLI sandbox (`~/.gemini`)
+
+The `gemini-interactive` profile declares a mount for `~/.gemini`:
+
+```toml
+[mounts]
+"~/.gemini" = { dest = "~/.gemini", mode = "rw" }
+```
+
+Like `~/.claude`, this mount is intercepted at runtime and **replaced with a
+sanitized temporary clone**. The real `~/.gemini` is never mounted into the sandbox.
+
+### Authentication
+
+Gemini CLI authenticates via the `GEMINI_API_KEY` environment variable, which is
+inherited from the host through `env.inherit`. No credentials file needs to be copied.
+
+### What the clone contains
+
+| Path | Source | Why |
+|------|--------|-----|
+| `settings.json` | copied from `~/.gemini` | Optional — user preferences |
+| (everything else) | empty | Fresh state for this run |
+
+### Lifecycle
+
+```
+inner run -p gemini-interactive
+  └─ prepareGemini()
+       ├─ create /tmp/inner-gemini-XXXXXX/
+       └─ copy settings.json  (from ~/.gemini, if present)
+  └─ mount /tmp/inner-gemini-XXXXXX -> ~/.gemini inside sandbox
+  └─ [agent runs, writes to the clone]
+  └─ sandbox exits -> rm -rf /tmp/inner-gemini-XXXXXX
+     ~/.gemini on the host is untouched
+```
+
+### Consequences
+
+- The agent **can authenticate** (via `GEMINI_API_KEY` env var).
+- The agent **cannot read** previous sessions or history from the host.
+- Any data the agent writes **disappears** when the sandbox exits.
+- The host `~/.gemini` stays **pristine** regardless of what the agent does.
+
+---
+
 ## Managing Profiles
 
 ```bash
@@ -241,7 +341,7 @@ inner profile new my-profile
 inner profile edit my-profile
 
 # Clone a profile as a starting point
-inner profile clone agent-interactive my-agent
+inner profile clone claude-interactive my-agent
 
 # Validate all profiles
 inner profile validate --all

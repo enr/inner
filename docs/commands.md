@@ -52,16 +52,16 @@ inner run -p default -- python script.py --verbose
 inner run
 
 # Use a specific profile
-inner run -p agent-interactive
+inner run -p claude-interactive
 
 # Mount a project directory as /workspace
-inner run -p agent-interactive -w ~/projects/myapp
+inner run -p claude-interactive -w ~/projects/myapp
 
 # Override network for a single run
 inner run --network -- curl https://example.com
 
 # Override network off for a single run
-inner run -p agent-interactive --no-network
+inner run -p claude-interactive --no-network
 
 # Mount an extra read-only directory
 inner run -m ~/shared/libs:/libs:ro
@@ -73,13 +73,13 @@ inner run -e DEBUG=true -e LOG_LEVEL=info
 inner run -p default -- ls -la /workspace
 
 # Send a prompt to the agent
-inner run -p one-shot -w ~/myproject --prompt "write unit tests for all public functions"
+inner run -p claude-one-shot -w ~/myproject --prompt "write unit tests for all public functions"
 
 # Set a 5-minute timeout
-inner run -p one-shot --timeout 300 --prompt "summarize the codebase"
+inner run -p claude-one-shot --timeout 300 --prompt "summarize the codebase"
 
 # Preview the bwrap command without running
-inner run -p agent-interactive --dry-run
+inner run -p claude-interactive --dry-run
 ```
 
 ---
@@ -101,9 +101,9 @@ Output:
 ```
 default              Interactive shell, no network
 shell                Bash shell, no network
-agent-interactive    Claude Code interactive, network enabled
-one-shot             Claude Code non-interactive, dangerously-skip-permissions
-agent-containers     Claude Code with Podman rootless containers
+claude-interactive    Claude Code interactive, network enabled
+claude-one-shot             Claude Code non-interactive, dangerously-skip-permissions
+claude-containers     Claude Code with Podman rootless containers
 ```
 
 ### `inner profile show`
@@ -111,7 +111,7 @@ agent-containers     Claude Code with Podman rootless containers
 Display the TOML content of a profile:
 
 ```bash
-inner profile show agent-interactive
+inner profile show claude-interactive
 ```
 
 ### `inner profile new`
@@ -153,7 +153,7 @@ inner profile validate --all
 Clone a profile under a new name:
 
 ```bash
-inner profile clone agent-interactive my-agent
+inner profile clone claude-interactive my-agent
 ```
 
 ---
@@ -191,10 +191,10 @@ Custom checks can be added to a profile under `[verify.custom]` — see [Profile
 inner verify
 
 # Verify a specific profile
-inner verify -p agent-interactive
+inner verify -p claude-interactive
 
 # Show TOML snippets to fix failures
-inner verify -p agent-interactive --suggest
+inner verify -p claude-interactive --suggest
 ```
 
 Exit code is `1` if any check fails.
@@ -261,10 +261,10 @@ Example output on a fresh install:
 dir: /home/alice/.inner
 created dirs: /home/alice/.inner/profiles, /home/alice/.inner/logs, /home/alice/.inner/directives
 config: created
-profile agent-containers: installed
-profile agent-interactive: installed
+profile claude-containers: installed
+profile claude-interactive: installed
 profile default: installed
-profile one-shot: installed
+profile claude-one-shot: installed
 profile shell: installed
 ```
 
@@ -273,34 +273,66 @@ Example output when everything already exists:
 ```
 dir: /home/alice/.inner
 config: already exists (skipped)
-profile agent-containers: already exists (skipped)
-profile agent-interactive: already exists (skipped)
+profile claude-containers: already exists (skipped)
+profile claude-interactive: already exists (skipped)
 profile default: already exists (skipped)
-profile one-shot: already exists (skipped)
+profile claude-one-shot: already exists (skipped)
 profile shell: already exists (skipped)
 ```
 
-### Resetting to defaults
+To reset to defaults (for example, to pick up updated built-in profiles after an upgrade)
+use [`inner reset`](#inner-reset).
 
-If you have not customized any files in `~/.inner/` and want to start fresh (for example,
-to pick up updated built-in profiles after an upgrade), it is safe to delete the entire
-directory and re-run `inner init`:
+---
+
+## `inner reset`
+
+Archive the current `~/.inner` contents and reinitialize with default profiles and config:
 
 ```bash
-rm -rf ~/.inner
-inner init
+inner reset          # asks for confirmation
+inner reset --force  # skips confirmation (useful in scripts)
 ```
 
-**What to preserve before deleting:**
+The command:
 
-| Path | Preserve if... |
-|------|----------------|
-| `~/.inner/config.toml` | You have changed `log_dir` or other settings |
-| `~/.inner/profiles/*.toml` | You have edited or added custom profiles |
-| `~/.inner/logs/` | You want to keep run history |
+1. Moves everything inside `~/.inner/` (except `backups/`) into `~/.inner/backups/<datetime>/`
+2. Runs `inner init` to recreate default profiles and a starter `config.toml`
 
-The `~/.inner/directives/` directory holds custom verification directives; back it up if
-you have added any.
+The `~/.inner` directory itself is never deleted — only its contents are archived.
+
+Example output:
+
+```
+backup salvato in: /home/alice/.inner/backups/20260319-142301
+profile claude-containers: installato
+profile claude-interactive: installato
+profile claude-one-shot: installato
+profile default: installato
+profile gemini-interactive: installato
+profile shell: installato
+config: creata
+
+reset completato.
+per annullare: mv /home/alice/.inner/backups/20260319-142301/* /home/alice/.inner/
+```
+
+### Undoing a reset
+
+The undo command is printed at the end of each reset:
+
+```bash
+mv ~/.inner/backups/20260319-142301/* ~/.inner/
+```
+
+### Managing backups
+
+Backups accumulate under `~/.inner/backups/`. Remove old ones manually when no longer needed:
+
+```bash
+ls ~/.inner/backups/
+rm -rf ~/.inner/backups/20260319-142301
+```
 
 ---
 

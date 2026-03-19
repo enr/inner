@@ -24,6 +24,7 @@ func buildRootCmd(app *App) *cobra.Command {
 		version.Version, version.GitCommit, version.BuildTime))
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(app.newInitCmd())
+	root.AddCommand(app.newResetCmd())
 	root.AddCommand(app.newRunCmd())
 	root.AddCommand(app.newProfileCmd())
 	root.AddCommand(app.newConfigCmd())

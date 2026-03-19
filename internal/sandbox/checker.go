@@ -190,7 +190,7 @@ func (c *Checker) shimMountPath() string {
 	if c.ShimMountPath != "" {
 		return c.ShimMountPath
 	}
-	return "/run/inner-shims"
+	return "/tmp/inner-shims"
 }
 
 func (c *Checker) dial(network, address string, timeout time.Duration) (net.Conn, error) {

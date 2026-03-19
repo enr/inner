@@ -54,9 +54,9 @@ On the first invocation `inner` initializes `~/.inner/` and installs the built-i
 ├── profiles/          # sandbox profiles (TOML)
 │   ├── default.toml
 │   ├── shell.toml
-│   ├── agent-interactive.toml
-│   ├── one-shot.toml
-│   └── agent-containers.toml
+│   ├── claude-interactive.toml
+│   ├── claude-one-shot.toml
+│   └── claude-containers.toml
 └── logs/              # run logs
 ```
 
@@ -97,13 +97,13 @@ inner run
 Run Claude Code in interactive mode with network access:
 
 ```bash
-inner run -p agent-interactive -w ~/my-project
+inner run -p claude-interactive -w ~/my-project
 ```
 
-Run a one-shot agent task (non-interactive, returns when done):
+Run a claude-one-shot agent task (non-interactive, returns when done):
 
 ```bash
-inner run -p one-shot -w ~/my-project --prompt "add docstrings to all exported functions"
+inner run -p claude-one-shot -w ~/my-project --prompt "add docstrings to all exported functions"
 ```
 
 See [Examples](examples.md) for more patterns, and [Profiles](profiles.md) to understand or customize the sandbox configuration.

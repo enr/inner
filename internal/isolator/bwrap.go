@@ -165,10 +165,15 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	}
 
 	// ── Shim dir ─────────────────────────────────────────────────────────────
-	// Mount the shim directory read-only at a fixed path inside the sandbox,
+	// Mount the shim directory read-only at /tmp/inner-shims inside the sandbox,
 	// then prepend it to PATH so shims take precedence over real binaries.
+	// We use /tmp/inner-shims (not /run/inner-shims) because /tmp is already a
+	// writable tmpfs at this point: --dir creates the subdirectory there without
+	// touching the read-only root.
 	if cfg.ShimDir != "" {
-		args = append(args, "--ro-bind", cfg.ShimDir, "/run/inner-shims")
+		const shimMount = "/tmp/inner-shims"
+		args = append(args, "--dir", shimMount)
+		args = append(args, "--ro-bind", cfg.ShimDir, shimMount)
 
 		// Determine the PATH that will be active inside the sandbox.
 		// Priority: explicitly set in profile → inherited from host → hard default.
@@ -179,7 +184,7 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		if sandboxPath == "" {
 			sandboxPath = "/usr/local/bin:/usr/bin:/bin"
 		}
-		args = append(args, "--setenv", "PATH", "/run/inner-shims:"+sandboxPath)
+		args = append(args, "--setenv", "PATH", shimMount+":"+sandboxPath)
 	}
 
 	// ── Git config injection ─────────────────────────────────────────────────
