@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+# End-to-end integration tests for inner.
+#
+# Usage:
+#   ./scripts/e2e-test.sh
+#
+# Requirements: inner in PATH, bwrap available, curl available in the sandbox.
+# Run from any directory — the script uses absolute paths throughout.
+#
+# Exit code: 0 if all tests pass, 1 otherwise.
+
+set -uo pipefail
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+PASS=0
+FAIL=0
+ERRORS=()
+
+pass() { PASS=$((PASS + 1)); printf "  [PASS] %s\n" "$1"; }
+fail() { FAIL=$((FAIL + 1)); ERRORS+=("$1"); printf "  [FAIL] %s\n" "$1"; }
+
+section() { printf "\n── %s ──\n" "$1"; }
+
+# run_sandbox: run inner with -p PROFILE --no-interactive -- -c CMD
+# Returns stdout; exits with the process exit code.
+run_sandbox() {
+    local profile="$1"; shift
+    inner run -p "$profile" --no-interactive "$@"
+}
+
+run_cmd() {
+    local profile="$1"; shift
+    local cmd="$1"; shift
+    run_sandbox "$profile" "$@" -- -c "$cmd"
+}
+
+# ── Setup: temporary profiles ─────────────────────────────────────────────────
+
+PROFILES_DIR="$HOME/.inner/profiles"
+TMPWORK=$(mktemp -d)
+trap 'rm -rf "$TMPWORK"; rm -f "$PROFILES_DIR/inner-e2e-"*.toml' EXIT
+
+# t-nonet: bash, no network, clearenv
+cat > "$PROFILES_DIR/inner-e2e-nonet.toml" <<'EOF'
+schema_version = "1"
+name           = "inner-e2e-nonet"
+description    = "e2e test profile — no network"
+
+[sandbox]
+network = false
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+# t-net: same but network = true
+cat > "$PROFILES_DIR/inner-e2e-net.toml" <<'EOF'
+schema_version = "1"
+name           = "inner-e2e-net"
+description    = "e2e test profile — network enabled"
+
+[sandbox]
+network = true
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+# t-git: adds a git override so we can verify sanitized gitconfig
+cat > "$PROFILES_DIR/inner-e2e-git.toml" <<'EOF'
+schema_version = "1"
+name           = "inner-e2e-git"
+description    = "e2e test profile — git config sanitize"
+
+[sandbox]
+network = false
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+
+[git]
+strip_sections = ["credential"]
+
+[git.overrides]
+"user.email" = "inner-e2e-test@example.com"
+EOF
+
+# t-claude: mounts ~/.claude so applyClaude sandboxing kicks in
+cat > "$PROFILES_DIR/inner-e2e-claude.toml" <<'EOF'
+schema_version = "1"
+name           = "inner-e2e-claude"
+description    = "e2e test profile — claude home sandboxing"
+
+[sandbox]
+network = false
+
+[mounts]
+"~/.claude" = { dest = "~/.claude", mode = "rw" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+section "Working directory"
+
+# -w with absolute path: pwd inside sandbox should match
+EXPECTED_WD="$TMPWORK"
+ACTUAL_WD=$(run_sandbox inner-e2e-nonet -w "$TMPWORK" -- -c "pwd" 2>/dev/null || true)
+ACTUAL_WD=$(echo "$ACTUAL_WD" | tr -d '[:space:]')
+if [[ "$ACTUAL_WD" == "$EXPECTED_WD" ]]; then
+    pass "-w absolute path: pwd inside sandbox matches"
+else
+    fail "-w absolute path: expected '$EXPECTED_WD', got '$ACTUAL_WD'"
+fi
+
+# -w with relative path: inner should resolve to absolute
+PARENT=$(cd "$TMPWORK/.." && pwd)
+ACTUAL_WD=$(run_sandbox inner-e2e-nonet -w "$TMPWORK/.." -- -c "pwd" 2>/dev/null || true)
+ACTUAL_WD=$(echo "$ACTUAL_WD" | tr -d '[:space:]')
+if [[ "$ACTUAL_WD" == "$PARENT" ]]; then
+    pass "-w relative path: resolved to absolute '$PARENT'"
+else
+    fail "-w relative path: expected '$PARENT', got '$ACTUAL_WD'"
+fi
+
+# default workdir: cwd inside sandbox = cwd on host
+cd "$TMPWORK"
+ACTUAL_WD=$(run_sandbox inner-e2e-nonet -- -c "pwd" 2>/dev/null || true)
+ACTUAL_WD=$(echo "$ACTUAL_WD" | tr -d '[:space:]')
+if [[ "$ACTUAL_WD" == "$TMPWORK" ]]; then
+    pass "default workdir matches host cwd"
+else
+    fail "default workdir: expected '$TMPWORK', got '$ACTUAL_WD'"
+fi
+cd - > /dev/null
+
+# ── Filesystem ────────────────────────────────────────────────────────────────
+
+section "Filesystem"
+
+# cwd is writable: file created inside sandbox appears on host
+MARKER="$TMPWORK/sandbox-wrote-this-$$"
+run_sandbox inner-e2e-nonet -w "$TMPWORK" -- -c "touch sandbox-wrote-this-$$" 2>/dev/null || true
+if [[ -f "$MARKER" ]]; then
+    pass "cwd is writable: file created inside sandbox visible on host"
+    rm -f "$MARKER"
+else
+    fail "cwd is writable: file not found on host after touch inside sandbox"
+fi
+
+# /usr is read-only: writing to /usr/bin should fail
+if run_sandbox inner-e2e-nonet -- -c "touch /usr/bin/inner-e2e-probe 2>/dev/null" 2>/dev/null; then
+    fail "/usr is read-only: write succeeded (should have been denied)"
+else
+    pass "/usr is read-only: write correctly denied"
+fi
+
+# /tmp is isolated: file written to /tmp inside sandbox does NOT appear on host
+TMPFILE="/tmp/inner-e2e-isolation-$$"
+run_sandbox inner-e2e-nonet -- -c "touch '$TMPFILE'" 2>/dev/null || true
+if [[ -f "$TMPFILE" ]]; then
+    fail "/tmp is isolated: file appeared on host (sandbox /tmp leaked)"
+    rm -f "$TMPFILE"
+else
+    pass "/tmp is isolated: file in sandbox /tmp not visible on host"
+fi
+
+# ── Network ───────────────────────────────────────────────────────────────────
+
+section "Network"
+
+# no network: curl to external host should fail
+if run_sandbox inner-e2e-nonet -- \
+    -c "curl -s --connect-timeout 3 https://www.google.com -o /dev/null" 2>/dev/null; then
+    fail "no-network profile: curl succeeded (should be blocked)"
+else
+    pass "no-network profile: curl correctly blocked"
+fi
+
+# network enabled: curl should succeed
+HTTP_CODE=$(run_sandbox inner-e2e-net -- \
+    -c "curl -s --connect-timeout 5 -o /dev/null -w '%{http_code}' https://www.google.com" \
+    2>/dev/null || echo "000")
+HTTP_CODE=$(echo "$HTTP_CODE" | tr -d '[:space:]')
+if [[ "$HTTP_CODE" == "200" ]]; then
+    pass "network-enabled profile: curl returned HTTP 200"
+else
+    fail "network-enabled profile: expected HTTP 200, got '$HTTP_CODE'"
+fi
+
+# ── Environment variables ─────────────────────────────────────────────────────
+
+section "Environment variables"
+
+# clearenv: host var not visible inside sandbox
+export INNER_E2E_HOSTVAR_$$="should-not-leak"
+VAR_NAME="INNER_E2E_HOSTVAR_$$"
+RESULT=$(run_sandbox inner-e2e-nonet -- -c "echo \${${VAR_NAME}:-NOTFOUND}" 2>/dev/null || true)
+RESULT=$(echo "$RESULT" | tr -d '[:space:]')
+if [[ "$RESULT" == "NOTFOUND" ]]; then
+    pass "clearenv: host env var not visible inside sandbox"
+else
+    fail "clearenv: host env var leaked into sandbox (got '$RESULT')"
+fi
+
+# -e flag: explicitly set var is visible
+RESULT=$(run_sandbox inner-e2e-nonet -e "INNER_E2E_INJECTED=hello" -- \
+    -c 'echo ${INNER_E2E_INJECTED:-NOTFOUND}' 2>/dev/null || true)
+RESULT=$(echo "$RESULT" | tr -d '[:space:]')
+if [[ "$RESULT" == "hello" ]]; then
+    pass "-e flag: injected env var visible inside sandbox"
+else
+    fail "-e flag: expected 'hello', got '$RESULT'"
+fi
+
+# ── Git config sanitization ───────────────────────────────────────────────────
+
+section "Git config"
+
+# The inner-e2e-git profile injects url.nopush.pushinsteadof = git@
+# Verify that git config --list inside the sandbox shows it.
+# --global reads only the file pointed to by GIT_CONFIG_GLOBAL (our injected config).
+RESULT=$(run_sandbox inner-e2e-git -- -c "git config --list --global 2>/dev/null || true" 2>/dev/null || true)
+if echo "$RESULT" | grep -qi "inner-e2e-test@example.com"; then
+    pass "git config: injected override (user.email) visible inside sandbox"
+else
+    fail "git config: user.email override not found in git config --list output"
+fi
+
+# credential section should be stripped
+if echo "$RESULT" | grep -qi "^credential"; then
+    fail "git config: credential section was not stripped"
+else
+    pass "git config: credential section stripped from injected config"
+fi
+
+# ── ~/.claude sessions isolation ──────────────────────────────────────────────
+
+section "~/.claude sandboxing"
+
+CLAUDE_DIR="$HOME/.claude"
+
+if [[ ! -d "$CLAUDE_DIR" ]]; then
+    printf "  [SKIP] ~/.claude not found, skipping claude sandboxing tests\n"
+else
+    # Create a sentinel file in real ~/.claude/sessions on the host
+    SENTINEL="inner-e2e-sentinel-$$.txt"
+    SENTINEL_PATH="$CLAUDE_DIR/sessions/$SENTINEL"
+    mkdir -p "$CLAUDE_DIR/sessions"
+    echo "host-only" > "$SENTINEL_PATH"
+
+    # Inside the sandbox, sessions/ should exist but be empty (fresh clone)
+    RESULT=$(run_sandbox inner-e2e-claude -- \
+        -c "ls ~/.claude/sessions/ 2>/dev/null | wc -l | tr -d '[:space:]'" 2>/dev/null || echo "-1")
+    RESULT=$(echo "$RESULT" | tr -d '[:space:]')
+    if [[ "$RESULT" == "0" ]]; then
+        pass "~/.claude/sessions: empty inside sandbox (real sessions not visible)"
+    else
+        fail "~/.claude/sessions: expected 0 entries inside sandbox, got '$RESULT'"
+    fi
+
+    # Files written to ~/.claude/sessions inside the sandbox do NOT appear on host
+    run_sandbox inner-e2e-claude -- \
+        -c "touch ~/.claude/sessions/sandbox-created-$$.txt" 2>/dev/null || true
+    if [[ -f "$CLAUDE_DIR/sessions/sandbox-created-$$.txt" ]]; then
+        fail "~/.claude/sessions: file created inside sandbox appeared on host"
+    else
+        pass "~/.claude/sessions: file created inside sandbox not visible on host"
+    fi
+
+    # .credentials.json should be visible inside the sandbox (auth is copied)
+    if [[ -f "$CLAUDE_DIR/.credentials.json" ]]; then
+        RESULT=$(run_sandbox inner-e2e-claude -- \
+            -c "test -f ~/.claude/.credentials.json && echo found || echo missing" \
+            2>/dev/null || echo "missing")
+        RESULT=$(echo "$RESULT" | tr -d '[:space:]')
+        if [[ "$RESULT" == "found" ]]; then
+            pass "~/.claude/.credentials.json: auth file visible inside sandbox"
+        else
+            fail "~/.claude/.credentials.json: auth file not visible inside sandbox"
+        fi
+    else
+        printf "  [SKIP] ~/.claude/.credentials.json not found, skipping auth copy test\n"
+    fi
+
+    # Cleanup sentinel
+    rm -f "$SENTINEL_PATH"
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+printf "\n────────────────────────────────\n"
+printf "Result: %d passed, %d failed\n" "$PASS" "$FAIL"
+
+if [[ "${#ERRORS[@]}" -gt 0 ]]; then
+    printf "\nFailed tests:\n"
+    for e in "${ERRORS[@]}"; do
+        printf "  - %s\n" "$e"
+    done
+    exit 1
+fi
+
+exit 0
