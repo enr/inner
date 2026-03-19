@@ -13,7 +13,7 @@ A **profile** is a TOML file that fully describes a sandbox environment. Profile
 |------|-------------|
 | `default` | Interactive bash shell, no network, package managers blocked |
 | `shell` | Explicit bash shell, no network |
-| `claude-interactive` | Claude Code interactive session, network enabled |
+| `claude-interactive` | ⚠ experimental — Claude Code interactive session, network enabled |
 | `claude-one-shot` | Claude Code non-interactive, `--dangerously-skip-permissions` |
 | `claude-containers` | Claude Code with Podman rootless container support |
 | `gemini-interactive` | Gemini CLI interactive session, network enabled |
@@ -32,8 +32,9 @@ inner profile show claude-interactive
 
 ```toml
 schema_version = "1"
-name = "my-profile"
-description = "Human-readable description"
+name          = "my-profile"
+description   = "Human-readable description"
+experimental  = false  # set to true to prevent inner run from starting
 
 [sandbox]
 # ...
@@ -59,6 +60,17 @@ description = "Human-readable description"
 [verify.custom]
 # ...
 ```
+
+---
+
+## Top-level fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `schema_version` | string | — | Must be `"1"` |
+| `name` | string | — | Profile identifier |
+| `description` | string | `""` | Human-readable description shown in `inner profile list` |
+| `experimental` | bool | `false` | When `true`, `inner run` refuses to start with an error. The profile remains visible in `inner profile list` with an `[experimental]` prefix. Use this to keep a work-in-progress profile in the repository without accidentally running it. |
 
 ---
 
