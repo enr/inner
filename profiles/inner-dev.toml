@@ -1,0 +1,33 @@
+schema_version = "1"
+name          = "inner-dev"
+description   = "Interactive Claude Code session for developing inner itself (writable GOPATH/GOCACHE)"
+
+[sandbox]
+network   = true
+clipboard = false
+
+[mounts]
+"~/.claude"          = { dest = "~/.claude",          mode = "rw" }
+"/run/user/$UID"     = { dest = "/run/user/$UID",      mode = "tmpfs" }
+"~/Projects/inner"   = { dest = "~/Projects/inner",    mode = "rw" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+
+[env.set]
+GOPATH  = "/tmp/gopath"
+GOCACHE = "/tmp/gocache"
+
+[entrypoint]
+cmd         = "claude"
+args        = []
+interactive = true
+
+[output]
+summary         = false
+log             = "~/.inner/logs/"
+timeout_seconds = 0
+
+[noop]
+block = ["apt-get", "apt", "yum", "dnf", "brew", "pacman", "yay"]
