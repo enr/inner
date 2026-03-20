@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -77,6 +78,51 @@ func (l *Loader) LoadProfile(name string) (*Profile, error) {
 	return p, nil
 }
 
+// LoadProfileFromPath reads a profile from an explicit file path.
+func (l *Loader) LoadProfileFromPath(path string) (*Profile, error) {
+	p := &Profile{}
+	_, err := toml.DecodeFile(path, p)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("profile file not found: %s", path)
+		}
+		return nil, fmt.Errorf("reading profile from %s: %w", path, err)
+	}
+	// Back-fill name from basename if not set in the file.
+	if p.Name == "" {
+		base := filepath.Base(path)
+		p.Name = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+	return p, nil
+}
+
+// ResolveProfilePath returns the actual file path for a name-or-path value.
+// If nameOrPath is an existing file it is resolved to an absolute path.
+// Otherwise it falls back to the profiles directory.
+func (l *Loader) ResolveProfilePath(nameOrPath string) string {
+	if _, err := os.Stat(nameOrPath); err == nil {
+		if abs, err := filepath.Abs(nameOrPath); err == nil {
+			return abs
+		}
+		return nameOrPath
+	}
+	return l.ProfilePath(nameOrPath)
+}
+
+// LoadProfileAuto loads a profile given either a name or a file path.
+// If nameOrPath points to an existing file it is loaded directly;
+// otherwise it is treated as a profile name looked up in the profiles directory.
+func (l *Loader) LoadProfileAuto(nameOrPath string) (*Profile, error) {
+	if _, err := os.Stat(nameOrPath); err == nil {
+		abs, err := filepath.Abs(nameOrPath)
+		if err != nil {
+			abs = nameOrPath
+		}
+		return l.LoadProfileFromPath(abs)
+	}
+	return l.LoadProfile(nameOrPath)
+}
+
 // Build loads global config and the named profile, then produces a RunConfig.
 // profileName defaults to "default" if empty.
 func (l *Loader) Build(profileName string) (*RunConfig, error) {
@@ -87,7 +133,7 @@ func (l *Loader) Build(profileName string) (*RunConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	profile, err := l.LoadProfile(profileName)
+	profile, err := l.LoadProfileAuto(profileName)
 	if err != nil {
 		return nil, err
 	}

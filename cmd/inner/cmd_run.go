@@ -92,7 +92,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 
 	// 7. Validate — print all issues; block on unknown allow keys or errors.
-	if p, err := a.loader.LoadProfile(profileName); err == nil {
+	if p, err := a.loader.LoadProfileAuto(profileName); err == nil {
 		result := profile.Validate(p)
 		for _, issue := range result.Issues {
 			fmt.Fprintf(w, "profile %s\n", issue)
@@ -157,7 +157,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 
 	// 13. Dry-run: print profile, effective config, and sandbox command.
 	if flags.dryRun {
-		printDryRun(w, profileName, a.loader.ProfilePath(profileName), a.loader.GlobalConfigPath(), rc, cmd.Args)
+		printDryRun(w, profileName, a.loader.ResolveProfilePath(profileName), a.loader.GlobalConfigPath(), rc, cmd.Args)
 		return nil
 	}
 

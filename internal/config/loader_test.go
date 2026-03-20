@@ -271,6 +271,101 @@ checks = [
 	}
 }
 
+func TestLoadProfileFromPath_basic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "myprofile.toml")
+	writeFile(t, path, `
+schema_version = "1"
+name = "myprofile"
+[entrypoint]
+cmd = "bash"
+`)
+	l := NewLoader(t.TempDir())
+	p, err := l.LoadProfileFromPath(path)
+	if err != nil {
+		t.Fatalf("LoadProfileFromPath: %v", err)
+	}
+	if p.Name != "myprofile" {
+		t.Errorf("Name = %q, want %q", p.Name, "myprofile")
+	}
+	if p.Entrypoint.Cmd != "bash" {
+		t.Errorf("Cmd = %q, want bash", p.Entrypoint.Cmd)
+	}
+}
+
+func TestLoadProfileFromPath_backfillName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test-profile.toml")
+	writeFile(t, path, `schema_version = "1"`)
+	l := NewLoader(t.TempDir())
+	p, err := l.LoadProfileFromPath(path)
+	if err != nil {
+		t.Fatalf("LoadProfileFromPath: %v", err)
+	}
+	if p.Name != "test-profile" {
+		t.Errorf("Name = %q, want %q", p.Name, "test-profile")
+	}
+}
+
+func TestLoadProfileFromPath_notFound(t *testing.T) {
+	l := NewLoader(t.TempDir())
+	_, err := l.LoadProfileFromPath("/nonexistent/path/profile.toml")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestLoadProfileAuto_prefersFileOverName(t *testing.T) {
+	// Create both a file in cwd-equivalent temp dir and a named profile.
+	dir := t.TempDir()
+	// Named profile in profiles dir.
+	writeFile(t, filepath.Join(dir, "profiles", "myprofile.toml"), `name = "from-profiles-dir"`)
+	// File with the same name in another dir (simulates a local file).
+	fileDir := t.TempDir()
+	localPath := filepath.Join(fileDir, "myprofile.toml")
+	writeFile(t, localPath, `name = "from-local-file"`)
+
+	l := NewLoader(dir)
+	p, err := l.LoadProfileAuto(localPath)
+	if err != nil {
+		t.Fatalf("LoadProfileAuto with path: %v", err)
+	}
+	if p.Name != "from-local-file" {
+		t.Errorf("Name = %q, want %q", p.Name, "from-local-file")
+	}
+}
+
+func TestLoadProfileAuto_fallsBackToName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "named.toml"), `name = "named"`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfileAuto("named")
+	if err != nil {
+		t.Fatalf("LoadProfileAuto with name: %v", err)
+	}
+	if p.Name != "named" {
+		t.Errorf("Name = %q, want named", p.Name)
+	}
+}
+
+func TestBuild_fromPath(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := filepath.Join(dir, "custom.toml")
+	writeFile(t, profilePath, `
+[entrypoint]
+cmd = "zsh"
+`)
+	// Loader points at a different dir (no profiles dir needed).
+	l := NewLoader(t.TempDir())
+	rc, err := l.Build(profilePath)
+	if err != nil {
+		t.Fatalf("Build with path: %v", err)
+	}
+	if rc.Entrypoint.Cmd != "zsh" {
+		t.Errorf("Entrypoint.Cmd = %q, want zsh", rc.Entrypoint.Cmd)
+	}
+}
+
 func TestBuild_emptyNoop(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `name = "p"`)
