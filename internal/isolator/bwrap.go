@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/runtime"
@@ -34,6 +35,18 @@ func (b *BwrapIsolator) pathExists(path string) bool {
 // isAllowed reports whether key is present in the allow list.
 func isAllowed(allow []string, key string) bool {
 	return slices.Contains(allow, key)
+}
+
+// isUnderTmpfs reports whether path falls inside any tmpfs mount in mounts.
+// Used to skip redundant sensitive-resource hiding for paths already erased
+// by a profile-level tmpfs (a bind inside an empty tmpfs would fail).
+func isUnderTmpfs(mounts []config.Mount, path string) bool {
+	for _, m := range mounts {
+		if m.Mode == "tmpfs" && strings.HasPrefix(path, m.Dest+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // NewBwrapIsolator creates a BwrapIsolator after verifying that bwrap is
@@ -74,14 +87,8 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// Re-mount /proc, /dev, /tmp so the sandbox is functional.
 	args = append(args, "--proc", "/proc")
 	args = append(args, "--dev", "/dev")
-	// Expose the host's /dev/pts entries inside the sandbox so that
-	// interactive TUI apps (e.g. claude, which embeds Node.js) can resolve
-	// the controlling-terminal path returned by ttyname_r(). Without this,
-	// ttyname_r() returns a path like /dev/pts/5 that doesn't exist in the
-	// fresh devtmpfs created by --dev, causing TUI initialisation to fail.
-	// Note: this is safe because --unshare-pid is not set for interactive
-	// runs; the PID-namespace fork that previously caused devpts lock
-	// contention is absent.
+	// Expose the host's /dev/pts entries inside the sandbox so that interactive
+	// TUI apps can resolve the controlling-terminal path returned by ttyname_r().
 	args = append(args, "--dev-bind", "/dev/pts", "/dev/pts")
 	args = append(args, "--tmpfs", "/tmp")
 
@@ -177,6 +184,12 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			if !b.pathExists(r.path) {
 				continue
 			}
+			// Skip if a profile tmpfs already covers this path: the tmpfs
+			// replaces the entire directory with an empty tree so there is
+			// nothing to hide, and a bind inside the empty tmpfs would fail.
+			if isUnderTmpfs(cfg.Mounts, r.path) {
+				continue
+			}
 			if r.dir {
 				args = append(args, "--tmpfs", r.path)
 			} else {
@@ -229,6 +242,7 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			cmd = "/bin/sh"
 		}
 	}
+
 	args = append(args, cmd)
 	args = append(args, cfg.Entrypoint.Args...)
 

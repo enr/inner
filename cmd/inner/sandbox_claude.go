@@ -143,6 +143,19 @@ func applyClaudeDir(rc *config.RunConfig, claudeDir string) (func(), error) {
 		rc.Mounts[i].Src = sandboxed
 	}
 
+	// Bind ~/.claude.json writable so claude can update UI state (numStartups,
+	// tips history, …) regardless of whether the workdir makes the home
+	// directory writable.  Without this, running with -w <subdir> leaves the
+	// home read-only and claude hangs trying to write the file at startup.
+	claudeJsonPath := claudeDir + ".json"
+	if _, err := os.Stat(claudeJsonPath); err == nil {
+		rc.Mounts = append(rc.Mounts, config.Mount{
+			Src:  claudeJsonPath,
+			Dest: claudeJsonPath,
+			Mode: "rw",
+		})
+	}
+
 	return func() {
 		for _, fn := range cleanups {
 			fn()

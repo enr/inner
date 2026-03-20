@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // RunOptions configures a single sandbox execution.
@@ -132,6 +134,28 @@ func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, log *os.File
 // session (piping stdout would turn it into a non-TTY from the app's
 // perspective and break TUI rendering). The log parameter is ignored.
 func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, _ *os.File) (int, error) {
+	// Put the terminal in raw mode before the child starts so that terminal
+	// capability responses (DA, XTVERSION, etc.) are available immediately,
+	// without cooked-mode line-discipline buffering.
+	//
+	// TUI apps (claude, gemini) probe terminal capabilities by sending escape
+	// queries and waiting for responses. Node.js readline sends these queries
+	// during module initialisation, before the app calls setRawMode. In cooked
+	// mode the response is held in the kernel TTY read buffer until a newline
+	// arrives; when setRawMode calls tcsetattr(TCSAFLUSH) the buffer is
+	// discarded and the app hangs waiting for a response that will never come.
+	//
+	// With raw mode already active the response is available immediately;
+	// libuv drains it into userspace in the same event-loop iteration, so
+	// the TCSAFLUSH that follows flushes an already-empty buffer.
+	if f, ok := l.Stdin.(*os.File); ok {
+		if term.IsTerminal(int(f.Fd())) {
+			if oldState, err := term.MakeRaw(int(f.Fd())); err == nil {
+				defer term.Restore(int(f.Fd()), oldState)
+			}
+		}
+	}
+
 	cmd.Stdin = l.Stdin
 	cmd.Stdout = l.Stdout
 	cmd.Stderr = l.Stderr
