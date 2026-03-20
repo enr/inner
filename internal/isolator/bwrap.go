@@ -126,6 +126,34 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		args = append(args, "--unshare-net")
 	}
 
+	// ── Nested user namespaces ────────────────────────────────────────────────
+	// Required for rootless container runtimes (podman, docker rootless) inside
+	// the sandbox. We explicitly unshare the user namespace so that bwrap's
+	// --userns-block-fd mechanism works (it requires --unshare-user). The
+	// runSandbox pipeline then calls newuidmap/newgidmap from the host (where
+	// the setuid bit is fully effective) to set up a uid mapping that includes
+	// the full subuid range, enabling nested rootless containers.
+	// CAP_SETUID/CAP_SETGID are added so that newuidmap called from *inside*
+	// the sandbox (by podman creating nested containers) can raise its caps.
+	if isAllowed(cfg.Allow, "nested-user-ns") {
+		args = append(args, "--unshare-user")
+		// Keep the real uid/gid inside the sandbox so rootless tools (podman)
+		// continue to use user-mode storage paths (~/.local/share/containers)
+		// instead of system-wide root paths (/var/lib/containers).
+		args = append(args, "--uid", strconv.Itoa(os.Getuid()), "--gid", strconv.Itoa(os.Getgid()))
+		args = append(args, "--cap-add", "cap_setuid", "--cap-add", "cap_setgid")
+		// /var/tmp is used by podman as scratch space during image pulls and
+		// container setup. The root is bound read-only so we overlay a tmpfs.
+		args = append(args, "--tmpfs", "/var/tmp")
+		// /dev/net/tun is required by pasta (podman's rootless network backend)
+		// to create tap devices for container networking. bwrap's --dev /dev
+		// creates a minimal devtmpfs without it, so we bind it explicitly.
+		if b.pathExists("/dev/net/tun") {
+			args = append(args, "--dir", "/dev/net")
+			args = append(args, "--dev-bind", "/dev/net/tun", "/dev/net/tun")
+		}
+	}
+
 	// ── Environment ──────────────────────────────────────────────────────────
 	if cfg.Env.Clear {
 		args = append(args, "--clearenv")
@@ -159,7 +187,7 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// or /dev/null binds (files and sockets). Hiding is skipped when:
 	//   a) the key is listed in cfg.Allow, or
 	//   b) the path does not exist on the host (nothing to hide).
-	// "nested-user-ns" is a valid allow key but has no hide action (TODO bwrap flag).
+	// "nested-user-ns" is a valid allow key but has no hide action (caps are added above).
 	{
 		home, _ := os.UserHomeDir()
 		uid := strconv.Itoa(os.Getuid())

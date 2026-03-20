@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/enr/inner/internal/config"
@@ -155,17 +160,29 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return fmt.Errorf("building sandbox command: %w", err)
 	}
 
-	// 13. Dry-run: print profile, effective config, and sandbox command.
+	// 13. If nested user namespaces are allowed, configure bwrap's --userns-block-fd
+	//     so we can call newuidmap from outside to give bwrap's namespace the full
+	//     subuid range before execution starts.
+	var postStart func() error
+	if slices.Contains(rc.Allow, "nested-user-ns") {
+		postStart, err = prepareNestedUserNs(cmd)
+		if err != nil {
+			return fmt.Errorf("preparing nested user namespace: %w", err)
+		}
+	}
+
+	// 14. Dry-run: print profile, effective config, and sandbox command.
 	if flags.dryRun {
 		printDryRun(w, profileName, a.loader.ResolveProfilePath(profileName), a.loader.GlobalConfigPath(), rc, cmd.Args)
 		return nil
 	}
 
-	// 14. Launch.
+	// 15. Launch.
 	launcher := a.launcherFn()
 	result, err := launcher.Run(cmd, executor.RunOptions{
 		Interactive:  rc.Entrypoint.Interactive,
 		ForceRawMode: isTUIApp(rc.Entrypoint.Cmd),
+		PostStart:    postStart,
 		Timeout:      rc.Timeout,
 		LogDir:       rc.LogDir,
 		Cleanups:     cleanups,
@@ -360,6 +377,138 @@ func printDryRun(w io.Writer, profileName, profilePath, globalConfigPath string,
 
 	fmt.Fprintln(w, "bwrap command:")
 	fmt.Fprintf(w, "  %s\n", strings.Join(cmdArgs, " "))
+}
+
+// ── Nested user namespace setup ───────────────────────────────────────────────
+
+// prepareNestedUserNs adds --userns-block-fd and --info-fd to the bwrap command
+// so that we can call newuidmap/newgidmap from the host (where the setuid bit is
+// fully effective) before bwrap proceeds. This gives bwrap's user namespace the
+// full subuid range, allowing rootless container runtimes (podman) to create
+// nested containers.
+//
+// Flow:
+//  1. bwrap creates its user namespace and blocks (reading from blockR/fd 3).
+//  2. bwrap writes {"child-pid": N} to infoW (fd 4) then closes it.
+//  3. The returned postStart goroutine reads the PID, calls newuidmap/newgidmap,
+//     then closes blockW, which unblocks bwrap.
+//  4. bwrap continues with uid 0→hostUID and uid 1..N→subuidRange mapped.
+func prepareNestedUserNs(cmd *exec.Cmd) (func() error, error) {
+	blockR, blockW, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("block pipe: %w", err)
+	}
+	infoR, infoW, err := os.Pipe()
+	if err != nil {
+		blockR.Close()
+		blockW.Close()
+		return nil, fmt.Errorf("info pipe: %w", err)
+	}
+
+	// ExtraFiles[0] = fd 3 (blockR: bwrap blocks reading this until we close blockW)
+	// ExtraFiles[1] = fd 4 (infoW: bwrap writes {"child-pid": N} then closes it)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, blockR, infoW)
+
+	// Insert --userns-block-fd 3 --info-fd 4 into bwrap args before the "--" separator.
+	newArgs := make([]string, 0, len(cmd.Args)+4)
+	for _, arg := range cmd.Args {
+		if arg == "--" {
+			newArgs = append(newArgs, "--userns-block-fd", "3", "--info-fd", "4")
+		}
+		newArgs = append(newArgs, arg)
+	}
+	cmd.Args = newArgs
+
+	uid := os.Getuid()
+	gid := os.Getgid()
+
+	postStart := func() error {
+		// Close parent's copies of the child-side fds immediately.
+		blockR.Close()
+		infoW.Close()
+		defer infoR.Close()
+		defer blockW.Close() // always close to unblock bwrap, even on error
+
+		// Read bwrap's child PID from the info pipe.
+		data, err := io.ReadAll(infoR)
+		if err != nil {
+			return fmt.Errorf("reading bwrap info: %w", err)
+		}
+		var info struct {
+			ChildPid int `json:"child-pid"`
+		}
+		if err := json.Unmarshal(data, &info); err != nil || info.ChildPid == 0 {
+			return fmt.Errorf("parsing bwrap info %q: %w", data, err)
+		}
+		pid := info.ChildPid
+
+		// Set up uid map: uid 0 → real uid, uid 1..N → subuid range.
+		if out, err := exec.Command("newuidmap", buildIDMapArgs(pid, uid, "/etc/subuid")...).CombinedOutput(); err != nil {
+			return fmt.Errorf("newuidmap: %s: %w", strings.TrimSpace(string(out)), err)
+		}
+		// Set up gid map.
+		if out, err := exec.Command("newgidmap", buildIDMapArgs(pid, gid, "/etc/subgid")...).CombinedOutput(); err != nil {
+			return fmt.Errorf("newgidmap: %s: %w", strings.TrimSpace(string(out)), err)
+		}
+		return nil
+	}
+
+	return postStart, nil
+}
+
+// buildIDMapArgs returns args for newuidmap/newgidmap that preserve the real
+// uid inside the sandbox and pass through the subuid range unchanged:
+//
+//	pid <id> <id> 1 [<substart> <substart> <subcount>]
+//
+// This keeps the process uid = real host uid so rootless tools (podman) use
+// user-mode storage paths. The subuid range is mapped 1:1 so that nested
+// container uid maps resolve to the correct host uids.
+func buildIDMapArgs(pid, id int, subIDFile string) []string {
+	idStr := strconv.Itoa(id)
+	args := []string{strconv.Itoa(pid), idStr, idStr, "1"}
+	if start, count, err := readSubIDRange(subIDFile, id); err == nil {
+		startStr := strconv.Itoa(start)
+		args = append(args, startStr, startStr, strconv.Itoa(count))
+	}
+	return args
+}
+
+// readSubIDRange finds the first sub-id range for id in path (/etc/subuid or /etc/subgid).
+func readSubIDRange(path string, id int) (start, count int, err error) {
+	idStr := strconv.Itoa(id)
+	username := ""
+	if u, err := user.LookupId(idStr); err == nil {
+		username = u.Username
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		if parts[0] != username && parts[0] != idStr {
+			continue
+		}
+		s, e1 := strconv.Atoi(parts[1])
+		c, e2 := strconv.Atoi(parts[2])
+		if e1 != nil || e2 != nil {
+			continue
+		}
+		return s, c, nil
+	}
+	return 0, 0, fmt.Errorf("no entry for %q in %s", idStr, path)
 }
 
 // ── Cobra wiring (thin) ───────────────────────────────────────────────────────

@@ -28,6 +28,10 @@ type RunOptions struct {
 	// For plain shells (bash, sh, zsh) this must be false: bash configures the
 	// terminal itself via readline, and pre-raw mode breaks paste echo.
 	ForceRawMode bool
+	// PostStart, if non-nil, is called in a goroutine immediately after the
+	// process is started. It runs concurrently with the process and must not
+	// block indefinitely. Errors are logged but do not abort the run.
+	PostStart func() error
 	// Cleanups are called in order after the process exits, regardless of exit code.
 	// Errors are collected but do not affect the RunResult.
 	Cleanups []func() error
@@ -86,9 +90,9 @@ func (l *Launcher) Run(cmd *exec.Cmd, opts RunOptions) (RunResult, error) {
 	var exitCode int
 	var err error
 	if opts.Interactive {
-		exitCode, err = l.runInteractive(cmd, opts.Timeout, opts.ForceRawMode, logFile)
+		exitCode, err = l.runInteractive(cmd, opts.Timeout, opts.ForceRawMode, opts.PostStart, logFile)
 	} else {
-		exitCode, err = l.runNonInteractive(cmd, opts.Timeout, logFile)
+		exitCode, err = l.runNonInteractive(cmd, opts.Timeout, opts.PostStart, logFile)
 	}
 
 	var cleanupErrs []error
@@ -106,7 +110,7 @@ func (l *Launcher) Run(cmd *exec.Cmd, opts RunOptions) (RunResult, error) {
 
 // ── Non-interactive ───────────────────────────────────────────────────────────
 
-func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, log *os.File) (int, error) {
+func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, postStart func() error, log *os.File) (int, error) {
 	stdout := l.Stdout
 	stderr := l.Stderr
 	if log != nil {
@@ -119,6 +123,10 @@ func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, log *os.File
 
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("starting process: %w", err)
+	}
+
+	if postStart != nil {
+		go postStart() //nolint:errcheck
 	}
 
 	done := make(chan struct{})
@@ -141,7 +149,7 @@ func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, log *os.File
 // Consequence: output cannot be tee'd to a log file during an interactive
 // session (piping stdout would turn it into a non-TTY from the app's
 // perspective and break TUI rendering). The log parameter is ignored.
-func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bool, _ *os.File) (int, error) {
+func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bool, postStart func() error, _ *os.File) (int, error) {
 	// forceRawMode: put the terminal in raw mode before the child starts so
 	// that terminal capability responses (DA, XTVERSION, etc.) are available
 	// immediately, without cooked-mode line-discipline buffering.
@@ -170,6 +178,10 @@ func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bo
 
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("starting process: %w", err)
+	}
+
+	if postStart != nil {
+		go postStart() //nolint:errcheck
 	}
 
 	done := make(chan struct{})
