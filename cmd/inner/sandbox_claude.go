@@ -147,10 +147,27 @@ func applyClaudeDir(rc *config.RunConfig, claudeDir string) (func(), error) {
 	// tips history, …) regardless of whether the workdir makes the home
 	// directory writable.  Without this, running with -w <subdir> leaves the
 	// home read-only and claude hangs trying to write the file at startup.
+	// We mount a temporary copy so the real file is never modified by the sandbox.
 	claudeJsonPath := claudeDir + ".json"
 	if _, err := os.Stat(claudeJsonPath); err == nil {
+		tmpJson, err := os.CreateTemp("", "inner-claude-*.json")
+		if err != nil {
+			for _, fn := range cleanups {
+				fn()
+			}
+			return nil, fmt.Errorf("creating claude.json sandbox copy: %w", err)
+		}
+		tmpJson.Close()
+		tmpJsonPath := tmpJson.Name()
+		cleanups = append(cleanups, func() { os.Remove(tmpJsonPath) })
+		if err := copyFile(claudeJsonPath, tmpJsonPath); err != nil {
+			for _, fn := range cleanups {
+				fn()
+			}
+			return nil, fmt.Errorf("copying .claude.json: %w", err)
+		}
 		rc.Mounts = append(rc.Mounts, config.Mount{
-			Src:  claudeJsonPath,
+			Src:  tmpJsonPath,
 			Dest: claudeJsonPath,
 			Mode: "rw",
 		})

@@ -265,6 +265,63 @@ func TestApplyClaude_replacesMountSrc(t *testing.T) {
 	}
 }
 
+func TestApplyClaude_claudeJsonMountedAsCopy(t *testing.T) {
+	src := t.TempDir()
+	makeClaudeHome(t, src, map[string]string{
+		".credentials.json": `{}`,
+	})
+	// Create a fake ~/.claude.json next to the claude dir.
+	claudeJsonPath := src + ".json"
+	if err := os.WriteFile(claudeJsonPath, []byte(`{"numStartups":5}`), 0o600); err != nil {
+		t.Fatalf("writing claude.json: %v", err)
+	}
+	defer os.Remove(claudeJsonPath)
+
+	rc := &config.RunConfig{
+		Mounts: []config.Mount{
+			{Src: src, Dest: "~/.claude", Mode: "rw"},
+		},
+	}
+
+	cleanup, err := applyClaudeDir(rc, src)
+	if err != nil {
+		t.Fatalf("applyClaudeDir: %v", err)
+	}
+	defer cleanup()
+
+	// Find the mount for claude.json.
+	var jsonMount *config.Mount
+	for i, m := range rc.Mounts {
+		if m.Dest == claudeJsonPath {
+			jsonMount = &rc.Mounts[i]
+			break
+		}
+	}
+	if jsonMount == nil {
+		t.Fatal("expected a mount for .claude.json")
+	}
+	// Src must be a temp copy, not the original file.
+	if jsonMount.Src == claudeJsonPath {
+		t.Error("claude.json mount Src should be a temp copy, not the original file")
+	}
+	// The temp copy must exist and have the same content.
+	data, err := os.ReadFile(jsonMount.Src)
+	if err != nil {
+		t.Fatalf("reading temp copy: %v", err)
+	}
+	if string(data) != `{"numStartups":5}` {
+		t.Errorf("temp copy content = %q, want {\"numStartups\":5}", data)
+	}
+	// After cleanup the temp copy must be gone, original untouched.
+	cleanup()
+	if _, err := os.Stat(jsonMount.Src); err == nil {
+		t.Error("temp copy should be removed after cleanup")
+	}
+	if _, err := os.Stat(claudeJsonPath); err != nil {
+		t.Error("original .claude.json should still exist after cleanup")
+	}
+}
+
 func TestApplyClaude_noClaudeMount_noOp(t *testing.T) {
 	rc := &config.RunConfig{
 		Mounts: []config.Mount{
