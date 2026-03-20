@@ -411,6 +411,56 @@ Checks performed:
 
 ---
 
+## `inner completion`
+
+Generate shell completion scripts. Provided automatically by Cobra.
+
+```
+inner completion [bash|zsh|fish|powershell]
+```
+
+### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `bash` | Generate completion script for Bash |
+| `zsh` | Generate completion script for Zsh |
+| `fish` | Generate completion script for Fish |
+| `powershell` | Generate completion script for PowerShell |
+
+### Setup
+
+**Bash:**
+
+```bash
+# Load for the current session
+source <(inner completion bash)
+
+# Load permanently
+inner completion bash > /etc/bash_completion.d/inner
+```
+
+**Zsh:**
+
+```zsh
+# Load permanently (requires compinit)
+inner completion zsh > "${fpath[1]}/_inner"
+```
+
+**Fish:**
+
+```fish
+inner completion fish > ~/.config/fish/completions/inner.fish
+```
+
+**PowerShell:**
+
+```powershell
+inner completion powershell | Out-String | Invoke-Expression
+```
+
+---
+
 ## `inner version`
 
 Print version, build time, and git commit:
