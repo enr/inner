@@ -164,10 +164,11 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	// 14. Launch.
 	launcher := a.launcherFn()
 	result, err := launcher.Run(cmd, executor.RunOptions{
-		Interactive: rc.Entrypoint.Interactive,
-		Timeout:     rc.Timeout,
-		LogDir:      rc.LogDir,
-		Cleanups:    cleanups,
+		Interactive:  rc.Entrypoint.Interactive,
+		ForceRawMode: isTUIApp(rc.Entrypoint.Cmd),
+		Timeout:      rc.Timeout,
+		LogDir:       rc.LogDir,
+		Cleanups:     cleanups,
 	})
 	if err != nil {
 		return err
@@ -247,6 +248,18 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 	rc.Entrypoint.Args = append(rc.Entrypoint.Args, extraArgs...)
 
 	return nil
+}
+
+// isTUIApp reports whether cmd is a known TUI application that requires the
+// host terminal to be in raw mode before launch (see RunOptions.ForceRawMode).
+// These apps (claude, gemini) use Node.js/libuv and probe terminal capabilities
+// during module initialisation, before they call setRawMode themselves.
+func isTUIApp(cmd string) bool {
+	switch filepath.Base(cmd) {
+	case "claude", "gemini":
+		return true
+	}
+	return false
 }
 
 // parseMount parses "src:dest[:mode]" into a Mount.

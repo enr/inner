@@ -20,6 +20,14 @@ type RunOptions struct {
 	Timeout     int    // seconds; 0 = no timeout
 	LogDir      string // empty = no log file
 	RunID       string // if empty, auto-generated via GenerateRunID()
+	// ForceRawMode puts the host terminal in raw mode before the child starts.
+	// Required for TUI apps (claude, gemini) that use Node.js/libuv: they probe
+	// terminal capabilities during module init, before calling setRawMode, and
+	// in cooked mode the capability response is buffered until a newline arrives;
+	// the subsequent TCSAFLUSH then discards it, causing the app to hang.
+	// For plain shells (bash, sh, zsh) this must be false: bash configures the
+	// terminal itself via readline, and pre-raw mode breaks paste echo.
+	ForceRawMode bool
 	// Cleanups are called in order after the process exits, regardless of exit code.
 	// Errors are collected but do not affect the RunResult.
 	Cleanups []func() error
@@ -78,7 +86,7 @@ func (l *Launcher) Run(cmd *exec.Cmd, opts RunOptions) (RunResult, error) {
 	var exitCode int
 	var err error
 	if opts.Interactive {
-		exitCode, err = l.runInteractive(cmd, opts.Timeout, logFile)
+		exitCode, err = l.runInteractive(cmd, opts.Timeout, opts.ForceRawMode, logFile)
 	} else {
 		exitCode, err = l.runNonInteractive(cmd, opts.Timeout, logFile)
 	}
@@ -133,25 +141,25 @@ func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, log *os.File
 // Consequence: output cannot be tee'd to a log file during an interactive
 // session (piping stdout would turn it into a non-TTY from the app's
 // perspective and break TUI rendering). The log parameter is ignored.
-func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, _ *os.File) (int, error) {
-	// Put the terminal in raw mode before the child starts so that terminal
-	// capability responses (DA, XTVERSION, etc.) are available immediately,
-	// without cooked-mode line-discipline buffering.
+func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bool, _ *os.File) (int, error) {
+	// forceRawMode: put the terminal in raw mode before the child starts so
+	// that terminal capability responses (DA, XTVERSION, etc.) are available
+	// immediately, without cooked-mode line-discipline buffering.
 	//
-	// TUI apps (claude, gemini) probe terminal capabilities by sending escape
-	// queries and waiting for responses. Node.js readline sends these queries
-	// during module initialisation, before the app calls setRawMode. In cooked
-	// mode the response is held in the kernel TTY read buffer until a newline
-	// arrives; when setRawMode calls tcsetattr(TCSAFLUSH) the buffer is
-	// discarded and the app hangs waiting for a response that will never come.
+	// Required for TUI apps (claude, gemini): Node.js/libuv sends terminal
+	// queries during module init, before calling setRawMode. In cooked mode
+	// the response is held in the kernel TTY buffer until a newline; the
+	// subsequent TCSAFLUSH discards it and the app hangs.
 	//
-	// With raw mode already active the response is available immediately;
-	// libuv drains it into userspace in the same event-loop iteration, so
-	// the TCSAFLUSH that follows flushes an already-empty buffer.
-	if f, ok := l.Stdin.(*os.File); ok {
-		if term.IsTerminal(int(f.Fd())) {
-			if oldState, err := term.MakeRaw(int(f.Fd())); err == nil {
-				defer term.Restore(int(f.Fd()), oldState)
+	// Must NOT be set for plain shells (bash, sh, zsh): bash configures the
+	// terminal via readline and re-enables echo itself. Pre-raw mode interferes
+	// with readline's bracketed-paste echo, making pasted text invisible.
+	if forceRawMode {
+		if f, ok := l.Stdin.(*os.File); ok {
+			if term.IsTerminal(int(f.Fd())) {
+				if oldState, err := term.MakeRaw(int(f.Fd())); err == nil {
+					defer term.Restore(int(f.Fd()), oldState)
+				}
 			}
 		}
 	}
