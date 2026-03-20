@@ -61,12 +61,13 @@ func (a *App) profileList(w io.Writer) error {
 }
 
 // profileShow writes the raw TOML content of a named profile to w.
-func (a *App) profileShow(w io.Writer, name string) error {
-	path := a.loader.ProfilePath(name)
+// nameOrPath may be a profile name or an explicit file path.
+func (a *App) profileShow(w io.Writer, nameOrPath string) error {
+	path := a.loader.ResolveProfilePath(nameOrPath)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("profile %q not found", name)
+			return fmt.Errorf("profile %q not found", nameOrPath)
 		}
 		return err
 	}
@@ -216,8 +217,9 @@ timeout_seconds = 0
 
 func (a *App) profileListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List available profiles",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List available profiles",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.profileList(cmd.OutOrStdout())
 		},
@@ -226,8 +228,8 @@ func (a *App) profileListCmd() *cobra.Command {
 
 func (a *App) profileShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "show NAME",
-		Short: "Print the contents of a profile",
+		Use:   "show NAME|PATH",
+		Short: "Print the contents of a profile (name or file path)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.profileShow(cmd.OutOrStdout(), args[0])

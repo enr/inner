@@ -118,6 +118,21 @@ func TestProfileShow_notFound(t *testing.T) {
 	}
 }
 
+func TestProfileShow_byPath(t *testing.T) {
+	app, _ := newTestApp(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.toml")
+	writeTestFile(t, path, `name = "custom"`)
+
+	var buf bytes.Buffer
+	if err := app.profileShow(&buf, path); err != nil {
+		t.Fatalf("profileShow by path: %v", err)
+	}
+	if !strings.Contains(buf.String(), `name = "custom"`) {
+		t.Errorf("expected profile content, got: %s", buf.String())
+	}
+}
+
 // ── resolveValidateNames ──────────────────────────────────────────────────────
 
 func TestResolveValidateNames_fromArgs(t *testing.T) {
