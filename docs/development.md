@@ -74,6 +74,28 @@ go test -v ./internal/config/...
 go test -v ./internal/isolator/...
 ```
 
+## Developing inside inner
+
+The repository ships a `profiles/inner-dev.toml` profile for running a Claude Code session sandboxed inside inner itself. It extends `claude-interactive` with two adjustments needed for Go development:
+
+- `GOPATH=/tmp/gopath` and `GOCACHE=/tmp/gocache` — the sandbox root is read-only by default, so the Go toolchain needs writable paths for module cache and build cache
+- `~/Projects/inner` mounted read-write — the project directory is accessible inside the sandbox at the same host path
+
+Start the session from the project root:
+
+```bash
+inner run -p profiles/inner-dev.toml
+```
+
+Inside the sandbox you can build and test normally:
+
+```bash
+GOCACHE=/tmp/gocache GOPATH=/tmp/gopath go test ./...
+GOCACHE=/tmp/gocache GOPATH=/tmp/gopath ./.sdlc/ci
+```
+
+The env vars are already set by the profile, so if you rely on Claude Code running those commands they will work without extra flags.
+
 ## Project Layout
 
 ```

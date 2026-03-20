@@ -7,6 +7,13 @@ description: Profile TOML configuration reference for inner sandboxes
 
 A **profile** is a TOML file that fully describes a sandbox environment. Profiles are stored in `~/.inner/profiles/<name>.toml`.
 
+Alternatively, you can pass a **file path** directly to `-p`/`--profile`. If the value points to an existing file it is loaded as-is; otherwise it is treated as a profile name looked up in the profiles directory. This lets you use local or project-specific profile files without installing them in `~/.inner/profiles/`:
+
+```bash
+inner run -p profiles/inner-dev.toml
+inner run -p /tmp/my-test-profile.toml
+```
+
 ## Built-in Profiles
 
 | Name | Description |
