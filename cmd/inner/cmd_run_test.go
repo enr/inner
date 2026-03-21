@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -181,12 +182,37 @@ func TestApplyOverrides_envFlag(t *testing.T) {
 }
 
 func TestApplyOverrides_prompt(t *testing.T) {
+	// --prompt is deprecated but must still work for backward compatibility.
 	rc := &config.RunConfig{}
 	if err := applyOverrides(rc, runCLIFlags{prompt: "do the thing"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(rc.Entrypoint.Args) == 0 || rc.Entrypoint.Args[0] != "do the thing" {
 		t.Errorf("expected prompt in args, got: %v", rc.Entrypoint.Args)
+	}
+}
+
+func TestApplyOverrides_arg(t *testing.T) {
+	rc := &config.RunConfig{}
+	if err := applyOverrides(rc, runCLIFlags{args: []string{"fix the bug"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(rc.Entrypoint.Args) == 0 || rc.Entrypoint.Args[0] != "fix the bug" {
+		t.Errorf("expected arg in entrypoint args, got: %v", rc.Entrypoint.Args)
+	}
+}
+
+func TestApplyOverrides_argMultiple(t *testing.T) {
+	rc := &config.RunConfig{Entrypoint: config.Entrypoint{Args: []string{"--existing"}}}
+	flags := runCLIFlags{args: []string{"first", "second"}}
+	if err := applyOverrides(rc, flags, nil); err != nil {
+		t.Fatal(err)
+	}
+	// order: profile args → --arg flags → --prompt → extraArgs
+	want := []string{"--existing", "first", "second"}
+	if len(rc.Entrypoint.Args) != 3 || rc.Entrypoint.Args[0] != "--existing" ||
+		rc.Entrypoint.Args[1] != "first" || rc.Entrypoint.Args[2] != "second" {
+		t.Errorf("unexpected entrypoint args: %v, want %v", rc.Entrypoint.Args, want)
 	}
 }
 
@@ -197,6 +223,89 @@ func TestApplyOverrides_extraArgs(t *testing.T) {
 	}
 	if len(rc.Entrypoint.Args) != 2 || rc.Entrypoint.Args[0] != "--flag" {
 		t.Errorf("unexpected entrypoint args: %v", rc.Entrypoint.Args)
+	}
+}
+
+// ── loadArgsFile ──────────────────────────────────────────────────────────────
+
+func TestLoadArgsFile_basic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "issue.md")
+	if err := os.WriteFile(path, []byte("fix the bug\ndetails here"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var w bytes.Buffer
+	content, err := loadArgsFile(&w, path)
+	if err != nil {
+		t.Fatalf("loadArgsFile: %v", err)
+	}
+	if content != "fix the bug\ndetails here" {
+		t.Errorf("unexpected content: %q", content)
+	}
+	if w.Len() != 0 {
+		t.Errorf("expected no warning for small file, got: %s", w.String())
+	}
+}
+
+func TestLoadArgsFile_missing(t *testing.T) {
+	var w bytes.Buffer
+	_, err := loadArgsFile(&w, "/nonexistent/path/issue.md")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestLoadArgsFile_tooLarge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge.md")
+	// Write a file just over 2 MB (fill with 'x' to avoid null bytes).
+	data := bytes.Repeat([]byte("x"), argsFileMaxSize+1)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var w bytes.Buffer
+	_, err := loadArgsFile(&w, path)
+	if err == nil {
+		t.Fatal("expected error for file exceeding max size")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("error should mention 'too large', got: %v", err)
+	}
+}
+
+func TestLoadArgsFile_binaryFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "payload.bin")
+	// Embed a null byte — would truncate the argument at the kernel execve layer.
+	if err := os.WriteFile(path, []byte("text\x00binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var w bytes.Buffer
+	_, err := loadArgsFile(&w, path)
+	if err == nil {
+		t.Fatal("expected error for binary file with null bytes")
+	}
+	if !strings.Contains(err.Error(), "null bytes") {
+		t.Errorf("error should mention null bytes, got: %v", err)
+	}
+}
+
+func TestLoadArgsFile_warnThreshold(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.md")
+	// Write a file just over the warning threshold but under the max.
+	// Fill with 'x' to avoid null bytes (which would trigger the binary-file check).
+	data := bytes.Repeat([]byte("x"), argsFileWarnSize+1)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var w bytes.Buffer
+	_, err := loadArgsFile(&w, path)
+	if err != nil {
+		t.Fatalf("loadArgsFile: %v", err)
+	}
+	if !strings.Contains(w.String(), "warning") {
+		t.Errorf("expected warning for large file, got: %q", w.String())
 	}
 }
 
@@ -244,6 +353,7 @@ interactive = false
 }
 
 func TestRunSandbox_dryRun_withPrompt(t *testing.T) {
+	// --prompt is deprecated but must still appear in dry-run output.
 	app, dir := newRunTestApp(t)
 	minimalProfile(t, dir, "default", `
 [entrypoint]
@@ -262,6 +372,55 @@ interactive = false
 	}
 	if !strings.Contains(buf.String(), "security audit") {
 		t.Errorf("expected prompt in dry-run output, got: %s", buf.String())
+	}
+}
+
+func TestRunSandbox_dryRun_withArg(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "default", `
+[entrypoint]
+cmd = "claude"
+args = ["--dangerously-skip-permissions"]
+interactive = false
+`)
+
+	var buf bytes.Buffer
+	err := app.runSandbox(&buf, runCLIFlags{
+		dryRun: true,
+		args:   []string{"security audit"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("runSandbox: %v", err)
+	}
+	if !strings.Contains(buf.String(), "security audit") {
+		t.Errorf("expected arg in dry-run output, got: %s", buf.String())
+	}
+}
+
+func TestRunSandbox_dryRun_withArgsFile(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "default", `
+[entrypoint]
+cmd = "claude"
+args = ["--dangerously-skip-permissions"]
+interactive = false
+`)
+
+	issueFile := filepath.Join(t.TempDir(), "012-user-problem.md")
+	if err := os.WriteFile(issueFile, []byte("fix the login bug"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	err := app.runSandbox(&buf, runCLIFlags{
+		dryRun:   true,
+		argsFile: issueFile,
+	}, nil)
+	if err != nil {
+		t.Fatalf("runSandbox: %v", err)
+	}
+	if !strings.Contains(buf.String(), "fix the login bug") {
+		t.Errorf("expected file content in dry-run output, got: %s", buf.String())
 	}
 }
 

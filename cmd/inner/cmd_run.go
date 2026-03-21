@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +23,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Size thresholds for --args-file.
+const (
+	argsFileWarnSize = 512 * 1024      // 512 KB: print a warning
+	argsFileMaxSize  = 2 * 1024 * 1024 // 2 MB: refuse to load
+)
+
 // runCLIFlags holds every flag accepted by `inner run`.
 type runCLIFlags struct {
 	profile       string
@@ -32,7 +39,9 @@ type runCLIFlags struct {
 	noInteractive bool
 	mounts        []string // each: "src:dest[:mode]"
 	env           []string // each: "KEY=VAL"
-	prompt        string
+	args          []string // each appended to entrypoint args (--arg, repeatable)
+	argsFile      string   // path to file whose content is appended as a single arg
+	prompt        string   // deprecated: use --arg
 	timeout       int
 	dryRun        bool
 }
@@ -68,7 +77,16 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		}
 	}
 
-	// 4. Apply CLI overrides.
+	// 4. Load --args-file content and append it to extraArgs before applying overrides.
+	if flags.argsFile != "" {
+		content, err := loadArgsFile(w, flags.argsFile)
+		if err != nil {
+			return err
+		}
+		extraArgs = append(extraArgs, content)
+	}
+
+	// 5. Apply CLI overrides.
 	if err := applyOverrides(rc, flags, extraArgs); err != nil {
 		return err
 	}
@@ -256,15 +274,43 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 		rc.Env.Set[k] = v
 	}
 
-	// Prompt → appended to entrypoint args.
+	// --arg flags → each appended as a separate entrypoint arg.
+	rc.Entrypoint.Args = append(rc.Entrypoint.Args, flags.args...)
+
+	// --prompt (deprecated) → appended to entrypoint args.
 	if flags.prompt != "" {
 		rc.Entrypoint.Args = append(rc.Entrypoint.Args, flags.prompt)
 	}
 
-	// Extra args after --.
+	// Extra args after -- (includes --args-file content, pre-loaded by runSandbox).
 	rc.Entrypoint.Args = append(rc.Entrypoint.Args, extraArgs...)
 
 	return nil
+}
+
+// loadArgsFile reads path and returns its content as a single string to be
+// appended to entrypoint args. It warns on w if the file exceeds argsFileWarnSize
+// and returns an error if it exceeds argsFileMaxSize.
+func loadArgsFile(w io.Writer, path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("args file: %w", err)
+	}
+	size := info.Size()
+	if size > argsFileMaxSize {
+		return "", fmt.Errorf("args file %q is too large (%d bytes, limit %d bytes)", path, size, argsFileMaxSize)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading args file: %w", err)
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return "", fmt.Errorf("args file %q contains null bytes; binary files are not supported", path)
+	}
+	if size > argsFileWarnSize {
+		fmt.Fprintf(w, "warning: args file %q is large (%d bytes); consider passing the file path as a mount instead\n", path, size)
+	}
+	return string(data), nil
 }
 
 // isTUIApp reports whether cmd is a known TUI application that requires the
@@ -536,7 +582,11 @@ to the entrypoint command.`,
 	cmd.Flags().BoolVar(&flags.noInteractive, "no-interactive", false, "Force non-interactive mode")
 	cmd.Flags().StringArrayVarP(&flags.mounts, "mount", "m", nil, "Additional mount: SRC:DEST[:MODE]")
 	cmd.Flags().StringArrayVarP(&flags.env, "env", "e", nil, "Set env variable: KEY=VAL")
-	cmd.Flags().StringVar(&flags.prompt, "prompt", "", "Append prompt text to entrypoint args")
+	cmd.Flags().StringArrayVarP(&flags.args, "arg", "a", nil, "Append argument to entrypoint (repeatable)")
+	cmd.Flags().StringVar(&flags.argsFile, "args-file", "", "Read file and append its content as a single entrypoint argument")
+	cmd.Flags().StringVar(&flags.prompt, "prompt", "", "")
+	_ = cmd.Flags().MarkHidden("prompt")
+	_ = cmd.Flags().MarkDeprecated("prompt", "use --arg instead")
 	cmd.Flags().IntVar(&flags.timeout, "timeout", 0, "Timeout in seconds (0 = none)")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Print the sandbox command without executing it")
 

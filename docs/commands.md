@@ -33,17 +33,27 @@ inner run [flags] [-- extra-args]
 | `--no-interactive` | | bool | — | Force non-interactive mode |
 | `--mount` | `-m` | string | — | Additional mount in `SRC:DEST[:MODE]` format (mode: `ro`\|`rw`). Repeatable. |
 | `--env` | `-e` | string | — | Set an environment variable as `KEY=VAL`. Repeatable. |
-| `--prompt` | | string | — | Append text to entrypoint arguments |
+| `--arg` | `-a` | string | — | Append an argument to the entrypoint command. Repeatable. |
+| `--args-file` | | path | — | Read the file and append its entire content as a single entrypoint argument. |
 | `--timeout` | | int | `0` | Timeout in seconds (`0` = no timeout) |
 | `--dry-run` | | bool | false | Print the `bwrap` command without executing |
 
 ### Extra arguments
 
-Arguments after `--` are appended verbatim to the entrypoint defined in the profile:
+There are three ways to pass additional arguments to the entrypoint:
 
-```bash
-inner run -p default -- python script.py --verbose
-```
+| Method | When to use |
+|--------|-------------|
+| `-- arg1 arg2` | Multiple distinct arguments from the command line |
+| `--arg TEXT` | Single argument; can be repeated; works well in scripts |
+| `--args-file PATH` | Content of a file as a single argument (e.g. an issue description) |
+
+All three methods can be combined. The order of appending is:
+`[profile args]` → `--arg` values → `-- extra-args` (which includes `--args-file` content).
+
+**`--args-file` limits:** files larger than 512 KB produce a warning; files larger than 2 MB are
+rejected. Binary files (content containing null bytes) are always rejected because they would be
+silently truncated by the kernel at the `execve` boundary.
 
 ### Examples
 
@@ -54,7 +64,7 @@ inner run
 # Use a specific profile
 inner run -p claude-interactive
 
-# Mount a project directory as /workspace
+# Mount a project directory read-write
 inner run -p claude-interactive -w ~/projects/myapp
 
 # Override network for a single run
@@ -69,14 +79,17 @@ inner run -m ~/shared/libs:/libs:ro
 # Pass environment variables
 inner run -e DEBUG=true -e LOG_LEVEL=info
 
-# Add extra arguments to the entrypoint
+# Add extra arguments to the entrypoint via --
 inner run -p default -- ls -la /workspace
 
-# Send a prompt to the agent
-inner run -p claude-one-shot -w ~/myproject --prompt "write unit tests for all public functions"
+# Send a prompt to an agent profile
+inner run -p claude-one-shot -w ~/myproject --arg "write unit tests for all public functions"
 
-# Set a 5-minute timeout
-inner run -p claude-one-shot --timeout 300 --prompt "summarize the codebase"
+# Pass a saved issue as the agent prompt
+inner run -p claude-one-shot -w ~/myproject --args-file ~/issues/042-login-bug.md
+
+# Combine profile flags with --arg and an issue file
+inner run -p claude-one-shot -w ~/myproject --timeout 300 --args-file ~/issues/042-login-bug.md
 
 # Preview the bwrap command without running
 inner run -p claude-interactive --dry-run

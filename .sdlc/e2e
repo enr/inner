@@ -322,6 +322,50 @@ else
     rm -f "$SENTINEL_PATH"
 fi
 
+# ── Extra arguments ───────────────────────────────────────────────────────────
+
+section "Extra arguments"
+
+# --arg: value is passed to entrypoint and echoed back
+RESULT=$(inner run -p inner-e2e-nonet --no-interactive -a "hello-from-arg" -- -c 'echo "$1"' 2>/dev/null || true)
+RESULT=$(echo "$RESULT" | tr -d '[:space:]')
+if [[ "$RESULT" == "hello-from-arg" ]]; then
+    pass "--arg: value passed to entrypoint"
+else
+    fail "--arg: expected 'hello-from-arg', got '$RESULT'"
+fi
+
+# multiple --arg flags: both values are present in entrypoint args
+RESULT=$(inner run -p inner-e2e-nonet --no-interactive -a "first" -a "second" -- -c 'echo "$1 $2"' 2>/dev/null || true)
+RESULT=$(echo "$RESULT" | tr -d '[:space:]')
+if [[ "$RESULT" == "firstsecond" ]]; then
+    pass "--arg repeatable: both values passed to entrypoint"
+else
+    fail "--arg repeatable: expected 'firstsecond', got '$RESULT'"
+fi
+
+# --args-file: file content is passed as a single argument
+ISSUE_FILE="$TMPWORK/issue.md"
+echo -n "fix the login bug" > "$ISSUE_FILE"
+RESULT=$(inner run -p inner-e2e-nonet --no-interactive --args-file "$ISSUE_FILE" -- -c 'echo "$1"' 2>/dev/null || true)
+RESULT=$(echo "$RESULT" | tr -d '\n')
+if [[ "$RESULT" == "fix the login bug" ]]; then
+    pass "--args-file: file content passed as single argument"
+else
+    fail "--args-file: expected 'fix the login bug', got '$RESULT'"
+fi
+
+# --args-file: multiline file is passed as one argument (newlines preserved)
+MULTILINE_FILE="$TMPWORK/multiline.md"
+printf "line one\nline two" > "$MULTILINE_FILE"
+LINE_COUNT=$(inner run -p inner-e2e-nonet --no-interactive --args-file "$MULTILINE_FILE" -- -c 'printf "%s" "$1" | wc -l' 2>/dev/null || echo "0")
+LINE_COUNT=$(echo "$LINE_COUNT" | tr -d '[:space:]')
+if [[ "$LINE_COUNT" == "1" ]]; then
+    pass "--args-file multiline: content passed as single arg (1 newline, 2 lines)"
+else
+    fail "--args-file multiline: expected 1 newline in single arg, wc -l returned '$LINE_COUNT'"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────\n"
