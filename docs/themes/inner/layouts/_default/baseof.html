@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="{{ .Site.Language.Lang | default "en" }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ if .IsHome }}{{ .Site.Title }} — {{ .Site.Params.tagline }}{{ else }}{{ .Title }} — {{ .Site.Title }}{{ end }}</title>
+  <link rel="stylesheet" href="{{ "style.css" | absURL }}">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <a href="{{ "/" | absURL }}">{{ .Site.Title }}</a>
+      <span class="tagline">{{ .Site.Params.tagline }}</span>
+    </div>
+    <nav class="sidebar-nav">
+      {{- range .Site.RegularPages.ByWeight }}
+        <a href="{{ .Permalink }}"{{ if eq .Permalink $.Permalink }} class="active"{{ end }}>{{ .Title }}</a>
+      {{- end }}
+    </nav>
+  </aside>
+  <main class="main">
+    {{ block "main" . }}{{ end }}
+    <footer class="license-footer">
+      Licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License, Version 2.0</a>.
+    </footer>
+  </main>
+</body>
+</html>

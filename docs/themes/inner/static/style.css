@@ -1,0 +1,230 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+  color: #2c2c2c;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sidebar ─────────────────────────────────────────── */
+
+.sidebar {
+  width: 240px;
+  min-height: 100vh;
+  background: #16213e;
+  padding: 0;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.sidebar-logo {
+  padding: 1.5rem;
+  border-bottom: 1px solid #1f2d50;
+}
+
+.sidebar-logo a {
+  color: #e8eaf0;
+  text-decoration: none;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.sidebar-logo .tagline {
+  display: block;
+  color: #7888aa;
+  font-size: 0.75rem;
+  margin-top: 0.3rem;
+}
+
+.sidebar-nav {
+  padding: 0.75rem 0;
+}
+
+.sidebar-nav a {
+  display: block;
+  padding: 0.45rem 1.5rem;
+  color: #aab4cc;
+  text-decoration: none;
+  font-size: 0.875rem;
+  transition: background 0.12s, color 0.12s;
+}
+
+.sidebar-nav a:hover {
+  background: #1f2d50;
+  color: #e8eaf0;
+}
+
+.sidebar-nav a.active {
+  background: #1f2d50;
+  color: #7ec8f8;
+  font-weight: 600;
+  border-left: 3px solid #7ec8f8;
+  padding-left: calc(1.5rem - 3px);
+}
+
+/* ── Main content ────────────────────────────────────── */
+
+.main {
+  flex: 1;
+  max-width: 860px;
+  padding: 2.5rem 3rem 4rem;
+  min-width: 0;
+}
+
+h1 { font-size: 1.9rem; font-weight: 700; margin-bottom: 1rem; color: #111; letter-spacing: -0.02em; }
+h2 { font-size: 1.35rem; font-weight: 600; margin: 2.25rem 0 0.65rem; color: #1a1a1a; border-bottom: 1px solid #e8e8e8; padding-bottom: 0.3rem; }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 1.5rem 0 0.4rem; color: #333; }
+h4 { font-size: 0.95rem; font-weight: 600; margin: 1.25rem 0 0.3rem; color: #444; }
+
+p { margin-bottom: 0.9rem; }
+
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.85em;
+  background: #f3f4f6;
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  color: #c0392b;
+}
+
+pre {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 1rem 1.25rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 1rem 0 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+a { color: #1a6fc4; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.5rem;
+  font-size: 0.9rem;
+}
+
+th {
+  background: #f3f4f6;
+  font-weight: 600;
+  text-align: left;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #dde0e5;
+}
+
+td {
+  padding: 0.5rem 0.85rem;
+  border: 1px solid #dde0e5;
+  vertical-align: top;
+}
+
+tr:nth-child(even) td { background: #fafafa; }
+
+ul, ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+li { margin-bottom: 0.2rem; }
+li > ul, li > ol { margin-top: 0.2rem; margin-bottom: 0; }
+
+blockquote {
+  border-left: 3px solid #7ec8f8;
+  margin: 1rem 0;
+  padding: 0.6rem 1rem;
+  background: #f0f7ff;
+  color: #444;
+  border-radius: 0 4px 4px 0;
+}
+
+blockquote p:last-child { margin-bottom: 0; }
+
+hr { border: none; border-top: 1px solid #e8e8e8; margin: 2rem 0; }
+
+/* ── Download banner ─────────────────────────────────── */
+
+.download-banner {
+  background: #f0f7ff;
+  border: 1px solid #c0ddf5;
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.download-banner strong { color: #111; }
+
+.download-btn {
+  display: inline-block;
+  background: #1a6fc4;
+  color: #fff !important;
+  padding: 0.4rem 1rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+
+.download-btn:hover { background: #145ca0; }
+
+/* ── License footer ──────────────────────────────────── */
+
+.license-footer {
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #e8e8e8;
+  font-size: 0.8rem;
+  color: #888;
+}
+
+.license-footer a { color: #1a6fc4; }
+
+/* ── Responsive ──────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  body { flex-direction: column; }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    min-height: auto;
+    position: static;
+  }
+
+  .sidebar-nav {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 0.5rem;
+    gap: 0.25rem;
+  }
+
+  .sidebar-nav a {
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
+  }
+
+  .sidebar-nav a.active {
+    border-left: none;
+    padding-left: 0.75rem;
+  }
+
+  .main { padding: 1.5rem; }
+}
