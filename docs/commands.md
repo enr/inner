@@ -33,6 +33,7 @@ inner run [flags] [-- extra-args]
 | `--no-interactive` | | bool | — | Force non-interactive mode |
 | `--mount` | `-m` | string | — | Additional mount in `SRC:DEST[:MODE]` format (mode: `ro`\|`rw`). Repeatable. |
 | `--env` | `-e` | string | — | Set an environment variable as `KEY=VAL`. Repeatable. |
+| `--entrypoint` | | string | — | Override the entrypoint command (resets profile args, like `docker --entrypoint`). |
 | `--arg` | `-a` | string | — | Append an argument to the entrypoint command. Repeatable. |
 | `--args-file` | | path | — | Read the file and append its entire content as a single entrypoint argument. |
 | `--timeout` | | int | `0` | Timeout in seconds (`0` = no timeout) |
@@ -90,6 +91,12 @@ inner run -p claude-one-shot -w ~/myproject --args-file ~/issues/042-login-bug.m
 
 # Combine profile flags with --arg and an issue file
 inner run -p claude-one-shot -w ~/myproject --timeout 300 --args-file ~/issues/042-login-bug.md
+
+# Override entrypoint: reuse a profile's sandbox config with a different binary
+inner run -p claude-one-shot --entrypoint /usr/bin/gemini --arg "explain this codebase"
+
+# Run a one-shot shell command in a sandbox
+inner run -p shell-oneshot --arg "ls -la ~/project"
 
 # Preview the bwrap command without running
 inner run -p claude-interactive --dry-run

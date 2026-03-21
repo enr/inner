@@ -1,0 +1,24 @@
+schema_version = "1"
+name = "shell-oneshot"
+description = "Run a single shell command in sandbox (no network)"
+
+[sandbox]
+network   = false
+clipboard = false
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+args        = ["-c"]
+interactive = false
+
+[output]
+summary         = false
+log             = "~/.inner/logs/"
+timeout_seconds = 60
+
+[noop]
+block = ["apt-get", "apt", "yum", "dnf", "brew"]

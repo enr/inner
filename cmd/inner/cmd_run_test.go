@@ -192,6 +192,47 @@ func TestApplyOverrides_prompt(t *testing.T) {
 	}
 }
 
+func TestApplyOverrides_entrypoint(t *testing.T) {
+	rc := &config.RunConfig{
+		Entrypoint: config.Entrypoint{
+			Cmd:  "old-cmd",
+			Args: []string{"--profile-arg"},
+		},
+	}
+	if err := applyOverrides(rc, runCLIFlags{entrypoint: "/usr/bin/python3"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if rc.Entrypoint.Cmd != "/usr/bin/python3" {
+		t.Errorf("Cmd = %q, want /usr/bin/python3", rc.Entrypoint.Cmd)
+	}
+	// Profile args must be cleared — new entrypoint, clean slate.
+	if len(rc.Entrypoint.Args) != 0 {
+		t.Errorf("Args should be empty after entrypoint override, got: %v", rc.Entrypoint.Args)
+	}
+}
+
+func TestApplyOverrides_entrypointWithArgs(t *testing.T) {
+	// --entrypoint clears profile args; --arg and extraArgs still append.
+	rc := &config.RunConfig{
+		Entrypoint: config.Entrypoint{
+			Cmd:  "old-cmd",
+			Args: []string{"--profile-arg"},
+		},
+	}
+	if err := applyOverrides(rc, runCLIFlags{
+		entrypoint: "/usr/bin/python3",
+		args:       []string{"script.py"},
+	}, []string{"--verbose"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"script.py", "--verbose"}
+	if len(rc.Entrypoint.Args) != 2 ||
+		rc.Entrypoint.Args[0] != "script.py" ||
+		rc.Entrypoint.Args[1] != "--verbose" {
+		t.Errorf("unexpected args: %v, want %v", rc.Entrypoint.Args, want)
+	}
+}
+
 func TestApplyOverrides_arg(t *testing.T) {
 	rc := &config.RunConfig{}
 	if err := applyOverrides(rc, runCLIFlags{args: []string{"fix the bug"}}, nil); err != nil {

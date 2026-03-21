@@ -39,6 +39,7 @@ type runCLIFlags struct {
 	noInteractive bool
 	mounts        []string // each: "src:dest[:mode]"
 	env           []string // each: "KEY=VAL"
+	entrypoint    string   // override entrypoint cmd (resets profile args)
 	args          []string // each appended to entrypoint args (--arg, repeatable)
 	argsFile      string   // path to file whose content is appended as a single arg
 	prompt        string   // deprecated: use --arg
@@ -272,6 +273,12 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 			rc.Env.Set = make(map[string]string)
 		}
 		rc.Env.Set[k] = v
+	}
+
+	// --entrypoint → replace cmd and reset profile args (same semantics as docker --entrypoint).
+	if flags.entrypoint != "" {
+		rc.Entrypoint.Cmd = flags.entrypoint
+		rc.Entrypoint.Args = nil
 	}
 
 	// --arg flags → each appended as a separate entrypoint arg.
@@ -582,6 +589,7 @@ to the entrypoint command.`,
 	cmd.Flags().BoolVar(&flags.noInteractive, "no-interactive", false, "Force non-interactive mode")
 	cmd.Flags().StringArrayVarP(&flags.mounts, "mount", "m", nil, "Additional mount: SRC:DEST[:MODE]")
 	cmd.Flags().StringArrayVarP(&flags.env, "env", "e", nil, "Set env variable: KEY=VAL")
+	cmd.Flags().StringVar(&flags.entrypoint, "entrypoint", "", "Override entrypoint command (resets profile args, like docker --entrypoint)")
 	cmd.Flags().StringArrayVarP(&flags.args, "arg", "a", nil, "Append argument to entrypoint (repeatable)")
 	cmd.Flags().StringVar(&flags.argsFile, "args-file", "", "Read file and append its content as a single entrypoint argument")
 	cmd.Flags().StringVar(&flags.prompt, "prompt", "", "")
