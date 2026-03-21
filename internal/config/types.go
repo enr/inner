@@ -2,23 +2,23 @@ package config
 
 // Profile represents a loaded .toml profile file from ~/.inner/profiles/<name>.toml.
 type Profile struct {
-	SchemaVersion string                `toml:"schema_version"`
-	Name          string                `toml:"name"`
-	Description   string                `toml:"description"`
+	SchemaVersion string `toml:"schema_version"`
+	Name          string `toml:"name"`
+	Description   string `toml:"description"`
 	// Extends names a base profile to inherit from. The current profile is
 	// merged on top: scalars override, slices are unioned, maps are merged.
 	Extends string `toml:"extends"`
 	// Experimental marks a profile as not yet ready for use.
 	// inner run refuses to start with an explicit error message.
-	Experimental  bool                  `toml:"experimental"`
-	Sandbox       SandboxConfig         `toml:"sandbox"`
-	Mounts        map[string]MountEntry `toml:"mounts"`
-	Env           EnvConfig             `toml:"env"`
-	Git           *GitConfig            `toml:"git"`
-	Entrypoint    EntrypointConfig      `toml:"entrypoint"`
-	Output        OutputConfig          `toml:"output"`
-	Noop          NoopConfig            `toml:"noop"`
-	Verify        VerifyConfig          `toml:"verify"`
+	Experimental bool                  `toml:"experimental"`
+	Sandbox      SandboxConfig         `toml:"sandbox"`
+	Mounts       map[string]MountEntry `toml:"mounts"`
+	Env          EnvConfig             `toml:"env"`
+	Git          *GitConfig            `toml:"git"`
+	Entrypoint   EntrypointConfig      `toml:"entrypoint"`
+	Output       OutputConfig          `toml:"output"`
+	Noop         NoopConfig            `toml:"noop"`
+	Verify       VerifyConfig          `toml:"verify"`
 }
 
 // ValidAllowKeys is the exhaustive set of keys accepted in [sandbox].allow.
@@ -29,8 +29,8 @@ var ValidAllowKeys = []string{
 
 // SandboxConfig controls high-level sandbox capabilities.
 type SandboxConfig struct {
-	Network   bool     `toml:"network"`
-	Clipboard bool     `toml:"clipboard"`
+	Network   bool `toml:"network"`
+	Clipboard bool `toml:"clipboard"`
 	// Allow lists sensitive resources that are normally hidden but explicitly
 	// permitted in this sandbox. Valid keys are listed in ValidAllowKeys.
 	Allow []string `toml:"allow"`

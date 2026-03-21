@@ -165,9 +165,9 @@ type Checker struct {
 	NetworkEnabled bool // if true, network-policy check is skipped (network intentionally open)
 
 	// Injectable for tests.
-	HomeDir       string                                                         // defaults to os.UserHomeDir()
-	UsrDir        string                                                         // defaults to "/usr"
-	ShimMountPath string                                                         // defaults to "/run/inner-shims"
+	HomeDir       string                                                                 // defaults to os.UserHomeDir()
+	UsrDir        string                                                                 // defaults to "/usr"
+	ShimMountPath string                                                                 // defaults to "/run/inner-shims"
 	dialFn        func(network, address string, timeout time.Duration) (net.Conn, error) // defaults to net.DialTimeout
 }
 

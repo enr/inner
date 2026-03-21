@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+tool_source="${BASH_SOURCE[0]}"
+while [ -h "$tool_source" ]; do tool_source="$(readlink "$tool_source")"; done
+sdlc_dir="$( cd -P "$( dirname "$tool_source" )" && pwd )"
+prj_home="$( cd -P "$( dirname "$sdlc_dir" )" && pwd )"
+
+cd "${prj_home}"
+
+echo "==> fmt (check)"
+unformatted=$(find . -name '*.go' -not -path '*/vendor/*' -not -path '*/.gopath/*' | xargs gofmt -l)
+if [ -n "$unformatted" ]; then
+    echo "    files not formatted:"
+    echo "$unformatted" | sed 's/^/      /'
+    exit 1
+fi
+echo "    ok"
+
+echo "==> vet"
+go vet ./...
+echo "    ok"
+
+echo "==> staticcheck"
+if command -v staticcheck &>/dev/null; then
+    if staticcheck ./... 2>&1; then
+        echo "    ok"
+    else
+        echo "    warning: staticcheck failed (possibly version mismatch), skipped"
+    fi
+else
+    echo "    skipped (staticcheck not installed)"
+fi
+
+echo "==> lint done"

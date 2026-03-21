@@ -13,11 +13,11 @@ import (
 // instantiate independent command trees without shared state.
 func buildRootCmd(app *App) *cobra.Command {
 	root := &cobra.Command{
-		Use:          "inner",
-		Short:        "Run agentic tools in isolated, reproducible environments",
-		Long:         `inner launches agentic tools (Claude Code, Aider, interactive shell) in isolated sandboxes backed by bubblewrap on Linux.`,
-		Version:      version.Version,
-		SilenceUsage: true,  // don't dump usage on every operational error
+		Use:           "inner",
+		Short:         "Run agentic tools in isolated, reproducible environments",
+		Long:          `inner launches agentic tools (Claude Code, Aider, interactive shell) in isolated sandboxes backed by bubblewrap on Linux.`,
+		Version:       version.Version,
+		SilenceUsage:  true, // don't dump usage on every operational error
 		SilenceErrors: true, // we print the error ourselves in execute()
 	}
 	root.SetVersionTemplate(fmt.Sprintf("inner %s (git: %s, built: %s)\n",
