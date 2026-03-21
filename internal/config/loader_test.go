@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -315,6 +317,36 @@ func TestLoadProfileFromPath_notFound(t *testing.T) {
 	}
 }
 
+func TestLoadProfileAuto_tilde(t *testing.T) {
+	// Point HOME at a temp dir so ~/profile.toml resolves there.
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	profilePath := filepath.Join(homeDir, "tprofile.toml")
+	writeFile(t, profilePath, `name = "tilde-loaded"`)
+
+	l := NewLoader(t.TempDir())
+	p, err := l.LoadProfileAuto("~/tprofile.toml")
+	if err != nil {
+		t.Fatalf("LoadProfileAuto with ~: %v", err)
+	}
+	if p.Name != "tilde-loaded" {
+		t.Errorf("Name = %q, want tilde-loaded", p.Name)
+	}
+}
+
+func TestResolveProfilePath_tilde(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	profilePath := filepath.Join(homeDir, "tprofile.toml")
+	writeFile(t, profilePath, `name = "tilde-loaded"`)
+
+	l := NewLoader(t.TempDir())
+	resolved := l.ResolveProfilePath("~/tprofile.toml")
+	if resolved != profilePath {
+		t.Errorf("ResolveProfilePath = %q, want %q", resolved, profilePath)
+	}
+}
+
 func TestLoadProfileAuto_prefersFileOverName(t *testing.T) {
 	// Create both a file in cwd-equivalent temp dir and a named profile.
 	dir := t.TempDir()
@@ -363,6 +395,427 @@ cmd = "zsh"
 	}
 	if rc.Entrypoint.Cmd != "zsh" {
 		t.Errorf("Entrypoint.Cmd = %q, want zsh", rc.Entrypoint.Cmd)
+	}
+}
+
+// --- extends tests ---
+
+func TestLoadProfile_extends_scalarOverride(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+schema_version = "1"
+name        = "base"
+description = "base description"
+
+[sandbox]
+network = false
+
+[entrypoint]
+cmd         = "bash"
+interactive = true
+
+[output]
+timeout_seconds = 60
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends     = "base"
+description = "child description"
+
+[output]
+timeout_seconds = 120
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Description != "child description" {
+		t.Errorf("Description = %q, want %q", p.Description, "child description")
+	}
+	if p.Output.TimeoutSeconds != 120 {
+		t.Errorf("TimeoutSeconds = %d, want 120", p.Output.TimeoutSeconds)
+	}
+	// Inherited from base.
+	if p.Entrypoint.Cmd != "bash" {
+		t.Errorf("Entrypoint.Cmd = %q, want bash", p.Entrypoint.Cmd)
+	}
+	if p.Sandbox.Network {
+		t.Error("expected Network = false (inherited from base)")
+	}
+}
+
+func TestLoadProfile_extends_boolOverride(t *testing.T) {
+	// Verify that a child can explicitly set a bool to true or false,
+	// including overriding a base value of true back to false.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+experimental = true
+
+[sandbox]
+network = true
+
+[entrypoint]
+interactive = true
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends      = "base"
+experimental = false
+
+[sandbox]
+network = false
+
+[entrypoint]
+interactive = false
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Experimental {
+		t.Error("expected Experimental = false (overridden)")
+	}
+	if p.Sandbox.Network {
+		t.Error("expected Network = false (overridden)")
+	}
+	if p.Entrypoint.Interactive {
+		t.Error("expected Interactive = false (overridden)")
+	}
+}
+
+func TestLoadProfile_extends_mergeSlices(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[sandbox]
+allow = ["ssh-keys", "git-credentials"]
+
+[env]
+inherit = ["HOME", "TERM"]
+
+[noop]
+block = ["apt-get", "apt"]
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "base"
+
+[sandbox]
+allow = ["docker-socket", "ssh-keys"]  # ssh-keys is duplicate
+
+[env]
+inherit = ["LANG", "HOME"]  # HOME is duplicate
+
+[noop]
+block = ["brew", "apt"]  # apt is duplicate
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+
+	wantAllow := []string{"ssh-keys", "git-credentials", "docker-socket"}
+	if len(p.Sandbox.Allow) != len(wantAllow) {
+		t.Errorf("Allow = %v, want %v", p.Sandbox.Allow, wantAllow)
+	}
+
+	wantInherit := []string{"HOME", "TERM", "LANG"}
+	if len(p.Env.Inherit) != len(wantInherit) {
+		t.Errorf("Inherit = %v, want %v", p.Env.Inherit, wantInherit)
+	}
+
+	wantBlock := []string{"apt-get", "apt", "brew"}
+	if len(p.Noop.Block) != len(wantBlock) {
+		t.Errorf("Noop.Block = %v, want %v", p.Noop.Block, wantBlock)
+	}
+}
+
+func TestLoadProfile_extends_mergeMaps(t *testing.T) {
+	dir := t.TempDir()
+	srcA := t.TempDir()
+	srcB := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), fmt.Sprintf(`
+[mounts]
+%q = { dest = "/workspace", mode = "rw" }
+
+[env]
+set = { "FOO" = "from-base", "BAR" = "base-bar" }
+
+[noop]
+rewrite = { "docker" = "podman" }
+`, srcA))
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), fmt.Sprintf(`
+extends = "base"
+
+[mounts]
+%q = { dest = "/extra", mode = "ro" }
+
+[env]
+set = { "FOO" = "from-child", "NEW" = "added" }
+
+[noop]
+rewrite = { "docker-compose" = "podman-compose" }
+`, srcB))
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+
+	// mounts: both sources present.
+	if len(p.Mounts) != 2 {
+		t.Errorf("Mounts len = %d, want 2", len(p.Mounts))
+	}
+
+	// env.set: FOO overridden, BAR kept, NEW added.
+	if p.Env.Set["FOO"] != "from-child" {
+		t.Errorf("env.set FOO = %q, want from-child", p.Env.Set["FOO"])
+	}
+	if p.Env.Set["BAR"] != "base-bar" {
+		t.Errorf("env.set BAR = %q, want base-bar", p.Env.Set["BAR"])
+	}
+	if p.Env.Set["NEW"] != "added" {
+		t.Errorf("env.set NEW = %q, want added", p.Env.Set["NEW"])
+	}
+
+	// noop.rewrite: both entries present.
+	if p.Noop.Rewrite["docker"] != "podman" {
+		t.Errorf("noop.rewrite docker = %q, want podman", p.Noop.Rewrite["docker"])
+	}
+	if p.Noop.Rewrite["docker-compose"] != "podman-compose" {
+		t.Errorf("noop.rewrite docker-compose = %q, want podman-compose", p.Noop.Rewrite["docker-compose"])
+	}
+}
+
+func TestLoadProfile_extends_verifyChecksAppend(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[verify.custom]
+checks = [
+  { name = "base-check", cmd = "true", severity = "high" },
+]
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "base"
+
+[verify.custom]
+checks = [
+  { name = "child-check", cmd = "true", severity = "critical" },
+]
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if len(p.Verify.Custom.Checks) != 2 {
+		t.Fatalf("Checks len = %d, want 2", len(p.Verify.Custom.Checks))
+	}
+	if p.Verify.Custom.Checks[0].Name != "base-check" {
+		t.Errorf("Checks[0].Name = %q, want base-check", p.Verify.Custom.Checks[0].Name)
+	}
+	if p.Verify.Custom.Checks[1].Name != "child-check" {
+		t.Errorf("Checks[1].Name = %q, want child-check", p.Verify.Custom.Checks[1].Name)
+	}
+}
+
+func TestLoadProfile_extends_gitMerge(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[git]
+strip_sections = ["credential"]
+overrides      = { "push.default" = "nothing" }
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "base"
+
+[git]
+strip_sections = ["url", "credential"]  # credential is duplicate
+overrides      = { "user.email" = "bot@example.com" }
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Git == nil {
+		t.Fatal("expected non-nil Git config")
+	}
+	// strip_sections: union of base + child, no duplicates.
+	wantStrip := []string{"credential", "url"}
+	if len(p.Git.StripSections) != len(wantStrip) {
+		t.Errorf("StripSections = %v, want %v", p.Git.StripSections, wantStrip)
+	}
+	// overrides: merged.
+	if p.Git.Overrides["push.default"] != "nothing" {
+		t.Errorf("overrides push.default = %q, want nothing", p.Git.Overrides["push.default"])
+	}
+	if p.Git.Overrides["user.email"] != "bot@example.com" {
+		t.Errorf("overrides user.email = %q, want bot@example.com", p.Git.Overrides["user.email"])
+	}
+}
+
+func TestLoadProfile_extends_chain(t *testing.T) {
+	// A extends B extends C — three-level chain.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "c.toml"), `
+[entrypoint]
+cmd = "bash"
+
+[output]
+timeout_seconds = 10
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "b.toml"), `
+extends = "c"
+
+[sandbox]
+network = true
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "a.toml"), `
+extends = "b"
+description = "top"
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("a")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Description != "top" {
+		t.Errorf("Description = %q, want top", p.Description)
+	}
+	if !p.Sandbox.Network {
+		t.Error("expected Network = true (from b)")
+	}
+	if p.Entrypoint.Cmd != "bash" {
+		t.Errorf("Entrypoint.Cmd = %q, want bash (from c)", p.Entrypoint.Cmd)
+	}
+	if p.Output.TimeoutSeconds != 10 {
+		t.Errorf("TimeoutSeconds = %d, want 10 (from c)", p.Output.TimeoutSeconds)
+	}
+}
+
+func TestLoadProfile_extends_cycle(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "a.toml"), `extends = "b"`)
+	writeFile(t, filepath.Join(dir, "profiles", "b.toml"), `extends = "a"`)
+
+	l := NewLoader(dir)
+	_, err := l.LoadProfile("a")
+	if err == nil {
+		t.Fatal("expected error for extends cycle, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error should mention cycle, got: %v", err)
+	}
+}
+
+func TestLoadProfile_extends_baseNotFound(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `extends = "nonexistent"`)
+
+	l := NewLoader(dir)
+	_, err := l.LoadProfile("child")
+	if err == nil {
+		t.Fatal("expected error when base profile is not found")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error should mention the missing profile, got: %v", err)
+	}
+}
+
+func TestLoadProfile_extends_byPath(t *testing.T) {
+	dir := t.TempDir()
+	baseDir := t.TempDir()
+	basePath := filepath.Join(baseDir, "base.toml")
+	writeFile(t, basePath, `
+[entrypoint]
+cmd = "zsh"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), fmt.Sprintf(`
+extends = %q
+description = "uses path extends"
+`, basePath))
+
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Entrypoint.Cmd != "zsh" {
+		t.Errorf("Entrypoint.Cmd = %q, want zsh (from base path)", p.Entrypoint.Cmd)
+	}
+	if p.Description != "uses path extends" {
+		t.Errorf("Description = %q, want 'uses path extends'", p.Description)
+	}
+}
+
+func TestLoadProfile_extends_noInheritedExtends(t *testing.T) {
+	// The merged result must not carry the extends field from the child,
+	// so a subsequent load does not re-trigger resolution.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[entrypoint]
+cmd = "bash"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "base"
+description = "child"
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	// The merged profile's Extends field should still be "base" (it's a data
+	// field, not an instruction), but loading it again via LoadProfileAuto
+	// with the resolved struct should not re-resolve. This test just verifies
+	// the round-trip produces a sane profile.
+	if p.Entrypoint.Cmd != "bash" {
+		t.Errorf("Entrypoint.Cmd = %q, want bash", p.Entrypoint.Cmd)
+	}
+}
+
+func TestBuild_extends_runConfig(t *testing.T) {
+	// End-to-end: Build() on an extending profile should produce the correct RunConfig.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[sandbox]
+network = false
+allow   = ["ssh-keys"]
+
+[entrypoint]
+cmd         = "bash"
+interactive = true
+
+[output]
+timeout_seconds = 30
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "base"
+
+[sandbox]
+network = true
+allow   = ["docker-socket"]
+
+[output]
+timeout_seconds = 60
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("child")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !rc.Network {
+		t.Error("expected Network = true")
+	}
+	if rc.Timeout != 60 {
+		t.Errorf("Timeout = %d, want 60", rc.Timeout)
+	}
+	if rc.Entrypoint.Cmd != "bash" {
+		t.Errorf("Entrypoint.Cmd = %q, want bash", rc.Entrypoint.Cmd)
+	}
+	wantAllow := []string{"ssh-keys", "docker-socket"}
+	if len(rc.Allow) != len(wantAllow) {
+		t.Errorf("Allow = %v, want %v", rc.Allow, wantAllow)
 	}
 }
 

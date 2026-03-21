@@ -63,35 +63,32 @@ func (l *Loader) LoadGlobal() (*GlobalConfig, error) {
 // Returns an error if the file does not exist.
 func (l *Loader) LoadProfile(name string) (*Profile, error) {
 	path := l.ProfilePath(name)
-	p := &Profile{}
-	_, err := toml.DecodeFile(path, p)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("profile %q not found at %s", name, path)
-		}
-		return nil, fmt.Errorf("reading profile %q: %w", name, err)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("profile %q not found at %s", name, path)
 	}
-	// Back-fill name from filename if not set in the file.
-	if p.Name == "" {
-		p.Name = name
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	p, err := l.loadProfilePath(abs, nil)
+	if err != nil {
+		return nil, fmt.Errorf("reading profile %q: %w", name, err)
 	}
 	return p, nil
 }
 
 // LoadProfileFromPath reads a profile from an explicit file path.
 func (l *Loader) LoadProfileFromPath(path string) (*Profile, error) {
-	p := &Profile{}
-	_, err := toml.DecodeFile(path, p)
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("profile file not found: %s", path)
-		}
-		return nil, fmt.Errorf("reading profile from %s: %w", path, err)
+		abs = path
 	}
-	// Back-fill name from basename if not set in the file.
-	if p.Name == "" {
-		base := filepath.Base(path)
-		p.Name = strings.TrimSuffix(base, filepath.Ext(base))
+	if _, err := os.Stat(abs); os.IsNotExist(err) {
+		return nil, fmt.Errorf("profile file not found: %s", abs)
+	}
+	p, err := l.loadProfilePath(abs, nil)
+	if err != nil {
+		return nil, fmt.Errorf("reading profile from %s: %w", path, err)
 	}
 	return p, nil
 }
@@ -99,26 +96,30 @@ func (l *Loader) LoadProfileFromPath(path string) (*Profile, error) {
 // ResolveProfilePath returns the actual file path for a name-or-path value.
 // If nameOrPath is an existing file it is resolved to an absolute path.
 // Otherwise it falls back to the profiles directory.
+// ~ is expanded before the file-existence check.
 func (l *Loader) ResolveProfilePath(nameOrPath string) string {
-	if _, err := os.Stat(nameOrPath); err == nil {
-		if abs, err := filepath.Abs(nameOrPath); err == nil {
+	expanded := ExpandPath(nameOrPath)
+	if _, err := os.Stat(expanded); err == nil {
+		if abs, err := filepath.Abs(expanded); err == nil {
 			return abs
 		}
-		return nameOrPath
+		return expanded
 	}
 	return l.ProfilePath(nameOrPath)
 }
 
 // LoadProfileAuto loads a profile given either a name or a file path.
-// If nameOrPath points to an existing file it is loaded directly;
-// otherwise it is treated as a profile name looked up in the profiles directory.
+// If nameOrPath points to an existing file (after ~ expansion) it is loaded
+// directly; otherwise it is treated as a profile name looked up in the
+// profiles directory.
 func (l *Loader) LoadProfileAuto(nameOrPath string) (*Profile, error) {
-	if _, err := os.Stat(nameOrPath); err == nil {
-		abs, err := filepath.Abs(nameOrPath)
+	expanded := ExpandPath(nameOrPath)
+	if _, err := os.Stat(expanded); err == nil {
+		abs, err := filepath.Abs(expanded)
 		if err != nil {
-			abs = nameOrPath
+			abs = expanded
 		}
-		return l.LoadProfileFromPath(abs)
+		return l.loadProfilePath(abs, nil)
 	}
 	return l.LoadProfile(nameOrPath)
 }
@@ -194,4 +195,71 @@ func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
 	cfg.LogDir = ExpandPath(logDir)
 
 	return cfg
+}
+
+// loadRaw decodes a profile TOML file without resolving extends.
+// It returns the profile, the TOML metadata (used to detect which keys were
+// explicitly set), and any error.
+func (l *Loader) loadRaw(path string) (*Profile, toml.MetaData, error) {
+	p := &Profile{}
+	meta, err := toml.DecodeFile(path, p)
+	if err != nil {
+		return nil, meta, err
+	}
+	return p, meta, nil
+}
+
+// resolveExtendsPath converts an extends= value to an absolute file path.
+// Values that look like paths (contain '/', start with '~') are expanded;
+// bare names are looked up in the profiles directory.
+func (l *Loader) resolveExtendsPath(val string) string {
+	if filepath.IsAbs(val) || strings.ContainsRune(val, '/') || strings.HasPrefix(val, "~") {
+		return ExpandPath(val)
+	}
+	return l.ProfilePath(val)
+}
+
+// loadProfilePath loads a profile from an absolute path, recursively resolving
+// any extends chain. visited tracks paths already in the current chain so that
+// cycles are detected and reported as errors.
+func (l *Loader) loadProfilePath(absPath string, visited map[string]bool) (*Profile, error) {
+	if visited[absPath] {
+		return nil, fmt.Errorf("extends cycle detected at %q", absPath)
+	}
+
+	p, meta, err := l.loadRaw(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Back-fill name from filename if not set in the file.
+	if p.Name == "" {
+		base := filepath.Base(absPath)
+		p.Name = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+
+	if p.Extends == "" {
+		return p, nil
+	}
+
+	// Resolve the base profile path and load it recursively.
+	basePath := l.resolveExtendsPath(p.Extends)
+	absBasePath, err := filepath.Abs(basePath)
+	if err != nil {
+		absBasePath = basePath
+	}
+
+	// Add the current path to visited before recursing.
+	newVisited := make(map[string]bool, len(visited)+1)
+	for k := range visited {
+		newVisited[k] = true
+	}
+	newVisited[absPath] = true
+
+	baseProfile, err := l.loadProfilePath(absBasePath, newVisited)
+	if err != nil {
+		return nil, fmt.Errorf("extends %q: %w", p.Extends, err)
+	}
+
+	return mergeProfiles(baseProfile, p, meta), nil
 }

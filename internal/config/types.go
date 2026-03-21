@@ -5,6 +5,9 @@ type Profile struct {
 	SchemaVersion string                `toml:"schema_version"`
 	Name          string                `toml:"name"`
 	Description   string                `toml:"description"`
+	// Extends names a base profile to inherit from. The current profile is
+	// merged on top: scalars override, slices are unioned, maps are merged.
+	Extends string `toml:"extends"`
 	// Experimental marks a profile as not yet ready for use.
 	// inner run refuses to start with an explicit error message.
 	Experimental  bool                  `toml:"experimental"`
