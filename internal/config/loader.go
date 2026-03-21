@@ -183,6 +183,7 @@ func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
 		Cmd:         p.Entrypoint.Cmd,
 		Args:        p.Entrypoint.Args,
 		Interactive: p.Entrypoint.Interactive,
+		TUI:         p.Entrypoint.TUI,
 	}
 
 	// Log directory: profile takes precedence over global.

@@ -45,4 +45,7 @@ type Entrypoint struct {
 	Cmd         string
 	Args        []string
 	Interactive bool
+	// TUI marks the entrypoint as a TUI application that probes terminal
+	// capabilities during initialisation. See EntrypointConfig.TUI.
+	TUI bool
 }

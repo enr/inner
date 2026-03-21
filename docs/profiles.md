@@ -200,6 +200,7 @@ Defines what runs inside the sandbox.
 | `cmd` | string | `$SHELL` | Binary to execute |
 | `args` | list | `[]` | Arguments passed to `cmd` |
 | `interactive` | bool | `true` | Whether to allocate a PTY |
+| `tui` | bool | `false` | Mark as a TUI app that probes terminal capabilities at startup (see below) |
 
 ```toml
 [entrypoint]
@@ -209,6 +210,14 @@ interactive = false
 ```
 
 Arguments appended via `--` on the command line, or via `--prompt`, are added after `args`.
+
+### `tui` — terminal initialisation
+
+Some applications (claude, gemini) are built on runtimes like Node.js/libuv that send terminal capability queries (`DA`, `XTVERSION`, etc.) during module initialisation, **before** the app calls `setRawMode` itself. In the default cooked terminal mode the kernel's TTY line discipline buffers those responses until a newline arrives; the subsequent `TCSAFLUSH` that the app issues when it takes over the terminal discards the buffer, and the app hangs waiting for a reply that never comes.
+
+Setting `tui = true` tells the launcher to put the host terminal in raw mode **before** the child starts, so those early queries are answered immediately.
+
+Plain interactive shells (`bash`, `zsh`) must **not** set this: they configure the terminal themselves via readline, and pre-raw mode breaks bracketed-paste echo.
 
 ---
 

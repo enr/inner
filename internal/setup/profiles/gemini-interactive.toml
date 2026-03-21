@@ -23,6 +23,10 @@ inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL", "GEMINI_API_KEY"]
 cmd         = "gemini"
 args        = []
 interactive = true
+# gemini (Node.js/libuv) probes terminal capabilities during module init,
+# before it calls setRawMode itself — tui = true makes the launcher put
+# the host terminal in raw mode before the child starts.
+tui         = true
 
 [output]
 summary         = false

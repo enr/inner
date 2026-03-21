@@ -174,26 +174,21 @@ If `cfg.GitConfigPath` is non-empty (set after `git.Sanitize()`), the sanitized 
 
 ## The TUI raw-mode decision (`ForceRawMode`)
 
-This is the one place in the codebase where a specific application name drives behaviour:
+`executor.RunOptions.ForceRawMode` is driven by `cfg.Entrypoint.TUI`, a bool declared in the profile:
 
-```go
-// cmd_run.go
-func isTUIApp(cmd string) bool {
-    switch filepath.Base(cmd) {
-    case "claude", "gemini":
-        return true
-    }
-    return false
-}
+```toml
+[entrypoint]
+interactive = true
+tui         = true
 ```
 
-`isTUIApp` feeds `executor.RunOptions.ForceRawMode`. When true, `Launcher.runInteractive` puts the host terminal in raw mode **before** the child starts.
+When `ForceRawMode` is true, `Launcher.runInteractive` puts the host terminal in raw mode **before** the child starts.
 
 This is intentionally separate from `Entrypoint.Interactive`. The reason: TUI apps built on Node.js/libuv (claude, gemini) send terminal capability queries (`DA`, `XTVERSION`, etc.) during module initialisation, before they call `setRawMode` themselves. In cooked mode the kernel's TTY line discipline buffers the response until a newline arrives; the subsequent `TCSAFLUSH` that the app issues when it takes over the terminal then discards the buffered response, and the app hangs waiting for a reply that never comes.
 
 Plain interactive shells (bash, zsh) must NOT receive pre-raw mode: they configure the terminal themselves via readline, and pre-raw mode breaks bracketed-paste echo, making pasted text invisible.
 
-The check is isolated to `cmd_run.go` and does not reach the isolator. The bwrap command is identical regardless — only the Launcher's pre-start terminal configuration differs.
+`ForceRawMode` is only consumed inside the `opts.Interactive` branch of `Launcher.Run` — it is silently ignored for non-interactive runs. The bwrap command is identical regardless; only the Launcher's pre-start terminal configuration differs.
 
 ---
 

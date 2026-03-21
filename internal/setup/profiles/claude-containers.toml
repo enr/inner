@@ -34,6 +34,10 @@ overrides      = { "push.default" = "nothing" }
 cmd         = "claude"
 args        = []
 interactive = true
+# claude (Node.js/libuv) probes terminal capabilities during module init,
+# before it calls setRawMode itself — tui = true makes the launcher put
+# the host terminal in raw mode before the child starts.
+tui         = true
 
 [verify.custom]
 checks = [

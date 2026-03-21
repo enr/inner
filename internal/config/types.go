@@ -88,6 +88,14 @@ type EntrypointConfig struct {
 	Cmd         string   `toml:"cmd"`
 	Args        []string `toml:"args"`
 	Interactive bool     `toml:"interactive"`
+	// TUI marks the entrypoint as a TUI application built on a runtime
+	// (e.g. Node.js/libuv) that probes terminal capabilities during module
+	// initialisation, before the app calls setRawMode itself. When true,
+	// the launcher puts the host terminal in raw mode before the child starts
+	// so those early capability queries are not buffered by the line discipline.
+	// Plain interactive shells (bash, zsh) must NOT set this: they configure
+	// the terminal themselves and pre-raw mode breaks bracketed-paste echo.
+	TUI bool `toml:"tui"`
 }
 
 // OutputConfig controls logging and summarization.
