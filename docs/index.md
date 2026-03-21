@@ -34,6 +34,7 @@ inner run -p claude-one-shot --prompt "refactor the auth module"
 | [Profiles](profiles.md) | Profile TOML configuration reference |
 | [Examples](examples.md) | Common usage patterns with explanations |
 | [Development](development.md) | Build, test, dev mode, release |
+| [Internals](internals.md) | bwrap command construction, flag decisions, architecture |
 
 ## Requirements
 
