@@ -204,7 +204,10 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			{"netrc", filepath.Join(home, ".netrc"), false},
 			{"docker-socket", "/var/run/docker.sock", false},
 			{"podman-socket", "/run/user/" + uid + "/podman/podman.sock", false},
+			{"bash-history", filepath.Join(home, ".bash_history"), false},
+			{"zsh-history", filepath.Join(home, ".zsh_history"), false},
 		}
+
 		for _, r := range sensitive {
 			if isAllowed(cfg.Allow, r.key) {
 				continue
