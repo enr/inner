@@ -1,2 +1,4 @@
 conversations/
 bin/*
+inner
+.gopath/
