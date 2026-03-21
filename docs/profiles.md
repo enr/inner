@@ -104,6 +104,8 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `podman-socket` | `/run/user/$UID/podman/podman.sock` (Podman rootless socket, per-user path) |
 | `nested-user-ns` | Unprivileged user namespaces inside sandbox (required for Podman) |
 | `netrc` | `~/.netrc` |
+| `bash-history` | `~/.bash_history` |
+| `zsh-history` | `~/.zsh_history` |
 
 The two socket entries are distinct because they point to different paths: `docker-socket` is the system-level Docker daemon socket, while `podman-socket` is the per-user Podman rootless socket.
 
