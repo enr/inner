@@ -1,6 +1,7 @@
 ---
 title: Getting Started
 description: Install inner and run your first sandboxed session
+weight: 1
 ---
 
 # Getting Started
@@ -29,7 +30,16 @@ cat /proc/sys/kernel/unprivileged_userns_clone
 
 ## Installation
 
-Build from source:
+Download the latest binary from [GitHub Releases](https://github.com/enr/inner/releases/latest):
+
+```bash
+# Download and extract (replace VERSION and ARCH as needed)
+curl -L https://github.com/enr/inner/releases/latest/download/inner-linux-amd64.zip -o inner.zip
+unzip inner.zip
+sudo mv inner /usr/local/bin/inner
+```
+
+Or build from source:
 
 ```bash
 git clone https://github.com/enr/inner
@@ -106,4 +116,4 @@ Run a claude-one-shot agent task (non-interactive, returns when done):
 inner run -p claude-one-shot -w ~/my-project --prompt "add docstrings to all exported functions"
 ```
 
-See [Examples](examples.md) for more patterns, and [Profiles](profiles.md) to understand or customize the sandbox configuration.
+See [Examples](../examples/) for more patterns, and [Profiles](../profiles/) to understand or customize the sandbox configuration.

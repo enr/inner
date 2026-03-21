@@ -1,6 +1,7 @@
 ---
 title: Command Reference
 description: All inner commands, subcommands, flags, and options
+weight: 2
 ---
 
 # Command Reference
@@ -219,7 +220,7 @@ This means the checks probe what a real agent run would actually see — not the
 | shims active in PATH | MEDIUM | Shim directory must be first in `PATH` |
 | network restricted | MEDIUM | TCP connection to 8.8.8.8:53 must fail |
 
-Custom checks can be added to a profile under `[verify.custom]` — see [Profiles](profiles.md).
+Custom checks can be added to a profile under `[verify.custom]` — see [Profiles](../profiles/).
 
 ### Output symbols
 

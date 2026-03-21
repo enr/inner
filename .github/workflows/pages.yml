@@ -22,14 +22,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Hugo
+        uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: 'latest'
+          extended: false
+
       - uses: actions/configure-pages@v5
 
-      - uses: actions/jekyll-build-pages@v1
-        with:
-          source: ./docs
-          destination: ./_site
+      - name: Build site
+        run: hugo --minify --source docs
 
       - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/public
 
   deploy:
     needs: build

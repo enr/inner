@@ -1,6 +1,7 @@
 ---
 title: Internals
 description: How inner builds the bwrap command — architecture and low-level decisions for contributors
+weight: 6
 ---
 
 # Internals
@@ -198,7 +199,7 @@ To expose a new sensitive resource:
 
 1. Add an entry to the `sensitive` slice in `BwrapIsolator.Build` (`internal/isolator/bwrap.go`).
 2. Add the key to `config.ValidAllowKeys` (`internal/config/types.go`).
-3. Document it in `docs/profiles.md` under `[sandbox].allow`.
+3. Document it in `docs/content/profiles.md` under `[sandbox].allow`.
 
 To add a new bwrap-level capability gated by a profile key:
 

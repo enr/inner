@@ -7,6 +7,11 @@ description: Run agentic tools in isolated sandbox environments
 
 `inner` is a Linux CLI tool that runs agentic tools — Claude Code, Aider, interactive shells — in isolated, reproducible sandbox environments backed by [bubblewrap (bwrap)](https://github.com/containers/bubblewrap).
 
+<div class="download-banner">
+  <strong>Latest release:</strong>
+  <a class="download-btn" href="https://github.com/enr/inner/releases/latest">Download from GitHub Releases</a>
+</div>
+
 ## Why inner?
 
 Agentic tools have broad filesystem access and execute arbitrary commands. `inner` provides a layer of isolation so you can run them safely:
@@ -29,12 +34,12 @@ inner run -p claude-one-shot --prompt "refactor the auth module"
 
 | Page | Description |
 |------|-------------|
-| [Getting Started](getting-started.md) | Install, first run, environment check |
-| [Commands](commands.md) | Full command and flag reference |
-| [Profiles](profiles.md) | Profile TOML configuration reference |
-| [Examples](examples.md) | Common usage patterns with explanations |
-| [Development](development.md) | Build, test, dev mode, release |
-| [Internals](internals.md) | bwrap command construction, flag decisions, architecture |
+| [Getting Started](getting-started/) | Install, first run, environment check |
+| [Commands](commands/) | Full command and flag reference |
+| [Profiles](profiles/) | Profile TOML configuration reference |
+| [Examples](examples/) | Common usage patterns with explanations |
+| [Development](development/) | Build, test, dev mode, release |
+| [Internals](internals/) | bwrap command construction, flag decisions, architecture |
 
 ## Requirements
 
@@ -42,3 +47,7 @@ inner run -p claude-one-shot --prompt "refactor the auth module"
 - `bwrap` (bubblewrap) installed
 - Unprivileged user namespaces enabled (`/proc/sys/kernel/unprivileged_userns_clone` = 1)
 - Go 1.24+ (to build from source)
+
+## License
+
+`inner` is released under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).

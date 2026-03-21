@@ -1,6 +1,7 @@
 ---
 title: Development
 description: Build, test, dev mode, and release workflows for inner
+weight: 5
 ---
 
 # Development
@@ -116,6 +117,7 @@ inner/
 │   ├── build           # build binary
 │   ├── run             # dev mode (go run)
 │   ├── ci              # build + test
+│   ├── website         # build / serve documentation site
 │   └── release         # tag and push a release
 └── go.mod              # module: github.com/enr/inner
 ```

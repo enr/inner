@@ -1,6 +1,7 @@
 ---
 title: Examples
 description: Common usage patterns with explanations
+weight: 4
 ---
 
 # Examples

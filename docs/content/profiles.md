@@ -1,6 +1,7 @@
 ---
 title: Profiles
 description: Profile TOML configuration reference for inner sandboxes
+weight: 3
 ---
 
 # Profiles
@@ -41,6 +42,7 @@ inner profile show claude-interactive
 schema_version = "1"
 name          = "my-profile"
 description   = "Human-readable description"
+extends       = ""     # optional: name or path of a base profile to inherit from
 experimental  = false  # set to true to prevent inner run from starting
 
 [sandbox]
@@ -70,6 +72,64 @@ experimental  = false  # set to true to prevent inner run from starting
 
 ---
 
+## Profile Inheritance (`extends`)
+
+A profile can inherit from a base profile using the `extends` field. The child profile starts as a complete copy of the base and then applies its own fields on top — only the fields explicitly declared in the child file take effect.
+
+```toml
+extends = "claude"          # name of a profile in ~/.inner/profiles/
+# or
+extends = "~/my-base.toml"  # explicit file path (~ and absolute paths supported)
+```
+
+### Merge semantics
+
+| Type | Behaviour |
+|------|-----------|
+| Scalar (`bool`, `string`, `int`) | Child wins only when the key is explicitly present in the child file. A missing key keeps the base value, including `false` booleans. |
+| Slice (`allow`, `env.inherit`, `noop.block`, `git.strip_sections`) | Union: base items first, then any new items from the child. Duplicates are removed. |
+| Map (`mounts`, `env.set`, `noop.rewrite`, `git.overrides`) | Merge: all base entries kept; child entries added or override matching keys. |
+| `verify.custom.checks` | Append: base checks first, child checks after. |
+
+### Example
+
+```toml
+# ~/.inner/profiles/claude.toml  (base)
+[sandbox]
+allow = ["ssh-keys"]
+
+[entrypoint]
+cmd         = "claude"
+interactive = true
+tui         = true
+
+[output]
+timeout_seconds = 3600
+```
+
+```toml
+# ~/.inner/profiles/claude-net.toml  (child)
+extends     = "claude"
+description = "Claude with network access"
+
+[sandbox]
+network = true
+allow   = ["docker-socket"]  # merged with base: ["ssh-keys", "docker-socket"]
+
+[output]
+timeout_seconds = 7200       # overrides base value
+```
+
+### Chaining
+
+Inheritance chains are supported — `A extends B extends C` produces the result of applying B on C, then A on that. Cycles are detected and reported as an error.
+
+### `extends` resolution
+
+If the value contains `/`, starts with `~`, or is an absolute path, it is treated as a file path (with `~` expansion). Otherwise it is looked up by name in `~/.inner/profiles/`.
+
+---
+
 ## Top-level fields
 
 | Field | Type | Default | Description |
@@ -77,6 +137,7 @@ experimental  = false  # set to true to prevent inner run from starting
 | `schema_version` | string | — | Must be `"1"` |
 | `name` | string | — | Profile identifier |
 | `description` | string | `""` | Human-readable description shown in `inner profile list` |
+| `extends` | string | `""` | Name or path of the base profile to inherit from (see above) |
 | `experimental` | bool | `false` | When `true`, `inner run` refuses to start with an error. The profile remains visible in `inner profile list` with an `[experimental]` prefix. Use this to keep a work-in-progress profile in the repository without accidentally running it. |
 
 ---

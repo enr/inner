@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+tool_source="${BASH_SOURCE[0]}"
+while [ -h "$tool_source" ]; do tool_source="$(readlink "$tool_source")"; done
+sdlc_dir="$( cd -P "$( dirname "$tool_source" )" && pwd )"
+prj_home="$( cd -P "$( dirname "$sdlc_dir" )" && pwd )"
+
+SITE_DIR="${prj_home}/docs"
+
+# ── check hugo ────────────────────────────────────────────────────────────────
+
+if ! command -v hugo &>/dev/null; then
+    echo "error: hugo not found"
+    echo ""
+    echo "install hugo:"
+    echo "  Go install:    go install github.com/gohugoio/hugo@latest"
+    echo "  Arch Linux:    sudo pacman -S hugo"
+    echo "  Debian/Ubuntu: sudo apt-get install hugo"
+    echo "  macOS:         brew install hugo"
+    echo "  or download:   https://github.com/gohugoio/hugo/releases"
+    exit 1
+fi
+
+echo "==> hugo $(hugo version | head -1)"
+
+# ── build or serve ────────────────────────────────────────────────────────────
+
+MODE="${1:-serve}"
+
+case "$MODE" in
+    build)
+        echo "==> build"
+        hugo --source "${SITE_DIR}" --minify
+        echo "==> ok  ${SITE_DIR}/public"
+        ;;
+    serve)
+        echo "==> serve  http://localhost:1313/"
+        hugo server \
+            --source "${SITE_DIR}" \
+            --bind 0.0.0.0 \
+            --port 1313 \
+            --buildDrafts \
+            --disableFastRender
+        ;;
+    *)
+        echo "usage: .sdlc/website [build|serve]"
+        echo ""
+        echo "  serve  (default) start a local dev server at http://localhost:1313/"
+        echo "  build            build the site to docs/public/"
+        exit 1
+        ;;
+esac

@@ -1,0 +1,13 @@
+baseURL = "https://enr.github.io/inner/"
+languageCode = "en-us"
+title = "inner"
+theme = "inner"
+
+[params]
+  tagline = "Run agentic tools in isolated sandboxes"
+  repoURL = "https://github.com/enr/inner"
+
+[markup.goldmark.renderer]
+  unsafe = true
+
+[taxonomies]

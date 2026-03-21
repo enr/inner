@@ -2,3 +2,5 @@ conversations/
 bin/*
 inner
 .gopath/
+.gomodcache/
+pkg/
