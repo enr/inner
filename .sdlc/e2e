@@ -2,7 +2,7 @@
 # End-to-end integration tests for inner.
 #
 # Usage:
-#   ./scripts/e2e-test.sh
+#   ./.sdlc/e2e
 #
 # Requirements: inner in PATH, bwrap available, curl available in the sandbox.
 # Run from any directory — the script uses absolute paths throughout.
@@ -22,8 +22,7 @@ fail() { FAIL=$((FAIL + 1)); ERRORS+=("$1"); printf "  [FAIL] %s\n" "$1"; }
 
 section() { printf "\n── %s ──\n" "$1"; }
 
-# run_sandbox: run inner with -p PROFILE --no-interactive -- -c CMD
-# Returns stdout; exits with the process exit code.
+# run_sandbox: run inner with a profile file path, --no-interactive, plus extra flags.
 run_sandbox() {
     local profile="$1"; shift
     inner run -p "$profile" --no-interactive "$@"
@@ -35,14 +34,33 @@ run_cmd() {
     run_sandbox "$profile" "$@" -- -c "$cmd"
 }
 
+# dry_run: run inner --dry-run and emit stdout; extra flags are forwarded as-is.
+# Does NOT add --no-interactive — callers control that when needed.
+dry_run() {
+    local profile="$1"; shift
+    inner run -p "$profile" --dry-run "$@" 2>/dev/null
+}
+
+# bwrap_line: extract the bwrap command line from --dry-run output.
+bwrap_line() {
+    dry_run "$@" | awk '/^bwrap command:/{getline; print}'
+}
+
 # ── Setup: temporary profiles ─────────────────────────────────────────────────
+# Profiles are written to a temp dir and passed by file path to inner run -p.
+# No pollution of ~/.inner/profiles — the temp dir is the only thing to clean up.
 
-PROFILES_DIR="$HOME/.inner/profiles"
 TMPWORK=$(mktemp -d)
-trap 'rm -rf "$TMPWORK"; rm -f "$PROFILES_DIR/inner-e2e-"*.toml' EXIT
+trap 'rm -rf "$TMPWORK"' EXIT
 
-# t-nonet: bash, no network, clearenv
-cat > "$PROFILES_DIR/inner-e2e-nonet.toml" <<'EOF'
+NONET="$TMPWORK/nonet.toml"
+NET="$TMPWORK/net.toml"
+GIT_PROF="$TMPWORK/git.toml"
+CLAUDE="$TMPWORK/claude.toml"
+INTERACTIVE="$TMPWORK/interactive.toml"  # interactive=true, for dry-run only
+MOUNTS="$TMPWORK/mounts.toml"            # declared rw mount, for dry-run only
+
+cat > "$NONET" <<'EOF'
 schema_version = "1"
 name           = "inner-e2e-nonet"
 description    = "e2e test profile — no network"
@@ -62,11 +80,10 @@ interactive = false
 timeout_seconds = 15
 EOF
 
-# t-net: same but network = true
-cat > "$PROFILES_DIR/inner-e2e-net.toml" <<'EOF'
+cat > "$NET" <<'EOF'
 schema_version = "1"
-name           = "inner-e2e-net"
-description    = "e2e test profile — network enabled"
+name        = "inner-e2e-net"
+description = "e2e test profile — network enabled"
 
 [sandbox]
 network = true
@@ -83,11 +100,10 @@ interactive = false
 timeout_seconds = 15
 EOF
 
-# t-git: adds a git override so we can verify sanitized gitconfig
-cat > "$PROFILES_DIR/inner-e2e-git.toml" <<'EOF'
+cat > "$GIT_PROF" <<'EOF'
 schema_version = "1"
-name           = "inner-e2e-git"
-description    = "e2e test profile — git config sanitize"
+name        = "inner-e2e-git"
+description = "e2e test profile — git config sanitize"
 
 [sandbox]
 network = false
@@ -110,8 +126,7 @@ strip_sections = ["credential"]
 "user.email" = "inner-e2e-test@example.com"
 EOF
 
-# t-claude: mounts ~/.claude so applyClaude sandboxing kicks in
-cat > "$PROFILES_DIR/inner-e2e-claude.toml" <<'EOF'
+cat > "$CLAUDE" <<'EOF'
 schema_version = "1"
 name           = "inner-e2e-claude"
 description    = "e2e test profile — claude home sandboxing"
@@ -134,13 +149,56 @@ interactive = false
 timeout_seconds = 15
 EOF
 
+cat > "$INTERACTIVE" <<'EOF'
+schema_version = "1"
+name           = "inner-e2e-interactive"
+description    = "e2e test profile — interactive (dry-run only)"
+
+[sandbox]
+network = false
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = true
+
+[output]
+timeout_seconds = 15
+EOF
+
+# Note: unquoted EOF so $TMPWORK is expanded into the TOML at write time.
+cat > "$MOUNTS" <<EOF
+schema_version = "1"
+name           = "inner-e2e-mounts"
+description    = "e2e test profile — declared rw mount (dry-run only)"
+
+[sandbox]
+network = false
+
+[mounts]
+"$TMPWORK" = { dest = "$TMPWORK", mode = "rw" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 section "Working directory"
 
-# -w with absolute path: pwd inside sandbox should match
 EXPECTED_WD="$TMPWORK"
-ACTUAL_WD=$(run_sandbox inner-e2e-nonet -w "$TMPWORK" -- -c "pwd" 2>/dev/null || true)
+ACTUAL_WD=$(run_sandbox "$NONET" -w "$TMPWORK" -- -c "pwd" 2>/dev/null || true)
 ACTUAL_WD=$(echo "$ACTUAL_WD" | tr -d '[:space:]')
 if [[ "$ACTUAL_WD" == "$EXPECTED_WD" ]]; then
     pass "-w absolute path: pwd inside sandbox matches"
@@ -148,9 +206,8 @@ else
     fail "-w absolute path: expected '$EXPECTED_WD', got '$ACTUAL_WD'"
 fi
 
-# -w with relative path: inner should resolve to absolute
 PARENT=$(cd "$TMPWORK/.." && pwd)
-ACTUAL_WD=$(run_sandbox inner-e2e-nonet -w "$TMPWORK/.." -- -c "pwd" 2>/dev/null || true)
+ACTUAL_WD=$(run_sandbox "$NONET" -w "$TMPWORK/.." -- -c "pwd" 2>/dev/null || true)
 ACTUAL_WD=$(echo "$ACTUAL_WD" | tr -d '[:space:]')
 if [[ "$ACTUAL_WD" == "$PARENT" ]]; then
     pass "-w relative path: resolved to absolute '$PARENT'"
@@ -158,9 +215,8 @@ else
     fail "-w relative path: expected '$PARENT', got '$ACTUAL_WD'"
 fi
 
-# default workdir: cwd inside sandbox = cwd on host
 cd "$TMPWORK"
-ACTUAL_WD=$(run_sandbox inner-e2e-nonet -- -c "pwd" 2>/dev/null || true)
+ACTUAL_WD=$(run_sandbox "$NONET" -- -c "pwd" 2>/dev/null || true)
 ACTUAL_WD=$(echo "$ACTUAL_WD" | tr -d '[:space:]')
 if [[ "$ACTUAL_WD" == "$TMPWORK" ]]; then
     pass "default workdir matches host cwd"
@@ -173,9 +229,8 @@ cd - > /dev/null
 
 section "Filesystem"
 
-# cwd is writable: file created inside sandbox appears on host
 MARKER="$TMPWORK/sandbox-wrote-this-$$"
-run_sandbox inner-e2e-nonet -w "$TMPWORK" -- -c "touch sandbox-wrote-this-$$" 2>/dev/null || true
+run_sandbox "$NONET" -w "$TMPWORK" -- -c "touch sandbox-wrote-this-$$" 2>/dev/null || true
 if [[ -f "$MARKER" ]]; then
     pass "cwd is writable: file created inside sandbox visible on host"
     rm -f "$MARKER"
@@ -183,16 +238,14 @@ else
     fail "cwd is writable: file not found on host after touch inside sandbox"
 fi
 
-# /usr is read-only: writing to /usr/bin should fail
-if run_sandbox inner-e2e-nonet -- -c "touch /usr/bin/inner-e2e-probe 2>/dev/null" 2>/dev/null; then
+if run_sandbox "$NONET" -- -c "touch /usr/bin/inner-e2e-probe 2>/dev/null" 2>/dev/null; then
     fail "/usr is read-only: write succeeded (should have been denied)"
 else
     pass "/usr is read-only: write correctly denied"
 fi
 
-# /tmp is isolated: file written to /tmp inside sandbox does NOT appear on host
 TMPFILE="/tmp/inner-e2e-isolation-$$"
-run_sandbox inner-e2e-nonet -- -c "touch '$TMPFILE'" 2>/dev/null || true
+run_sandbox "$NONET" -- -c "touch '$TMPFILE'" 2>/dev/null || true
 if [[ -f "$TMPFILE" ]]; then
     fail "/tmp is isolated: file appeared on host (sandbox /tmp leaked)"
     rm -f "$TMPFILE"
@@ -204,16 +257,14 @@ fi
 
 section "Network"
 
-# no network: curl to external host should fail
-if run_sandbox inner-e2e-nonet -- \
+if run_sandbox "$NONET" -- \
     -c "curl -s --connect-timeout 3 https://www.google.com -o /dev/null" 2>/dev/null; then
     fail "no-network profile: curl succeeded (should be blocked)"
 else
     pass "no-network profile: curl correctly blocked"
 fi
 
-# network enabled: curl should succeed
-HTTP_CODE=$(run_sandbox inner-e2e-net -- \
+HTTP_CODE=$(run_sandbox "$NET" -- \
     -c "curl -s --connect-timeout 5 -o /dev/null -w '%{http_code}' https://www.google.com" \
     2>/dev/null || echo "000")
 HTTP_CODE=$(echo "$HTTP_CODE" | tr -d '[:space:]')
@@ -227,10 +278,9 @@ fi
 
 section "Environment variables"
 
-# clearenv: host var not visible inside sandbox
 export INNER_E2E_HOSTVAR_$$="should-not-leak"
 VAR_NAME="INNER_E2E_HOSTVAR_$$"
-RESULT=$(run_sandbox inner-e2e-nonet -- -c "echo \${${VAR_NAME}:-NOTFOUND}" 2>/dev/null || true)
+RESULT=$(run_sandbox "$NONET" -- -c "echo \${${VAR_NAME}:-NOTFOUND}" 2>/dev/null || true)
 RESULT=$(echo "$RESULT" | tr -d '[:space:]')
 if [[ "$RESULT" == "NOTFOUND" ]]; then
     pass "clearenv: host env var not visible inside sandbox"
@@ -238,8 +288,7 @@ else
     fail "clearenv: host env var leaked into sandbox (got '$RESULT')"
 fi
 
-# -e flag: explicitly set var is visible
-RESULT=$(run_sandbox inner-e2e-nonet -e "INNER_E2E_INJECTED=hello" -- \
+RESULT=$(run_sandbox "$NONET" -e "INNER_E2E_INJECTED=hello" -- \
     -c 'echo ${INNER_E2E_INJECTED:-NOTFOUND}' 2>/dev/null || true)
 RESULT=$(echo "$RESULT" | tr -d '[:space:]')
 if [[ "$RESULT" == "hello" ]]; then
@@ -252,17 +301,13 @@ fi
 
 section "Git config"
 
-# The inner-e2e-git profile injects url.nopush.pushinsteadof = git@
-# Verify that git config --list inside the sandbox shows it.
-# --global reads only the file pointed to by GIT_CONFIG_GLOBAL (our injected config).
-RESULT=$(run_sandbox inner-e2e-git -- -c "git config --list --global 2>/dev/null || true" 2>/dev/null || true)
+RESULT=$(run_sandbox "$GIT_PROF" -- -c "git config --list --global 2>/dev/null || true" 2>/dev/null || true)
 if echo "$RESULT" | grep -qi "inner-e2e-test@example.com"; then
     pass "git config: injected override (user.email) visible inside sandbox"
 else
     fail "git config: user.email override not found in git config --list output"
 fi
 
-# credential section should be stripped
 if echo "$RESULT" | grep -qi "^credential"; then
     fail "git config: credential section was not stripped"
 else
@@ -278,14 +323,12 @@ CLAUDE_DIR="$HOME/.claude"
 if [[ ! -d "$CLAUDE_DIR" ]]; then
     printf "  [SKIP] ~/.claude not found, skipping claude sandboxing tests\n"
 else
-    # Create a sentinel file in real ~/.claude/sessions on the host
     SENTINEL="inner-e2e-sentinel-$$.txt"
     SENTINEL_PATH="$CLAUDE_DIR/sessions/$SENTINEL"
     mkdir -p "$CLAUDE_DIR/sessions"
     echo "host-only" > "$SENTINEL_PATH"
 
-    # Inside the sandbox, sessions/ should exist but be empty (fresh clone)
-    RESULT=$(run_sandbox inner-e2e-claude -- \
+    RESULT=$(run_sandbox "$CLAUDE" -- \
         -c "ls ~/.claude/sessions/ 2>/dev/null | wc -l | tr -d '[:space:]'" 2>/dev/null || echo "-1")
     RESULT=$(echo "$RESULT" | tr -d '[:space:]')
     if [[ "$RESULT" == "0" ]]; then
@@ -294,8 +337,7 @@ else
         fail "~/.claude/sessions: expected 0 entries inside sandbox, got '$RESULT'"
     fi
 
-    # Files written to ~/.claude/sessions inside the sandbox do NOT appear on host
-    run_sandbox inner-e2e-claude -- \
+    run_sandbox "$CLAUDE" -- \
         -c "touch ~/.claude/sessions/sandbox-created-$$.txt" 2>/dev/null || true
     if [[ -f "$CLAUDE_DIR/sessions/sandbox-created-$$.txt" ]]; then
         fail "~/.claude/sessions: file created inside sandbox appeared on host"
@@ -303,9 +345,8 @@ else
         pass "~/.claude/sessions: file created inside sandbox not visible on host"
     fi
 
-    # .credentials.json should be visible inside the sandbox (auth is copied)
     if [[ -f "$CLAUDE_DIR/.credentials.json" ]]; then
-        RESULT=$(run_sandbox inner-e2e-claude -- \
+        RESULT=$(run_sandbox "$CLAUDE" -- \
             -c "test -f ~/.claude/.credentials.json && echo found || echo missing" \
             2>/dev/null || echo "missing")
         RESULT=$(echo "$RESULT" | tr -d '[:space:]')
@@ -318,7 +359,6 @@ else
         printf "  [SKIP] ~/.claude/.credentials.json not found, skipping auth copy test\n"
     fi
 
-    # Cleanup sentinel
     rm -f "$SENTINEL_PATH"
 fi
 
@@ -326,8 +366,7 @@ fi
 
 section "Extra arguments"
 
-# --arg: value is passed to entrypoint and echoed back
-RESULT=$(inner run -p inner-e2e-nonet --no-interactive -a "hello-from-arg" -- -c 'echo "$1"' 2>/dev/null || true)
+RESULT=$(inner run -p "$NONET" --no-interactive -a "hello-from-arg" -- -c 'echo "$1"' 2>/dev/null || true)
 RESULT=$(echo "$RESULT" | tr -d '[:space:]')
 if [[ "$RESULT" == "hello-from-arg" ]]; then
     pass "--arg: value passed to entrypoint"
@@ -335,8 +374,7 @@ else
     fail "--arg: expected 'hello-from-arg', got '$RESULT'"
 fi
 
-# multiple --arg flags: both values are present in entrypoint args
-RESULT=$(inner run -p inner-e2e-nonet --no-interactive -a "first" -a "second" -- -c 'echo "$1 $2"' 2>/dev/null || true)
+RESULT=$(inner run -p "$NONET" --no-interactive -a "first" -a "second" -- -c 'echo "$1 $2"' 2>/dev/null || true)
 RESULT=$(echo "$RESULT" | tr -d '[:space:]')
 if [[ "$RESULT" == "firstsecond" ]]; then
     pass "--arg repeatable: both values passed to entrypoint"
@@ -344,10 +382,9 @@ else
     fail "--arg repeatable: expected 'firstsecond', got '$RESULT'"
 fi
 
-# --args-file: file content is passed as a single argument
 ISSUE_FILE="$TMPWORK/issue.md"
 echo -n "fix the login bug" > "$ISSUE_FILE"
-RESULT=$(inner run -p inner-e2e-nonet --no-interactive --args-file "$ISSUE_FILE" -- -c 'echo "$1"' 2>/dev/null || true)
+RESULT=$(inner run -p "$NONET" --no-interactive --args-file "$ISSUE_FILE" -- -c 'echo "$1"' 2>/dev/null || true)
 RESULT=$(echo "$RESULT" | tr -d '\n')
 if [[ "$RESULT" == "fix the login bug" ]]; then
     pass "--args-file: file content passed as single argument"
@@ -355,15 +392,108 @@ else
     fail "--args-file: expected 'fix the login bug', got '$RESULT'"
 fi
 
-# --args-file: multiline file is passed as one argument (newlines preserved)
 MULTILINE_FILE="$TMPWORK/multiline.md"
 printf "line one\nline two" > "$MULTILINE_FILE"
-LINE_COUNT=$(inner run -p inner-e2e-nonet --no-interactive --args-file "$MULTILINE_FILE" -- -c 'printf "%s" "$1" | wc -l' 2>/dev/null || echo "0")
+LINE_COUNT=$(inner run -p "$NONET" --no-interactive --args-file "$MULTILINE_FILE" -- -c 'printf "%s" "$1" | wc -l' 2>/dev/null || echo "0")
 LINE_COUNT=$(echo "$LINE_COUNT" | tr -d '[:space:]')
 if [[ "$LINE_COUNT" == "1" ]]; then
     pass "--args-file multiline: content passed as single arg (1 newline, 2 lines)"
 else
     fail "--args-file multiline: expected 1 newline in single arg, wc -l returned '$LINE_COUNT'"
+fi
+
+# ── Dry-run: bwrap command verification ───────────────────────────────────────
+# These tests inspect the bwrap command that inner would execute, without
+# actually running the sandbox. They verify that flag decisions are correct
+# at the configuration level.
+
+section "Dry-run: network isolation"
+
+LINE=$(bwrap_line "$NONET")
+if echo "$LINE" | grep -q -- "--unshare-net"; then
+    pass "no-network profile: --unshare-net present in bwrap command"
+else
+    fail "no-network profile: --unshare-net missing from bwrap command"
+fi
+
+LINE=$(bwrap_line "$NET")
+if echo "$LINE" | grep -q -- "--unshare-net"; then
+    fail "network-enabled profile: --unshare-net present (should be absent)"
+else
+    pass "network-enabled profile: --unshare-net correctly absent from bwrap command"
+fi
+
+section "Dry-run: process isolation"
+
+LINE=$(bwrap_line "$NONET")
+if echo "$LINE" | grep -q -- "--unshare-pid"; then
+    pass "non-interactive profile: --unshare-pid present in bwrap command"
+else
+    fail "non-interactive profile: --unshare-pid missing from bwrap command"
+fi
+
+# Interactive profile: do not override with --no-interactive
+LINE=$(bwrap_line "$INTERACTIVE")
+if echo "$LINE" | grep -q -- "--unshare-pid"; then
+    fail "interactive profile: --unshare-pid present (breaks TUI apps with setsid)"
+else
+    pass "interactive profile: --unshare-pid correctly absent from bwrap command"
+fi
+
+section "Dry-run: environment"
+
+LINE=$(bwrap_line "$NONET")
+if echo "$LINE" | grep -q -- "--clearenv"; then
+    pass "clearenv profile: --clearenv present in bwrap command"
+else
+    fail "clearenv profile: --clearenv missing from bwrap command"
+fi
+
+section "Dry-run: sensitive resource hiding"
+
+if [[ -d "$HOME/.ssh" ]]; then
+    LINE=$(bwrap_line "$NONET")
+    if echo "$LINE" | grep -q -- "--tmpfs.*\.ssh\|\.ssh.*--tmpfs"; then
+        pass "ssh-keys: --tmpfs $HOME/.ssh present in bwrap command"
+    else
+        # grep for the pattern more loosely
+        if echo "$LINE" | grep -qF ".ssh"; then
+            pass "ssh-keys: $HOME/.ssh referenced in bwrap command (hidden)"
+        else
+            fail "ssh-keys: $HOME/.ssh not hidden in bwrap command"
+        fi
+    fi
+else
+    printf "  [SKIP] ~/.ssh not found, skipping ssh-keys hiding test\n"
+fi
+
+if [[ -f "$HOME/.bash_history" ]]; then
+    LINE=$(bwrap_line "$NONET")
+    if echo "$LINE" | grep -qF ".bash_history"; then
+        pass "bash-history: $HOME/.bash_history referenced in bwrap command (hidden)"
+    else
+        fail "bash-history: $HOME/.bash_history not hidden in bwrap command"
+    fi
+else
+    printf "  [SKIP] ~/.bash_history not found, skipping bash-history hiding test\n"
+fi
+
+section "Dry-run: declared mounts"
+
+LINE=$(bwrap_line "$MOUNTS")
+if echo "$LINE" | grep -qF -- "--bind $TMPWORK $TMPWORK"; then
+    pass "rw mount: --bind $TMPWORK $TMPWORK present in bwrap command"
+else
+    fail "rw mount: --bind $TMPWORK $TMPWORK missing from bwrap command"
+fi
+
+section "Dry-run: working directory"
+
+LINE=$(bwrap_line "$NONET" -w "$TMPWORK")
+if echo "$LINE" | grep -qF -- "--chdir $TMPWORK"; then
+    pass "-w flag: --chdir $TMPWORK present in bwrap command"
+else
+    fail "-w flag: --chdir $TMPWORK missing from bwrap command"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
