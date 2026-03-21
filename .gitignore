@@ -1,6 +1,6 @@
 conversations/
 bin/*
-inner
+/inner
 .gopath/
 .gomodcache/
 pkg/
