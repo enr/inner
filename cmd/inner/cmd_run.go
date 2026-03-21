@@ -80,7 +80,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 
 	// 4. Load --args-file content and append it to extraArgs before applying overrides.
 	if flags.argsFile != "" {
-		content, err := loadArgsFile(w, flags.argsFile)
+		content, err := loadArgsFile(w, config.ExpandPath(flags.argsFile))
 		if err != nil {
 			return err
 		}
@@ -277,7 +277,7 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 
 	// --entrypoint → replace cmd and reset profile args (same semantics as docker --entrypoint).
 	if flags.entrypoint != "" {
-		rc.Entrypoint.Cmd = flags.entrypoint
+		rc.Entrypoint.Cmd = config.ExpandPath(flags.entrypoint)
 		rc.Entrypoint.Args = nil
 	}
 
@@ -335,7 +335,7 @@ func parseMount(s string) (config.Mount, error) {
 	}
 	return config.Mount{
 		Src:  config.ExpandPath(parts[0]),
-		Dest: parts[1],
+		Dest: config.ExpandPath(parts[1]),
 		Mode: mode,
 	}, nil
 }

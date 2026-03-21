@@ -39,6 +39,19 @@ func minimalProfile(t *testing.T, dir, name, content string) {
 
 // ── parseMount ────────────────────────────────────────────────────────────────
 
+func TestParseMount_destTilde(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	m, err := parseMount("/src:~/sandbox")
+	if err != nil {
+		t.Fatalf("parseMount: %v", err)
+	}
+	want := filepath.Join(homeDir, "sandbox")
+	if m.Dest != want {
+		t.Errorf("Dest = %q, want %q", m.Dest, want)
+	}
+}
+
 func TestParseMount_srcDest(t *testing.T) {
 	m, err := parseMount("/src:/dest")
 	if err != nil {
@@ -189,6 +202,19 @@ func TestApplyOverrides_prompt(t *testing.T) {
 	}
 	if len(rc.Entrypoint.Args) == 0 || rc.Entrypoint.Args[0] != "do the thing" {
 		t.Errorf("expected prompt in args, got: %v", rc.Entrypoint.Args)
+	}
+}
+
+func TestApplyOverrides_entrypointTilde(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	rc := &config.RunConfig{}
+	if err := applyOverrides(rc, runCLIFlags{entrypoint: "~/bin/mytool"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(homeDir, "bin/mytool")
+	if rc.Entrypoint.Cmd != want {
+		t.Errorf("Entrypoint.Cmd = %q, want %q", rc.Entrypoint.Cmd, want)
 	}
 }
 
@@ -461,6 +487,35 @@ interactive = false
 		t.Fatalf("runSandbox: %v", err)
 	}
 	if !strings.Contains(buf.String(), "fix the login bug") {
+		t.Errorf("expected file content in dry-run output, got: %s", buf.String())
+	}
+}
+
+func TestRunSandbox_dryRun_argsFileTilde(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "default", `
+[entrypoint]
+cmd         = "claude"
+interactive = false
+`)
+
+	argsPath := filepath.Join(homeDir, "myprompt.txt")
+	if err := os.WriteFile(argsPath, []byte("fix the tilde bug"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	err := app.runSandbox(&buf, runCLIFlags{
+		dryRun:   true,
+		argsFile: "~/myprompt.txt",
+	}, nil)
+	if err != nil {
+		t.Fatalf("runSandbox with ~/args-file: %v", err)
+	}
+	if !strings.Contains(buf.String(), "fix the tilde bug") {
 		t.Errorf("expected file content in dry-run output, got: %s", buf.String())
 	}
 }
