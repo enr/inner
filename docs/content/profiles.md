@@ -22,7 +22,6 @@ inner run -p /tmp/my-test-profile.toml
 | Name | Description |
 |------|-------------|
 | `shell` | Interactive bash shell, no network — **default for new installations** |
-| `default` | Interactive bash shell, no network, package managers blocked |
 | `claude-interactive` | ⚠ experimental — Claude Code interactive session, network enabled |
 | `claude-one-shot` | Claude Code non-interactive, `--dangerously-skip-permissions` |
 | `claude-containers` | Claude Code with Podman rootless container support |

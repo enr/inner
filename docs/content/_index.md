@@ -1,11 +1,11 @@
 ---
 title: inner
-description: Run agentic tools in isolated sandbox environments
+description: Isolated sandbox environments to run agents and scripts
 ---
 
 # inner
 
-`inner` is a Linux CLI tool that runs agentic tools — Claude Code, Aider, interactive shells — in isolated, reproducible sandbox environments backed by [bubblewrap (bwrap)](https://github.com/containers/bubblewrap).
+`inner` is a Linux CLI tool that runs scripts and agentic tools — Claude Code, Gemini, interactive shells — in isolated, reproducible sandbox environments backed by [bubblewrap (bwrap)](https://github.com/containers/bubblewrap).
 
 <div class="download-banner">
   <strong>Latest release:</strong>
