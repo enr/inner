@@ -84,7 +84,7 @@ func InitLocal(workDir string) (InitResult, error) {
 
 	cfgPath := filepath.Join(innerDir, "config.toml")
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		const tmpl = "# inner local configuration (directory-level)\n# Settings here override ~/.inner/config.toml for this directory.\n\n# Profile used by default in this directory when -p is not specified.\n# default_profile = \"my-project-profile\"\n\n# Aliases expand a short name to a full inner command (local overrides global).\n# [aliases]\n# review = \"run --profile code-review\"\n"
+		const tmpl = "# inner local configuration (directory-level)\n# Settings here override ~/.inner/config.toml for this directory.\n\n# Profile used by default in this directory when -p is not specified.\n# default_profile = \"my-project-profile\"\n\n# Directory where run logs are stored (overrides global).\n# log_dir = \"~/.inner/logs/\"\n\n# Host directory for workspace mount-point pre-creation (overrides global).\n# Required only when a profile mount uses the ${workspaces_path} token.\n# workspaces_path = \"~/.inner/workspaces\"\n\n# Aliases expand a short name to a full inner command (local overrides global).\n# [aliases]\n# review = \"run --profile code-review\"\n"
 		if err := os.WriteFile(cfgPath, []byte(tmpl), 0o644); err != nil {
 			return r, fmt.Errorf("writing local config: %w", err)
 		}
@@ -103,7 +103,7 @@ func installConfig(dir string) (bool, error) {
 	if _, err := os.Stat(cfgPath); err == nil {
 		return false, nil // already present
 	}
-	const tmpl = "# inner global configuration\n\n# Profile used by default when -p is not specified.\ndefault_profile = \"shell\"\n\n# Directory where run logs are stored.\n# log_dir = \"~/.inner/logs/\"\n"
+	const tmpl = "# inner global configuration\n\n# Profile used by default when -p is not specified.\ndefault_profile = \"shell\"\n\n# Directory where run logs are stored.\n# log_dir = \"~/.inner/logs/\"\n\n# Host directory where workspace mount-point directories are pre-created\n# before running the sandbox. Required only when a profile mount uses the\n# ${workspaces_path} token in its dest field.\n# workspaces_path = \"~/.inner/workspaces\"\n\n# Aliases expand a short name to a full inner command.\n# [aliases]\n# c  = \"run -p claude-interactive\"\n# cs = \"run -p claude-one-shot\"\n"
 	return true, os.WriteFile(cfgPath, []byte(tmpl), 0o644)
 }
 
