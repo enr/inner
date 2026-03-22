@@ -24,5 +24,29 @@
       Licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License, Version 2.0</a>.
     </footer>
   </main>
+  <script>
+    document.querySelectorAll('pre').forEach(function(pre) {
+      var wrap = document.createElement('div');
+      wrap.className = 'code-block';
+      pre.replaceWith(wrap);
+      wrap.appendChild(pre);
+
+      var btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.textContent = 'Copy';
+      wrap.appendChild(btn);
+
+      btn.addEventListener('click', function() {
+        navigator.clipboard.writeText(pre.innerText).then(function() {
+          btn.textContent = 'Copied';
+          btn.classList.add('copied');
+          setTimeout(function() {
+            btn.textContent = 'Copy';
+            btn.classList.remove('copied');
+          }, 2000);
+        });
+      });
+    });
+  </script>
 </body>
 </html>

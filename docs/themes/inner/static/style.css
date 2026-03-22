@@ -94,6 +94,32 @@ code {
   color: #c0392b;
 }
 
+.code-block {
+  position: relative;
+  margin: 1rem 0 1.25rem;
+}
+
+.code-block pre {
+  margin: 0;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: #2a2a3e;
+  color: #aab4cc;
+  border: 1px solid #3a3a5e;
+  border-radius: 4px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.copy-btn:hover { background: #3a3a5e; color: #e8eaf0; }
+.copy-btn.copied { color: #7ec8f8; }
+
 pre {
   background: #1e1e2e;
   color: #cdd6f4;
