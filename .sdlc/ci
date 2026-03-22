@@ -13,7 +13,15 @@ echo "==> build"
 go build ./...
 
 echo "==> test"
+set +e
 test_output=$(go test -count=1 -v ./... 2>&1)
+test_exit=$?
+set -e
 echo "$test_output" | grep -E "^(ok|FAIL|---)"
-total=$(echo "$test_output" | grep -c "^--- ")
+total=$(echo "$test_output" | grep -c "^--- " || true)
+if [ $test_exit -ne 0 ]; then
+  echo "==> FAILED — full output:"
+  echo "$test_output"
+  exit $test_exit
+fi
 echo "==> ok (${total} tests)"
