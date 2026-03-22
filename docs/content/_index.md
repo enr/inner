@@ -37,6 +37,7 @@ inner run -p claude-one-shot --prompt "refactor the auth module"
 | [Getting Started](getting-started/) | Install, first run, environment check |
 | [Commands](commands/) | Full command and flag reference |
 | [Profiles](profiles/) | Profile TOML configuration reference |
+| [Aliases](aliases/) | Define short names for frequently used commands |
 | [Examples](examples/) | Common usage patterns with explanations |
 | [Development](development/) | Build, test, dev mode, release |
 | [Internals](internals/) | bwrap command construction, flag decisions, architecture |

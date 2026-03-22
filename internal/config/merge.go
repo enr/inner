@@ -143,6 +143,7 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 
 // mergeGlobalConfig applies local on top of base GlobalConfig.
 // Non-zero fields in local override base.
+// Aliases are merged: local keys win on conflict, base keys are preserved.
 func mergeGlobalConfig(base, local *GlobalConfig) *GlobalConfig {
 	result := *base
 	if local.DefaultProfile != "" {
@@ -150,6 +151,16 @@ func mergeGlobalConfig(base, local *GlobalConfig) *GlobalConfig {
 	}
 	if local.LogDir != "" {
 		result.LogDir = local.LogDir
+	}
+	if len(local.Aliases) > 0 {
+		merged := make(map[string]string, len(base.Aliases)+len(local.Aliases))
+		for k, v := range base.Aliases {
+			merged[k] = v
+		}
+		for k, v := range local.Aliases {
+			merged[k] = v
+		}
+		result.Aliases = merged
 	}
 	return &result
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/enr/inner/internal/version"
 	"github.com/spf13/cobra"
@@ -51,8 +52,38 @@ func execute() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if err := buildRootCmd(app).Execute(); err != nil {
+	root := buildRootCmd(app)
+	expandAliases(root, app)
+	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// expandAliases checks whether os.Args[1] matches a configured alias and, if
+// so, rewrites the cobra arg list by prepending the alias expansion.
+// Built-in commands are never shadowed: if the alias name collides with an
+// existing subcommand the alias is silently skipped.
+func expandAliases(root *cobra.Command, app *App) {
+	if len(os.Args) < 2 {
+		return
+	}
+	name := os.Args[1]
+	// Skip flags and built-in commands.
+	if strings.HasPrefix(name, "-") {
+		return
+	}
+	if cmd, _, err := root.Find([]string{name}); err == nil && cmd != root {
+		return // built-in takes precedence
+	}
+	aliases, err := app.loader.Aliases()
+	if err != nil || len(aliases) == 0 {
+		return
+	}
+	expansion, ok := aliases[name]
+	if !ok || strings.TrimSpace(expansion) == "" {
+		return
+	}
+	expanded := strings.Fields(expansion)
+	root.SetArgs(append(expanded, os.Args[2:]...))
 }

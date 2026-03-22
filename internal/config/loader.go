@@ -183,6 +183,17 @@ func (l *Loader) LoadProfileAuto(nameOrPath string) (*Profile, error) {
 	return l.LoadProfile(nameOrPath)
 }
 
+// Aliases returns the merged alias map from global and local config.
+// Local aliases take precedence over global ones on key conflict.
+// Returns nil if no aliases are defined.
+func (l *Loader) Aliases() (map[string]string, error) {
+	g, err := l.loadEffectiveGlobal()
+	if err != nil {
+		return nil, err
+	}
+	return g.Aliases, nil
+}
+
 // DefaultProfileName returns the effective default profile name.
 // It reads DefaultProfile from the merged global+local config; if unset, returns "default".
 func (l *Loader) DefaultProfileName() string {

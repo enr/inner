@@ -110,6 +110,7 @@ type OutputConfig struct {
 
 // GlobalConfig represents ~/.inner/config.toml.
 type GlobalConfig struct {
-	LogDir         string `toml:"log_dir"`
-	DefaultProfile string `toml:"default_profile"`
+	LogDir         string            `toml:"log_dir"`
+	DefaultProfile string            `toml:"default_profile"`
+	Aliases        map[string]string `toml:"aliases"`
 }

@@ -92,6 +92,12 @@ func globalConfigTemplate() string {
 
 # Directory where run logs are stored.
 # log_dir = "~/.inner/logs/"
+
+# Aliases expand a short name to a full inner command.
+# Example: "inner review" → "inner run --profile code-review"
+# [aliases]
+# review = "run --profile code-review"
+# chat   = "run --profile claude-interactive"
 `
 }
 
@@ -105,6 +111,10 @@ func localConfigTemplate() string {
 
 # Directory where run logs are stored.
 # log_dir = "~/.inner/logs/"
+
+# Aliases expand a short name to a full inner command (local overrides global).
+# [aliases]
+# review = "run --profile code-review"
 `
 }
 
