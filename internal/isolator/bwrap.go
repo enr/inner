@@ -97,14 +97,40 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	args = append(args, "--tmpfs", "/tmp")
 
 	// ── Additional mounts ────────────────────────────────────────────────────
-	// tmpfs mounts are emitted first so that subsequent bind mounts can land
-	// inside them (bwrap processes args left-to-right).
+	// Emission order matters: bwrap processes args left-to-right and later
+	// mounts shadow earlier ones at the same path.
+	//
+	// 1. tmpfs mounts first — so subsequent bind mounts can land inside them.
+	// 2. Non-workspace bind mounts (including any workdir rw bind that covers
+	//    the workspace parent directory).
+	// 3. Workspace bind mounts LAST — so they shadow any earlier recursive
+	//    bind of a parent directory (e.g. the workdir --bind ~/Projects ~/Projects
+	//    is MS_BIND|MS_REC and would overwrite workspace sub-paths if emitted after).
+	workspaceDests := make(map[string]bool, len(cfg.WorkspaceDests))
+	for _, d := range cfg.WorkspaceDests {
+		workspaceDests[d] = true
+	}
+
 	for _, m := range cfg.Mounts {
 		if m.Mode == "tmpfs" {
 			args = append(args, "--tmpfs", m.Dest)
 		}
 	}
 	for _, m := range cfg.Mounts {
+		if workspaceDests[m.Dest] {
+			continue // deferred to the workspace pass below
+		}
+		if m.Mode == "rw" {
+			args = append(args, "--bind", m.Src, m.Dest)
+		} else if m.Mode != "tmpfs" {
+			args = append(args, "--ro-bind", m.Src, m.Dest)
+		}
+	}
+	// Workspace mounts come last so they shadow parent-directory rbinds.
+	for _, m := range cfg.Mounts {
+		if !workspaceDests[m.Dest] {
+			continue
+		}
 		if m.Mode == "rw" {
 			args = append(args, "--bind", m.Src, m.Dest)
 		} else if m.Mode != "tmpfs" {

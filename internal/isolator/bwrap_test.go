@@ -61,6 +61,17 @@ func separatorIndex(args []string) int {
 	return slices.Index(args, "--")
 }
 
+// indexSeq returns the starting index of the first occurrence of needle in
+// args, or -1 if not found.
+func indexSeq(args []string, needle ...string) int {
+	for i := 0; i <= len(args)-len(needle); i++ {
+		if slices.Equal(args[i:i+len(needle)], needle) {
+			return i
+		}
+	}
+	return -1
+}
+
 // ── Base flags ────────────────────────────────────────────────────────────────
 
 func TestBuild_baseFlags(t *testing.T) {
@@ -179,6 +190,38 @@ func TestBuild_multipleMounts(t *testing.T) {
 	}
 	if !hasSeq(args, "--bind", "/b", "/db") {
 		t.Errorf("bind /b missing in %v", args)
+	}
+}
+
+func TestBuild_workspaceMountsAfterWorkdirBind(t *testing.T) {
+	// Workspace mounts must be emitted AFTER any parent-directory bind (e.g. a
+	// workdir --bind ~/Projects ~/Projects) to ensure they shadow it. A recursive
+	// bind of the parent directory (MS_BIND|MS_REC) would otherwise overwrite
+	// workspace sub-paths with the host's empty view.
+	iso := testIsolator(runtime.RuntimeInfo{})
+	wsDest := "/home/user/projects/workspaces/myapp"
+	args := cmdArgs(t, iso, config.RunConfig{
+		Mounts: []config.Mount{
+			// workdir bind (parent of workspace dest) — listed first in Mounts
+			{Src: "/home/user/projects", Dest: "/home/user/projects", Mode: "rw"},
+			// workspace mount — must appear AFTER workdir in bwrap args
+			{Src: "/host/myapp", Dest: wsDest, Mode: "rw"},
+		},
+		WorkspaceDests: []string{wsDest},
+		Entrypoint:     config.Entrypoint{Cmd: "sh"},
+	})
+	// Both mounts must be present.
+	if !hasSeq(args, "--bind", "/home/user/projects", "/home/user/projects") {
+		t.Errorf("workdir bind missing in %v", args)
+	}
+	if !hasSeq(args, "--bind", "/host/myapp", wsDest) {
+		t.Errorf("workspace bind missing in %v", args)
+	}
+	// The workspace bind must come AFTER the workdir bind.
+	wdIdx := indexSeq(args, "--bind", "/home/user/projects", "/home/user/projects")
+	wsIdx := indexSeq(args, "--bind", "/host/myapp", wsDest)
+	if wsIdx <= wdIdx {
+		t.Errorf("workspace bind (idx %d) must come after workdir bind (idx %d)", wsIdx, wdIdx)
 	}
 }
 
