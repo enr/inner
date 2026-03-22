@@ -23,6 +23,9 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("description") {
 		result.Description = overlay.Description
 	}
+	if meta.IsDefined("workspaces_path") {
+		result.WorkspacesPath = overlay.WorkspacesPath
+	}
 	if meta.IsDefined("experimental") {
 		result.Experimental = overlay.Experimental
 	}
@@ -151,6 +154,9 @@ func mergeGlobalConfig(base, local *GlobalConfig) *GlobalConfig {
 	}
 	if local.LogDir != "" {
 		result.LogDir = local.LogDir
+	}
+	if local.WorkspacesPath != "" {
+		result.WorkspacesPath = local.WorkspacesPath
 	}
 	if len(local.Aliases) > 0 {
 		merged := make(map[string]string, len(base.Aliases)+len(local.Aliases))

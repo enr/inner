@@ -31,6 +31,12 @@ type RunConfig struct {
 	// Experimental is true when the profile is marked experimental = true.
 	// inner run refuses to start when this is set.
 	Experimental bool
+	// WorkspacesPath is the host directory used to pre-create workspace dirs.
+	WorkspacesPath string
+	// WorkspaceDests are the resolved mount dest paths that were produced by
+	// expanding the ${workspaces_path} token. The workspace manager creates
+	// these directories on the host before bwrap starts and removes them after.
+	WorkspaceDests []string
 }
 
 // Mount describes a single filesystem bind mount.

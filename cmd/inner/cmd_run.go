@@ -20,6 +20,7 @@ import (
 	"github.com/enr/inner/internal/profile"
 	"github.com/enr/inner/internal/setup"
 	"github.com/enr/inner/internal/shim"
+	"github.com/enr/inner/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -203,6 +204,18 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	if flags.dryRun {
 		printDryRun(w, profileName, a.loader.ResolveProfilePath(profileName), a.loader.GlobalConfigPath(), rc, cmd.Args)
 		return nil
+	}
+
+	// 14b. Pre-create workspace directories and write lock file.
+	if len(rc.WorkspaceDests) > 0 {
+		wm, err := workspace.Prepare(rc.WorkspacesPath, rc.WorkspaceDests, workspace.RunInfo{
+			Profile: profileName,
+			Command: rc.Entrypoint.Cmd,
+		})
+		if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		defer wm.Release()
 	}
 
 	// 15. Launch.

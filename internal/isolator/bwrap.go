@@ -82,7 +82,11 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	var args []string
 
 	// ── Base filesystem ──────────────────────────────────────────────────────
-	// Bind the host root read-only as the sandbox root.
+	// Bind the host root read-only. This is the "deny by default, allow by
+	// exception" security model: the entire host filesystem is visible but
+	// immutable inside the sandbox; explicit mounts in the profile open only
+	// what is needed. Mount destinations must exist on the host; the workspace
+	// manager pre-creates them under workspaces_path before bwrap starts.
 	args = append(args, "--ro-bind", "/", "/")
 	// Re-mount /proc, /dev, /tmp so the sandbox is functional.
 	args = append(args, "--proc", "/proc")

@@ -140,6 +140,7 @@ If the value contains `/`, starts with `~`, or is an absolute path, it is treate
 | `name` | string | — | Profile identifier |
 | `description` | string | `""` | Human-readable description shown in `inner profile list` |
 | `extends` | string | `""` | Name or path of the base profile to inherit from (see above) |
+| `workspaces_path` | string | `""` | Override the global `workspaces_path` for this profile (see [`[mounts]` — workspace directories](#workspace-directories-workspaces_path)) |
 | `experimental` | bool | `false` | When `true`, `inner run` refuses to start with an error. The profile remains visible in `inner profile list` with an `[experimental]` prefix. Use this to keep a work-in-progress profile in the repository without accidentally running it. |
 
 ---
@@ -211,6 +212,72 @@ Mount host paths into the sandbox. Keys are host paths, values are mount descrip
 Paths support `~` expansion.
 
 The `--workdir` flag at runtime is a shorthand for adding a `rw` mount of PATH at the same path inside the sandbox (e.g. `-w ~/my-project` mounts `~/my-project` → `~/my-project`).
+
+### `dest` path requirements
+
+`inner` uses `--ro-bind / /` to bind the host root into the sandbox as read-only. This is the **deny-by-default** security model: the entire host filesystem is visible but immutable; only the paths you explicitly mount are writable. A consequence is that every mount destination must exist as a directory on the host before `bwrap` starts — it cannot create new directories inside a read-only root.
+
+| `dest` form | Host requirement |
+|-------------|-----------------|
+| Path that already exists on the host (e.g. `~/projects`) | No action needed — bwrap binds over it directly |
+| Path that does not yet exist on the host | Must be pre-created; use the `${workspaces_path}` token (see below) |
+
+### Workspace directories (`${workspaces_path}`) {#workspace-directories-workspaces_path}
+
+When a mount destination does not exist on the host, use the `${workspaces_path}` token in `dest`. `inner` will pre-create the directory before running `bwrap` and remove it (if empty) after the sandbox exits.
+
+```toml
+# ~/.inner/config.toml
+workspaces_path = "~/.inner/workspaces"
+```
+
+```toml
+# profile.toml
+[mounts]
+"~/projects/myapp" = { dest = "${workspaces_path}/myapp", mode = "rw" }
+```
+
+At runtime `inner` resolves `${workspaces_path}` → `~/.inner/workspaces` and runs `mkdir -p ~/.inner/workspaces/myapp` before launching `bwrap`.
+
+**`dest` can be any path under `workspaces_path`**, including nested subdirectories — `inner` uses `os.MkdirAll` so intermediate directories are created automatically. The only requirement is that `workspaces_path` itself already exists on the host.
+
+```toml
+# All of these are valid:
+"~/src/a" = { dest = "${workspaces_path}/a",       mode = "rw" }
+"~/src/b" = { dest = "${workspaces_path}/foo/bar",  mode = "rw" }
+"~/src/c" = { dest = "${workspaces_path}/x/y/z",    mode = "rw" }
+```
+
+> **Note:** the `${workspaces_path}` token is only expanded in `dest` fields, never in the mount key (source path).
+
+#### `workspaces_path` precedence
+
+The effective `workspaces_path` is resolved in this order (highest priority first):
+
+1. **Profile** `workspaces_path` field — overrides everything for that specific profile
+2. **Local config** `workspaces_path` (`.inner/config.toml` in the current working directory)
+3. **Global config** `workspaces_path` (`~/.inner/config.toml`)
+
+This lets you set a default in `~/.inner/config.toml`, override it per-project in `.inner/config.toml`, and further override it in a specific profile when needed.
+
+```toml
+# ~/.inner/config.toml  (global default)
+workspaces_path = "~/.inner/workspaces"
+```
+
+```toml
+# /my-project/.inner/config.toml  (per-project override)
+workspaces_path = "/my-project/.workspaces"
+```
+
+```toml
+# /my-project/.inner/profiles/custom.toml  (per-profile override)
+workspaces_path = "/tmp/custom-workspaces"
+```
+
+#### Concurrent run protection
+
+`inner` writes a lock file (`.inner-<pid>.lock`) into `workspaces_path` for the duration of each run. If two `inner` invocations attempt to use the same workspace directory simultaneously, the second one fails with an error listing which process holds the lock. Stale lock files (from crashed runs) are detected via PID liveness check and removed automatically on the next run.
 
 ---
 

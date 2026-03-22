@@ -255,12 +255,13 @@ func (l *Loader) Build(profileName string) (*RunConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return toRunConfig(global, profile), nil
+	return toRunConfig(global, profile)
 }
 
 // toRunConfig converts a loaded Profile (and GlobalConfig) into a RunConfig,
-// applying path expansion.
-func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
+// applying path expansion. Returns an error if a mount dest uses the
+// ${workspaces_path} token but no workspaces_path is configured.
+func toRunConfig(global *GlobalConfig, p *Profile) (*RunConfig, error) {
 	// Expand ~ and ${UID} in env.set values (e.g. DOCKER_HOST with socket paths).
 	expandedEnv := p.Env
 	if len(p.Env.Set) > 0 {
@@ -269,6 +270,13 @@ func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
 			expandedEnv.Set[k] = ExpandPath(v)
 		}
 	}
+
+	// Resolve effective workspaces_path: profile takes precedence over global.
+	workspacesPath := p.WorkspacesPath
+	if workspacesPath == "" {
+		workspacesPath = global.WorkspacesPath
+	}
+	workspacesPath = ExpandPath(workspacesPath)
 
 	cfg := &RunConfig{
 		Network:            p.Sandbox.Network,
@@ -281,17 +289,32 @@ func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
 		Allow:              p.Sandbox.Allow,
 		VerifyCustomChecks: p.Verify.Custom.Checks,
 		Experimental:       p.Experimental,
+		WorkspacesPath:     workspacesPath,
 	}
 
 	// Mounts: expand paths, default mode to "ro".
+	// If dest contains ${workspaces_path}, substitute it and record the path
+	// so the workspace manager can pre-create the directory on the host.
+	const token = "${workspaces_path}"
 	for src, entry := range p.Mounts {
 		mode := entry.Mode
 		if mode == "" {
 			mode = "ro"
 		}
+		dest := entry.Dest
+		if strings.Contains(dest, token) {
+			if workspacesPath == "" {
+				return nil, fmt.Errorf("mount dest %q uses ${workspaces_path} but workspaces_path is not configured", dest)
+			}
+			dest = strings.ReplaceAll(dest, token, workspacesPath)
+			dest = ExpandPath(dest)
+			cfg.WorkspaceDests = append(cfg.WorkspaceDests, dest)
+		} else {
+			dest = ExpandPath(dest)
+		}
 		cfg.Mounts = append(cfg.Mounts, Mount{
 			Src:  ExpandPath(src),
-			Dest: ExpandPath(entry.Dest),
+			Dest: dest,
 			Mode: mode,
 		})
 	}
@@ -311,7 +334,7 @@ func toRunConfig(global *GlobalConfig, p *Profile) *RunConfig {
 	}
 	cfg.LogDir = ExpandPath(logDir)
 
-	return cfg
+	return cfg, nil
 }
 
 // loadRaw decodes a profile TOML file without resolving extends.

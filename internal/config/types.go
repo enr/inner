@@ -8,6 +8,9 @@ type Profile struct {
 	// Extends names a base profile to inherit from. The current profile is
 	// merged on top: scalars override, slices are unioned, maps are merged.
 	Extends string `toml:"extends"`
+	// WorkspacesPath overrides the global workspaces_path for this profile.
+	// When set, ${workspaces_path} in mount dest fields expands to this value.
+	WorkspacesPath string `toml:"workspaces_path"`
 	// Experimental marks a profile as not yet ready for use.
 	// inner run refuses to start with an explicit error message.
 	Experimental bool                  `toml:"experimental"`
@@ -113,4 +116,8 @@ type GlobalConfig struct {
 	LogDir         string            `toml:"log_dir"`
 	DefaultProfile string            `toml:"default_profile"`
 	Aliases        map[string]string `toml:"aliases"`
+	// WorkspacesPath is the host directory where workspace mount-point
+	// directories are pre-created before running bwrap. Required when any
+	// profile mount uses the ${workspaces_path} token in its dest field.
+	WorkspacesPath string `toml:"workspaces_path"`
 }
