@@ -992,3 +992,52 @@ func TestBuild_emptyNoop(t *testing.T) {
 		t.Errorf("expected empty VerifyCustomChecks, got %v", rc.VerifyCustomChecks)
 	}
 }
+
+// ── Local profile takes precedence over global ────────────────────────────────
+
+func TestLoadProfile_localOverridesGlobal(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "foo.toml"), "name = \"foo\"\ndescription = \"global\"")
+	writeFile(t, filepath.Join(workDir, ".inner", "profiles", "foo.toml"), "name = \"foo\"\ndescription = \"local\"")
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	p, err := l.LoadProfile("foo")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Description != "local" {
+		t.Errorf("expected local profile, got description %q", p.Description)
+	}
+}
+
+func TestLoadProfile_localFallsBackToGlobal(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "bar.toml"), "name = \"bar\"\ndescription = \"global\"")
+	// no local profile named "bar"
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	p, err := l.LoadProfile("bar")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Description != "global" {
+		t.Errorf("expected global profile, got description %q", p.Description)
+	}
+}
+
+func TestResolveProfilePath_localOverridesGlobal(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "foo.toml"), `name = "foo"`)
+	localPath := filepath.Join(workDir, ".inner", "profiles", "foo.toml")
+	writeFile(t, localPath, `name = "foo"`)
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	got := l.ResolveProfilePath("foo")
+	absLocal, _ := filepath.Abs(localPath)
+	if got != absLocal {
+		t.Errorf("ResolveProfilePath = %q, want local path %q", got, absLocal)
+	}
+}

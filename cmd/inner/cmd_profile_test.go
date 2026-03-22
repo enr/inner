@@ -50,7 +50,7 @@ func TestProfileList_empty(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf); err != nil {
+	if err := app.profileList(&buf, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	if !strings.Contains(buf.String(), "NAME") {
@@ -66,7 +66,7 @@ func TestProfileList_withProfiles(t *testing.T) {
 		`name = "beta"\ndescription = "Beta profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf); err != nil {
+	if err := app.profileList(&buf, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -83,7 +83,7 @@ func TestProfileList_noDir(t *testing.T) {
 	// profiles dir does not exist
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf); err != nil {
+	if err := app.profileList(&buf, false); err != nil {
 		t.Fatalf("expected no error when profiles dir missing: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No profiles") {
@@ -97,7 +97,7 @@ func TestProfileList_ignoresNonToml(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "profiles", "README.md"), `# ignore me`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf); err != nil {
+	if err := app.profileList(&buf, false); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -114,7 +114,7 @@ func TestProfileList_localProfiles(t *testing.T) {
 		`name = "local"\ndescription = "Local profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf); err != nil {
+	if err := app.profileList(&buf, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -138,7 +138,7 @@ func TestProfileList_defaultMarked(t *testing.T) {
 		`name = "beta"\ndescription = "Beta profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf); err != nil {
+	if err := app.profileList(&buf, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -165,7 +165,7 @@ func TestProfileList_defaultAsPath(t *testing.T) {
 		`name = "local-prof"\ndescription = "My local profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf); err != nil {
+	if err := app.profileList(&buf, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -181,7 +181,7 @@ func TestProfileList_localDefaultMarked(t *testing.T) {
 		`name = "local-prof"\ndescription = "My local profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf); err != nil {
+	if err := app.profileList(&buf, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -449,5 +449,85 @@ func TestProfileTemplate_isValidTOML(t *testing.T) {
 
 	if _, err := app.loader.LoadProfile("tpl"); err != nil {
 		t.Errorf("profileTemplate produces invalid TOML: %v", err)
+	}
+}
+
+// ── profileList: same-name conflict (local wins, global shadowed) ─────────────
+
+func TestProfileList_sameNameNormalMode(t *testing.T) {
+	app, dir, workDir := newTestAppWithWorkDir(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "foo.toml"),
+		`name = "foo"\ndescription = "global foo"`)
+	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "foo.toml"),
+		`name = "foo"\ndescription = "local foo"`)
+
+	var buf bytes.Buffer
+	if err := app.profileList(&buf, false); err != nil {
+		t.Fatalf("profileList: %v", err)
+	}
+	out := buf.String()
+
+	// Only one row for "foo" — the local one.
+	count := strings.Count(out, "foo")
+	if count != 1 {
+		t.Errorf("expected exactly 1 'foo' row in normal mode, got %d occurrences in:\n%s", count, out)
+	}
+	if !strings.Contains(out, "[local]") {
+		t.Errorf("expected '[local]' tag for the surviving row, got:\n%s", out)
+	}
+	if strings.Contains(out, "global foo") {
+		t.Errorf("shadowed global should not appear in normal mode, got:\n%s", out)
+	}
+}
+
+func TestProfileList_wideShadowed(t *testing.T) {
+	app, dir, workDir := newTestAppWithWorkDir(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "foo.toml"),
+		`name = "foo"\ndescription = "global foo"`)
+	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "foo.toml"),
+		`name = "foo"\ndescription = "local foo"`)
+
+	var buf bytes.Buffer
+	if err := app.profileList(&buf, true); err != nil {
+		t.Fatalf("profileList wide: %v", err)
+	}
+	out := buf.String()
+
+	// Both rows present in wide mode.
+	if !strings.Contains(out, "global") {
+		t.Errorf("expected 'global' scope column in wide mode, got:\n%s", out)
+	}
+	if !strings.Contains(out, "local") {
+		t.Errorf("expected 'local' scope column in wide mode, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[shadowed]") {
+		t.Errorf("expected '[shadowed]' on the global row, got:\n%s", out)
+	}
+}
+
+func TestProfileList_wideMode(t *testing.T) {
+	app, dir, workDir := newTestAppWithWorkDir(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "alpha.toml"),
+		`name = "alpha"\ndescription = "Alpha"`)
+	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "beta.toml"),
+		`name = "beta"\ndescription = "Beta"`)
+
+	var buf bytes.Buffer
+	if err := app.profileList(&buf, true); err != nil {
+		t.Fatalf("profileList wide: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "SCOPE") {
+		t.Errorf("expected SCOPE header in wide mode, got:\n%s", out)
+	}
+	if !strings.Contains(out, "PATH") {
+		t.Errorf("expected PATH header in wide mode, got:\n%s", out)
+	}
+	if !strings.Contains(out, "alpha") {
+		t.Errorf("expected 'alpha' in wide output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "beta") {
+		t.Errorf("expected 'beta' in wide output, got:\n%s", out)
 	}
 }

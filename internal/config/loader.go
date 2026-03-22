@@ -63,6 +63,15 @@ func (l *Loader) ProfilePath(name string) string {
 	return filepath.Join(l.Dir, "profiles", name+".toml")
 }
 
+// LocalProfilePath returns the path to a named profile file in the local profiles directory.
+// Returns empty string if WorkDir is not set.
+func (l *Loader) LocalProfilePath(name string) string {
+	if l.WorkDir == "" {
+		return ""
+	}
+	return filepath.Join(l.WorkDir, ".inner", "profiles", name+".toml")
+}
+
 // ProfilesDir returns the path to the profiles directory.
 func (l *Loader) ProfilesDir() string {
 	return filepath.Join(l.Dir, "profiles")
@@ -119,8 +128,24 @@ func (l *Loader) loadEffectiveGlobal() (*GlobalConfig, error) {
 }
 
 // LoadProfile reads a named profile file.
-// Returns an error if the file does not exist.
+// Local profile (WorkDir/.inner/profiles) takes precedence over global (~/.inner/profiles).
+// Returns an error if the profile is not found in either location.
 func (l *Loader) LoadProfile(name string) (*Profile, error) {
+	// Local profile takes precedence over global.
+	if localPath := l.LocalProfilePath(name); localPath != "" {
+		if _, err := os.Stat(localPath); err == nil {
+			abs, err := filepath.Abs(localPath)
+			if err != nil {
+				abs = localPath
+			}
+			p, err := l.loadProfilePath(abs, nil)
+			if err != nil {
+				return nil, fmt.Errorf("reading local profile %q: %w", name, err)
+			}
+			return p, nil
+		}
+	}
+	// Fall back to global profiles directory.
 	path := l.ProfilePath(name)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("profile %q not found at %s", name, path)
@@ -154,7 +179,7 @@ func (l *Loader) LoadProfileFromPath(path string) (*Profile, error) {
 
 // ResolveProfilePath returns the actual file path for a name-or-path value.
 // If nameOrPath is an existing file it is resolved to an absolute path.
-// Otherwise it falls back to the profiles directory.
+// Otherwise it checks the local profiles directory first, then falls back to global.
 // ~ is expanded before the file-existence check.
 func (l *Loader) ResolveProfilePath(nameOrPath string) string {
 	expanded := ExpandPath(nameOrPath)
@@ -163,6 +188,15 @@ func (l *Loader) ResolveProfilePath(nameOrPath string) string {
 			return abs
 		}
 		return expanded
+	}
+	// Local profile takes precedence.
+	if localPath := l.LocalProfilePath(nameOrPath); localPath != "" {
+		if _, err := os.Stat(localPath); err == nil {
+			if abs, err := filepath.Abs(localPath); err == nil {
+				return abs
+			}
+			return localPath
+		}
 	}
 	return l.ProfilePath(nameOrPath)
 }

@@ -30,8 +30,20 @@ func (a *App) newProfileCmd() *cobra.Command {
 
 // ── Business logic (testable) ─────────────────────────────────────────────────
 
+// profileEntry holds display data for a single profile row.
+type profileEntry struct {
+	name     string
+	desc     string
+	path     string
+	isLocal  bool
+	shadowed bool // global profile hidden by a local profile of the same name
+}
+
 // profileList writes a table of available profiles to w.
-func (a *App) profileList(w io.Writer) error {
+// When wide is true, a wider format is used with SCOPE and PATH columns;
+// shadowed global profiles (overridden by a local profile with the same name)
+// are also shown in wide mode but hidden in normal mode.
+func (a *App) profileList(w io.Writer, wide bool) error {
 	defaultName := a.loader.DefaultProfileName()
 	// default_profile may be a file path (e.g. ".inner/profiles/foo.toml");
 	// normalise to the bare stem so it matches the name column.
@@ -59,37 +71,36 @@ func (a *App) profileList(w io.Writer) error {
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "\tNAME\tDESCRIPTION")
-
-	printEntry := func(name, desc string, isDefault, isLocal bool) {
-		marker := ""
-		if isDefault {
-			marker = "*"
+	// Build a set of local profile names to detect shadowed globals.
+	localNames := make(map[string]bool)
+	for _, e := range localEntries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".toml") {
+			localNames[strings.TrimSuffix(e.Name(), ".toml")] = true
 		}
-		if isLocal {
-			if desc != "" {
-				desc += "  [local]"
-			} else {
-				desc = "[local]"
-			}
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", marker, name, desc)
 	}
+
+	var entries []profileEntry
 
 	for _, e := range globalEntries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".toml") {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".toml")
+		path := filepath.Join(a.loader.ProfilesDir(), e.Name())
 		desc := ""
-		if p, err := a.loader.LoadProfile(name); err == nil {
+		if p, err := a.loader.LoadProfileFromPath(path); err == nil {
 			desc = p.Description
 			if p.Experimental {
 				desc = "[experimental] " + desc
 			}
 		}
-		printEntry(name, desc, name == defaultName, false)
+		entries = append(entries, profileEntry{
+			name:     name,
+			desc:     desc,
+			path:     path,
+			isLocal:  false,
+			shadowed: localNames[name],
+		})
 	}
 
 	for _, e := range localEntries {
@@ -97,15 +108,73 @@ func (a *App) profileList(w io.Writer) error {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".toml")
-		desc := ""
 		path := filepath.Join(localDir, e.Name())
+		desc := ""
 		if p, err := a.loader.LoadProfileFromPath(path); err == nil {
 			desc = p.Description
 			if p.Experimental {
 				desc = "[experimental] " + desc
 			}
 		}
-		printEntry(name, desc, name == defaultName, true)
+		entries = append(entries, profileEntry{
+			name:    name,
+			desc:    desc,
+			path:    path,
+			isLocal: true,
+		})
+	}
+
+	home, _ := os.UserHomeDir()
+	abbreviate := func(path string) string {
+		if home != "" {
+			return strings.Replace(path, home, "~", 1)
+		}
+		return path
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+
+	if wide {
+		fmt.Fprintln(tw, "\tNAME\tSCOPE\tDESCRIPTION\tPATH")
+		for _, en := range entries {
+			marker := ""
+			if en.name == defaultName {
+				marker = "*"
+			}
+			scope := "global"
+			if en.isLocal {
+				scope = "local"
+			}
+			desc := en.desc
+			if en.shadowed {
+				if desc != "" {
+					desc += "  [shadowed]"
+				} else {
+					desc = "[shadowed]"
+				}
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", marker, en.name, scope, desc, abbreviate(en.path))
+		}
+	} else {
+		fmt.Fprintln(tw, "\tNAME\tDESCRIPTION")
+		for _, en := range entries {
+			if en.shadowed {
+				continue
+			}
+			marker := ""
+			if en.name == defaultName {
+				marker = "*"
+			}
+			desc := en.desc
+			if en.isLocal {
+				if desc != "" {
+					desc += "  [local]"
+				} else {
+					desc = "[local]"
+				}
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\n", marker, en.name, desc)
+		}
 	}
 
 	return tw.Flush()
@@ -267,14 +336,17 @@ timeout_seconds = 0
 // ── Cobra wiring (thin) ───────────────────────────────────────────────────────
 
 func (a *App) profileListCmd() *cobra.Command {
-	return &cobra.Command{
+	var wide bool
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List available profiles",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return a.profileList(cmd.OutOrStdout())
+			return a.profileList(cmd.OutOrStdout(), wide)
 		},
 	}
+	cmd.Flags().BoolVarP(&wide, "wide", "w", false, "Show scope, path, and shadowed profiles")
+	return cmd
 }
 
 func (a *App) profileShowCmd() *cobra.Command {

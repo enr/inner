@@ -130,6 +130,20 @@ Output:
 
 - `*` marks the profile that will be used when `-p` is not specified (the effective default, accounting for any local `default_profile` override).
 - `[local]` marks profiles found in `.inner/profiles/` of the current directory rather than `~/.inner/profiles/`.
+- When a local profile has the same name as a global one, the global profile is **hidden** (the local takes precedence). Use `--wide` to reveal it.
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--wide` | `-w` | Show SCOPE and PATH columns; also display shadowed global profiles (marked `[shadowed]`) |
+
+Wide output example (when a local `shell` profile shadows the global one):
+
+```
+  NAME   SCOPE   DESCRIPTION                   PATH
+  shell  global  Bash shell, no network  [shadowed]  ~/.inner/profiles/shell.toml
+* shell  local   Project shell variant  [local]      ~/projects/myapp/.inner/profiles/shell.toml
+  claude-interactive  global  Claude Code interactive    ~/.inner/profiles/claude-interactive.toml
+```
 
 ### `inner profile show`
 
