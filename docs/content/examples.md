@@ -18,7 +18,7 @@ The `claude-one-shot` built-in profile configures:
 ### Basic claude-one-shot
 
 ```bash
-inner run -p claude-one-shot -w ~/projects/myapp --prompt "add type annotations to all Python functions"
+inner run -p claude-one-shot -w ~/projects/myapp --arg "add type annotations to all Python functions"
 ```
 
 **What happens:**
@@ -33,7 +33,7 @@ Prevent runaway sessions by setting a timeout in seconds:
 
 ```bash
 inner run -p claude-one-shot -w ~/projects/myapp --timeout 300 \
-  --prompt "write unit tests for all exported Go functions"
+  --arg "write unit tests for all exported Go functions"
 ```
 
 The sandbox is killed after 5 minutes if still running.
@@ -44,7 +44,7 @@ Some tasks need to fetch dependencies or call APIs:
 
 ```bash
 inner run -p claude-one-shot --network -w ~/projects/myapp \
-  --prompt "update all npm dependencies to their latest minor version"
+  --arg "update all npm dependencies to their latest minor version"
 ```
 
 ### One-shot in CI
@@ -52,7 +52,7 @@ inner run -p claude-one-shot --network -w ~/projects/myapp \
 ```bash
 # Set in environment: ANTHROPIC_API_KEY
 inner run -p claude-one-shot -w "$(pwd)" --timeout 600 \
-  --prompt "review the diff in /workspace and write a summary to /workspace/review.md"
+  --arg "review the diff in /workspace and write a summary to /workspace/review.md"
 ```
 
 ### Extra arguments via `--`
@@ -107,7 +107,7 @@ podman pull nginx:latest
 
 ```bash
 inner run -p claude-containers -w ~/projects/myapp \
-  --prompt "build the Dockerfile and run a smoke test against the container"
+  --arg "build the Dockerfile and run a smoke test against the container"
 ```
 
 ### Verify the sandbox sees the Podman socket
@@ -183,7 +183,7 @@ inner run -p claude-one-shot \
   -e DATABASE_URL=postgres://localhost/mydb \
   -e LOG_LEVEL=debug \
   -w ~/myapp \
-  --prompt "run the migration and confirm success"
+  --arg "run the migration and confirm success"
 ```
 
 ---
@@ -295,7 +295,7 @@ One-shot task referencing both trees:
 
 ```bash
 inner run -p myapp-workspace \
-  --prompt "update myapp to use the new Config API introduced in mylib v2"
+  --arg "update myapp to use the new Config API introduced in mylib v2"
 ```
 
 Override workdir at runtime (e.g. to start in the library tree):
@@ -308,7 +308,7 @@ With an explicit extra mount added at runtime:
 
 ```bash
 inner run -p myapp-workspace -m /tmp/build-cache:/cache:rw \
-  --prompt "rebuild and run the integration tests"
+  --arg "rebuild and run the integration tests"
 ```
 
 ### When to use an alias vs a profile

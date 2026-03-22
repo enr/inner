@@ -22,12 +22,14 @@ inner run -p /tmp/my-test-profile.toml
 | Name | Description |
 |------|-------------|
 | `shell` | Interactive bash shell, no network — **default for new installations** |
+| `shell-oneshot` | Run a single shell command in sandbox (no network) |
+| `shell-with-claude` | Interactive bash shell with Claude Code available (network enabled) |
+| `shell-containers` | Interactive bash shell with Podman rootless container support |
 | `claude-interactive` | ⚠ experimental — Claude Code interactive session, network enabled |
 | `claude-one-shot` | Claude Code non-interactive, `--dangerously-skip-permissions` |
 | `claude-containers` | Claude Code with Podman rootless container support |
 | `gemini-interactive` | Gemini CLI interactive session, network enabled |
 | `gemini-one-shot` | Gemini CLI non-interactive, `--yolo` |
-| `shell-containers` | Interactive bash shell with Podman rootless container support |
 
 Inspect any built-in profile:
 
@@ -339,7 +341,7 @@ args        = ["--dangerously-skip-permissions"]
 interactive = false
 ```
 
-Arguments appended via `--` on the command line, or via `--prompt`, are added after `args`.
+Arguments appended via `--` on the command line, or via `--arg`, are added after `args`.
 
 ### `tui` — terminal initialisation
 

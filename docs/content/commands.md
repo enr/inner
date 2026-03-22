@@ -349,9 +349,13 @@ created dirs: /home/alice/.inner/profiles, /home/alice/.inner/logs, /home/alice/
 config: created
 profile claude-containers: installed
 profile claude-interactive: installed
-profile default: installed
 profile claude-one-shot: installed
+profile gemini-interactive: installed
+profile gemini-one-shot: installed
 profile shell: installed
+profile shell-containers: installed
+profile shell-oneshot: installed
+profile shell-with-claude: installed
 ```
 
 Example output when everything already exists:
@@ -361,9 +365,13 @@ dir: /home/alice/.inner
 config: already exists (skipped)
 profile claude-containers: already exists (skipped)
 profile claude-interactive: already exists (skipped)
-profile default: already exists (skipped)
 profile claude-one-shot: already exists (skipped)
+profile gemini-interactive: already exists (skipped)
+profile gemini-one-shot: already exists (skipped)
 profile shell: already exists (skipped)
+profile shell-containers: already exists (skipped)
+profile shell-oneshot: already exists (skipped)
+profile shell-with-claude: already exists (skipped)
 ```
 
 To reset to defaults (for example, to pick up updated built-in profiles after an upgrade)
@@ -432,9 +440,12 @@ backup saved to: /home/alice/.inner/backups/20260319-142301
 profile claude-containers: installed
 profile claude-interactive: installed
 profile claude-one-shot: installed
-profile default: installed
 profile gemini-interactive: installed
+profile gemini-one-shot: installed
 profile shell: installed
+profile shell-containers: installed
+profile shell-oneshot: installed
+profile shell-with-claude: installed
 config: created
 
 reset complete.
@@ -604,5 +615,5 @@ inner version
 Example output:
 
 ```
-inner v0.3.1 (built 2025-11-01T12:00:00Z, commit abc1234)
+inner v0.1.3 (built 2025-11-01T12:00:00Z, commit abc1234)
 ```

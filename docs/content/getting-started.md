@@ -63,10 +63,14 @@ On the first invocation `inner` initializes `~/.inner/` and installs the built-i
 ├── config.toml        # global configuration (default_profile = "shell")
 ├── profiles/          # sandbox profiles (TOML)
 │   ├── shell.toml
-│   ├── default.toml
+│   ├── shell-oneshot.toml
+│   ├── shell-with-claude.toml
+│   ├── shell-containers.toml
 │   ├── claude-interactive.toml
 │   ├── claude-one-shot.toml
-│   └── claude-containers.toml
+│   ├── claude-containers.toml
+│   ├── gemini-interactive.toml
+│   └── gemini-one-shot.toml
 └── logs/              # run logs
 ```
 
@@ -119,7 +123,7 @@ inner run -p claude-interactive -w ~/my-project
 Run a claude-one-shot agent task (non-interactive, returns when done):
 
 ```bash
-inner run -p claude-one-shot -w ~/my-project --prompt "add docstrings to all exported functions"
+inner run -p claude-one-shot -w ~/my-project --arg "add docstrings to all exported functions"
 ```
 
 See [Examples](../examples/) for more patterns, and [Profiles](../profiles/) to understand or customize the sandbox configuration.
