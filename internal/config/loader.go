@@ -12,7 +12,8 @@ import (
 
 // Loader loads and merges configuration from ~/.inner/.
 type Loader struct {
-	Dir string // root config directory, e.g. ~/.inner
+	Dir     string // root config directory, e.g. ~/.inner
+	WorkDir string // current working directory for local config lookup; empty = no local config
 }
 
 // DefaultLoader returns a Loader pointing at the default ~/.inner directory.
@@ -29,9 +30,32 @@ func NewLoader(dir string) *Loader {
 	return &Loader{Dir: dir}
 }
 
+// NewLoaderWithWorkDir returns a Loader with an explicit config directory and working directory.
+func NewLoaderWithWorkDir(dir, workDir string) *Loader {
+	return &Loader{Dir: dir, WorkDir: workDir}
+}
+
 // GlobalConfigPath returns the path to the global config file.
 func (l *Loader) GlobalConfigPath() string {
 	return filepath.Join(l.Dir, "config.toml")
+}
+
+// LocalConfigPath returns the path to the local (directory-level) config file.
+// Returns empty string if WorkDir is not set.
+func (l *Loader) LocalConfigPath() string {
+	if l.WorkDir == "" {
+		return ""
+	}
+	return filepath.Join(l.WorkDir, ".inner", "config.toml")
+}
+
+// LocalProfilesDir returns the path to the local profiles directory.
+// Returns empty string if WorkDir is not set.
+func (l *Loader) LocalProfilesDir() string {
+	if l.WorkDir == "" {
+		return ""
+	}
+	return filepath.Join(l.WorkDir, ".inner", "profiles")
 }
 
 // ProfilePath returns the path to a named profile file.
@@ -57,6 +81,41 @@ func (l *Loader) LoadGlobal() (*GlobalConfig, error) {
 		return nil, fmt.Errorf("reading global config %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// LoadLocal reads the local (directory-level) config file from WorkDir/.inner/config.toml.
+// Returns nil (no error) if WorkDir is not set or the file does not exist.
+func (l *Loader) LoadLocal() (*GlobalConfig, error) {
+	path := l.LocalConfigPath()
+	if path == "" {
+		return nil, nil
+	}
+	cfg := &GlobalConfig{}
+	_, err := toml.DecodeFile(path, cfg)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading local config %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// loadEffectiveGlobal loads the global config and merges the local config on top.
+// Local config takes precedence; missing local config is silently ignored.
+func (l *Loader) loadEffectiveGlobal() (*GlobalConfig, error) {
+	global, err := l.LoadGlobal()
+	if err != nil {
+		return nil, err
+	}
+	local, err := l.LoadLocal()
+	if err != nil {
+		return nil, err
+	}
+	if local == nil {
+		return global, nil
+	}
+	return mergeGlobalConfig(global, local), nil
 }
 
 // LoadProfile reads a named profile file.
@@ -125,9 +184,9 @@ func (l *Loader) LoadProfileAuto(nameOrPath string) (*Profile, error) {
 }
 
 // DefaultProfileName returns the effective default profile name.
-// It reads GlobalConfig.DefaultProfile from config.toml; if unset, returns "default".
+// It reads DefaultProfile from the merged global+local config; if unset, returns "default".
 func (l *Loader) DefaultProfileName() string {
-	g, err := l.LoadGlobal()
+	g, err := l.loadEffectiveGlobal()
 	if err != nil || g.DefaultProfile == "" {
 		return "default"
 	}
@@ -137,7 +196,7 @@ func (l *Loader) DefaultProfileName() string {
 // Build loads global config and the named profile, then produces a RunConfig.
 // profileName defaults to GlobalConfig.DefaultProfile (or "default") if empty.
 func (l *Loader) Build(profileName string) (*RunConfig, error) {
-	global, err := l.LoadGlobal()
+	global, err := l.loadEffectiveGlobal()
 	if err != nil {
 		return nil, err
 	}

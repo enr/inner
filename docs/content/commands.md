@@ -384,29 +384,61 @@ rm -rf ~/.inner/backups/20260319-142301
 
 ## `inner config`
 
-Manage global configuration at `~/.inner/config.toml`.
+Manage configuration. `inner` supports two levels of configuration:
+
+| Level | File | Scope |
+|-------|------|-------|
+| **Global** | `~/.inner/config.toml` | All directories |
+| **Local** | `.inner/config.toml` (in the current directory) | This directory only |
+
+Local config is merged on top of global. Fields set in the local file override the global value; unset fields fall back to global defaults.
 
 ### `inner config show`
 
-Print the current global configuration:
+Print both the global and local configuration (if present):
 
 ```bash
 inner config show
 ```
 
-### `inner config edit`
+Example output when a local config exists:
 
-Open `~/.inner/config.toml` in `$EDITOR`:
+```
+# Global: /home/alice/.inner/config.toml
+log_dir = "~/.inner/logs/"
+default_profile = "shell"
 
-```bash
-inner config edit
+# Local: /home/alice/projects/myapp/.inner/config.toml
+default_profile = "claude-interactive"
 ```
 
-**Global config options:**
+When a file is absent a placeholder is shown instead of an error.
+
+### `inner config edit`
+
+Open a config file in `$EDITOR`. By default, the global config is opened:
+
+```bash
+inner config edit           # opens ~/.inner/config.toml  (default)
+inner config edit --global  # same as above (explicit)
+inner config edit --local   # opens .inner/config.toml in the current directory
+```
+
+`--local` creates `.inner/config.toml` (and the `.inner/` directory) in the current directory if they do not yet exist.
+
+| Flag | Description |
+|------|-------------|
+| `--global` | Edit the global config `~/.inner/config.toml` (default) |
+| `--local` | Edit the local config `.inner/config.toml` in the current directory |
+
+**Config options (apply to both global and local files):**
 
 | Key | Default | Description |
 |-----|---------|-------------|
+| `default_profile` | `"default"` | Profile used when `-p` is not specified |
 | `log_dir` | `~/.inner/logs/` | Directory where run logs are written |
+
+**Tip:** commit `.inner/config.toml` to a project repository to give all contributors a consistent default profile without touching their personal `~/.inner/config.toml`.
 
 ---
 

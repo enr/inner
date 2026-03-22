@@ -819,6 +819,106 @@ timeout_seconds = 60
 	}
 }
 
+// --- local config tests ---
+
+func TestLoadLocal_missing(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	l := NewLoaderWithWorkDir(dir, workDir)
+	cfg, err := l.LoadLocal()
+	if err != nil {
+		t.Fatalf("LoadLocal with missing file should not error: %v", err)
+	}
+	if cfg != nil {
+		t.Errorf("expected nil GlobalConfig, got %+v", cfg)
+	}
+}
+
+func TestLoadLocal_withFile(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-profile"`)
+	l := NewLoaderWithWorkDir(dir, workDir)
+	cfg, err := l.LoadLocal()
+	if err != nil {
+		t.Fatalf("LoadLocal: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil GlobalConfig")
+	}
+	if cfg.DefaultProfile != "local-profile" {
+		t.Errorf("DefaultProfile = %q, want %q", cfg.DefaultProfile, "local-profile")
+	}
+}
+
+func TestLoadLocal_noWorkDir(t *testing.T) {
+	l := NewLoader(t.TempDir())
+	cfg, err := l.LoadLocal()
+	if err != nil {
+		t.Fatalf("LoadLocal with no WorkDir should not error: %v", err)
+	}
+	if cfg != nil {
+		t.Errorf("expected nil when WorkDir is empty, got %+v", cfg)
+	}
+}
+
+func TestLoadEffectiveGlobal_localOverridesGlobal(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "config.toml"), `
+default_profile = "global-profile"
+log_dir = "/global/logs"
+`)
+	writeFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-profile"`)
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	cfg, err := l.loadEffectiveGlobal()
+	if err != nil {
+		t.Fatalf("loadEffectiveGlobal: %v", err)
+	}
+	if cfg.DefaultProfile != "local-profile" {
+		t.Errorf("DefaultProfile = %q, want local-profile", cfg.DefaultProfile)
+	}
+	// log_dir not set in local → inherited from global
+	if cfg.LogDir != "/global/logs" {
+		t.Errorf("LogDir = %q, want /global/logs", cfg.LogDir)
+	}
+}
+
+func TestDefaultProfileName_localOverridesGlobal(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "config.toml"), `default_profile = "global-profile"`)
+	writeFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-profile"`)
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	if got := l.DefaultProfileName(); got != "local-profile" {
+		t.Errorf("DefaultProfileName() = %q, want local-profile", got)
+	}
+}
+
+func TestBuild_localDefaultProfile(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "config.toml"), `default_profile = "global-profile"`)
+	writeFile(t, filepath.Join(dir, "profiles", "global-profile.toml"), `[entrypoint]
+cmd = "bash"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "local-profile.toml"), `[entrypoint]
+cmd = "zsh"
+`)
+	writeFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-profile"`)
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	rc, err := l.Build("")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if rc.Entrypoint.Cmd != "zsh" {
+		t.Errorf("Entrypoint.Cmd = %q, want zsh (from local default_profile)", rc.Entrypoint.Cmd)
+	}
+}
+
 func TestDefaultProfileName_noConfig(t *testing.T) {
 	// No config.toml → falls back to "default".
 	l := NewLoader(t.TempDir())

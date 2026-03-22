@@ -26,6 +26,9 @@ func newApp() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cwd, err := os.Getwd(); err == nil {
+		loader.WorkDir = cwd
+	}
 	return &App{
 		loader:     loader,
 		editorFn:   openInEditor,

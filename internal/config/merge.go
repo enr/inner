@@ -141,6 +141,19 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	return &result
 }
 
+// mergeGlobalConfig applies local on top of base GlobalConfig.
+// Non-zero fields in local override base.
+func mergeGlobalConfig(base, local *GlobalConfig) *GlobalConfig {
+	result := *base
+	if local.DefaultProfile != "" {
+		result.DefaultProfile = local.DefaultProfile
+	}
+	if local.LogDir != "" {
+		result.LogDir = local.LogDir
+	}
+	return &result
+}
+
 // mergeUnique appends items from b to a, skipping duplicates. Order is preserved.
 func mergeUnique(a, b []string) []string {
 	if len(b) == 0 {
