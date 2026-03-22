@@ -1,0 +1,11 @@
+schema_version = "1"
+name        = "shell-with-claude"
+description = "Interactive bash shell with Claude Code available (network enabled)"
+extends     = "claude-interactive"
+
+[entrypoint]
+cmd         = "/bin/bash"
+args        = []
+interactive = true
+# bash does not need raw mode pre-start (unlike the claude Node.js runtime)
+tui         = false

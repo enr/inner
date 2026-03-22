@@ -15,6 +15,10 @@ clipboard = false
 # All other subdirs (sessions/, history/, projects/, …) start fresh and empty.
 # The clone is deleted when the sandbox exits; the real ~/.claude is untouched.
 "~/.claude" = { dest = "~/.claude", mode = "rw" }
+# Hide host runtime sockets (dbus, systemd, pipewire, …) from the sandbox.
+# Claude's Node.js runtime would otherwise find and connect to them via the
+# root ro-bind, which can cause blocking calls that hang startup.
+"/run/user/$UID" = { dest = "/run/user/$UID", mode = "tmpfs" }
 
 [env]
 clearenv = true

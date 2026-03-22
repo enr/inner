@@ -1,51 +1,34 @@
 schema_version = "1"
 name        = "claude-containers"
 description = "Agent con supporto container via podman rootless"
+extends     = "claude-interactive"
 
 [sandbox]
-network = true
-allow   = ["nested-user-ns", "podman-socket"]
+allow = ["nested-user-ns", "podman-socket"]
 
 # ${UID} is expanded at load time to the numeric UID of the current user.
 # Requires `podman system service` running on the host before `inner run`.
+# Note: /run/user/${UID} tmpfs is inherited from claude-interactive and keeps
+# host sockets hidden; the podman socket is bind-mounted on top of it.
 [mounts]
-# tmpfs on /run/user/${UID} gives podman a writable area to create its
-# runtime state (libpod/, containers/, …). The socket is then bind-mounted
-# on top; bwrap processes tmpfs before bind mounts so the ordering is safe.
-"/run/user/${UID}"                    = { dest = "/run/user/${UID}",                    mode = "tmpfs" }
-"/run/user/${UID}/podman/podman.sock" = { dest = "/run/user/${UID}/podman/podman.sock", mode = "rw"   }
-"~/.local/share/containers"           = { dest = "~/.local/share/containers",           mode = "rw"   }
-"~/.config/containers"                = { dest = "~/.config/containers",                mode = "rw"   }
+"/run/user/${UID}/podman/podman.sock" = { dest = "/run/user/${UID}/podman/podman.sock", mode = "rw" }
+"~/.local/share/containers"           = { dest = "~/.local/share/containers",           mode = "rw" }
+"~/.config/containers"                = { dest = "~/.config/containers",                mode = "rw" }
 
 [env]
-clearenv = true
-inherit  = ["ANTHROPIC_API_KEY", "TERM", "LANG", "HOME", "USER"]
-set      = { "DOCKER_HOST" = "unix:///run/user/${UID}/podman/podman.sock" }
+# ANTHROPIC_API_KEY is merged with the inherit list from claude-interactive.
+inherit = ["ANTHROPIC_API_KEY"]
+set     = { "DOCKER_HOST" = "unix:///run/user/${UID}/podman/podman.sock" }
 
 [noop]
-block   = ["apt-get", "apt", "yum", "dnf", "brew"]
 rewrite = { "docker" = "podman", "docker-compose" = "podman-compose" }
 
 [git]
 strip_sections = ["credential", "core.hooksPath"]
 overrides      = { "push.default" = "nothing" }
 
-[entrypoint]
-cmd         = "claude"
-args        = []
-interactive = true
-# claude (Node.js/libuv) probes terminal capabilities during module init,
-# before it calls setRawMode itself — tui = true makes the launcher put
-# the host terminal in raw mode before the child starts.
-tui         = true
-
 [verify.custom]
 checks = [
-  { name = "podman socket raggiungibile", cmd = "test -S /run/podman/podman.sock",                                                         severity = "critical" },
-  { name = "podman API risponde",         cmd = "curl -sf --unix-socket /run/podman/podman.sock http://localhost/version", severity = "critical" },
+  { name = "podman socket raggiungibile", cmd = "test -S /run/user/${UID}/podman/podman.sock",                                                                   severity = "critical" },
+  { name = "podman API risponde",         cmd = "curl -sf --unix-socket /run/user/${UID}/podman/podman.sock http://localhost/version", severity = "critical" },
 ]
-
-[output]
-summary         = false
-log             = "~/.inner/logs/"
-timeout_seconds = 0

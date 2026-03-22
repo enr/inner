@@ -92,6 +92,15 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 
+	// 5b. For interactive sessions, print which profile is being used.
+	if rc.Entrypoint.Interactive {
+		profilePath := a.loader.ResolveProfilePath(profileName)
+		if home, err := os.UserHomeDir(); err == nil {
+			profilePath = strings.Replace(profilePath, home, "~", 1)
+		}
+		fmt.Fprintf(w, "inner starting using profile %q %s\n", profileName, profilePath)
+	}
+
 	// 5. Resolve empty entrypoint cmd to $SHELL (same logic as the isolator).
 	//    Must happen before prepareInteractiveShell so it can detect the binary.
 	if rc.Entrypoint.Cmd == "" {

@@ -496,6 +496,53 @@ else
     fail "-w flag: --chdir $TMPWORK missing from bwrap command"
 fi
 
+# ── inner verify — default profiles ──────────────────────────────────────────
+# Paths point directly to sources so the latest version is always validated.
+
+section "inner verify — default profiles"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROFILES_DIR="$SCRIPT_DIR/../internal/setup/profiles"
+PODMAN_SOCK="/run/user/$(id -u)/podman/podman.sock"
+
+run_verify() {
+    local label="$1" path="$2"
+    if inner verify -p "$path" >/dev/null 2>&1; then
+        pass "verify $label"
+    else
+        fail "verify $label"
+    fi
+}
+
+run_verify "shell"         "$PROFILES_DIR/shell.toml"
+run_verify "shell-oneshot" "$PROFILES_DIR/shell-oneshot.toml"
+
+if [[ -d "$HOME/.claude" ]]; then
+    run_verify "claude-interactive" "$PROFILES_DIR/claude-interactive.toml"
+    run_verify "claude-one-shot"    "$PROFILES_DIR/claude-one-shot.toml"
+    run_verify "shell-with-claude"  "$PROFILES_DIR/shell-with-claude.toml"
+else
+    printf "  [SKIP] ~/.claude not found, skipping claude profile verify\n"
+fi
+
+if [[ -d "$HOME/.gemini" ]]; then
+    run_verify "gemini-interactive" "$PROFILES_DIR/gemini-interactive.toml"
+    run_verify "gemini-one-shot"    "$PROFILES_DIR/gemini-one-shot.toml"
+else
+    printf "  [SKIP] ~/.gemini not found, skipping gemini profile verify\n"
+fi
+
+if [[ -S "$PODMAN_SOCK" ]]; then
+    run_verify "shell-containers" "$PROFILES_DIR/shell-containers.toml"
+    if [[ -d "$HOME/.claude" ]]; then
+        run_verify "claude-containers" "$PROFILES_DIR/claude-containers.toml"
+    else
+        printf "  [SKIP] ~/.claude not found, skipping claude-containers verify\n"
+    fi
+else
+    printf "  [SKIP] podman socket not available, skipping container profile verify\n"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 printf "\n────────────────────────────────\n"
