@@ -71,10 +71,12 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return fmt.Errorf("profile %q is marked experimental and is not ready for use", profileName)
 	}
 
-	// 3. Default workdir to cwd so the user lands in a writable directory.
+	// 3. Resolve effective workdir (priority: --workdir flag > profile workdir > cwd).
 	// applyOverrides is a pure function (no I/O), so we resolve the cwd here.
 	if flags.workdir == "" {
-		if cwd, err := os.Getwd(); err == nil {
+		if rc.Workdir != "" {
+			flags.workdir = rc.Workdir // profile entrypoint.workdir takes over
+		} else if cwd, err := os.Getwd(); err == nil {
 			flags.workdir = cwd
 		}
 	}

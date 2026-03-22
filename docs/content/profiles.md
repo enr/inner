@@ -248,7 +248,7 @@ At runtime `inner` resolves `${workspaces_path}` → `~/.inner/workspaces` and r
 "~/src/c" = { dest = "${workspaces_path}/x/y/z",    mode = "rw" }
 ```
 
-> **Note:** the `${workspaces_path}` token is only expanded in `dest` fields, never in the mount key (source path).
+> **Note:** the `${workspaces_path}` token is expanded in mount `dest` fields, in `entrypoint.workdir`, and in alias values (using the global/local config `workspaces_path`). It is never expanded in mount source (key) paths.
 
 #### `workspaces_path` precedence
 
@@ -331,6 +331,7 @@ Defines what runs inside the sandbox.
 | `args` | list | `[]` | Arguments passed to `cmd` |
 | `interactive` | bool | `true` | Whether to allocate a PTY |
 | `tui` | bool | `false` | Mark as a TUI app that probes terminal capabilities at startup (see below) |
+| `workdir` | string | `""` | Default working directory inside the sandbox. Supports `~` and `${workspaces_path}`. Overridable with `--workdir`/`-w` at runtime; falls back to the caller's cwd if unset. |
 
 ```toml
 [entrypoint]

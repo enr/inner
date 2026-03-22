@@ -219,13 +219,36 @@ func (l *Loader) LoadProfileAuto(nameOrPath string) (*Profile, error) {
 
 // Aliases returns the merged alias map from global and local config.
 // Local aliases take precedence over global ones on key conflict.
-// Returns nil if no aliases are defined.
+// The ${workspaces_path} token in alias values is expanded to the effective
+// workspaces_path (if configured). Returns nil if no aliases are defined.
 func (l *Loader) Aliases() (map[string]string, error) {
 	g, err := l.loadEffectiveGlobal()
 	if err != nil {
 		return nil, err
 	}
-	return g.Aliases, nil
+	if len(g.Aliases) == 0 {
+		return nil, nil
+	}
+	wp := ExpandPath(g.WorkspacesPath)
+	if wp == "" {
+		return g.Aliases, nil
+	}
+	// Check whether any alias value uses the token before allocating a new map.
+	hasToken := false
+	for _, v := range g.Aliases {
+		if strings.Contains(v, "${workspaces_path}") {
+			hasToken = true
+			break
+		}
+	}
+	if !hasToken {
+		return g.Aliases, nil
+	}
+	expanded := make(map[string]string, len(g.Aliases))
+	for k, v := range g.Aliases {
+		expanded[k] = strings.ReplaceAll(v, "${workspaces_path}", wp)
+	}
+	return expanded, nil
 }
 
 // DefaultProfileName returns the effective default profile name.
@@ -325,6 +348,18 @@ func toRunConfig(global *GlobalConfig, p *Profile) (*RunConfig, error) {
 		Args:        p.Entrypoint.Args,
 		Interactive: p.Entrypoint.Interactive,
 		TUI:         p.Entrypoint.TUI,
+	}
+
+	// Workdir from profile (supports ${workspaces_path} token).
+	if p.Entrypoint.Workdir != "" {
+		wd := p.Entrypoint.Workdir
+		if strings.Contains(wd, token) {
+			if workspacesPath == "" {
+				return nil, fmt.Errorf("entrypoint.workdir %q uses ${workspaces_path} but workspaces_path is not configured", wd)
+			}
+			wd = strings.ReplaceAll(wd, token, workspacesPath)
+		}
+		cfg.Workdir = ExpandPath(wd)
 	}
 
 	// Log directory: profile takes precedence over global.

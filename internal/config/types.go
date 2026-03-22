@@ -102,6 +102,10 @@ type EntrypointConfig struct {
 	// Plain interactive shells (bash, zsh) must NOT set this: they configure
 	// the terminal themselves and pre-raw mode breaks bracketed-paste echo.
 	TUI bool `toml:"tui"`
+	// Workdir sets the default working directory inside the sandbox.
+	// Overridable at runtime via --workdir / -w; if neither is set the
+	// caller's cwd is used. Supports ~ expansion and ${workspaces_path}.
+	Workdir string `toml:"workdir"`
 }
 
 // OutputConfig controls logging and summarization.
