@@ -216,6 +216,93 @@ inner verify -p my-profile --suggest
 
 ---
 
+## Multi-Source Workspace
+
+When a project depends on a library and you want the agent to see both source trees at the same time, define a profile with multiple mounts. This pattern is useful for tasks like "refactor myapp to use the new API in mylib" where the agent needs to read the library source, not just its compiled artifacts.
+
+### Directory layout
+
+```
+~/Projects/
+  myapp/                        ← your application
+  mylib/                        ← the dependency you're also working on
+  .inner/
+    config.toml                 ← local aliases
+    profiles/
+      myapp-workspace.toml      ← profile that mounts both trees
+```
+
+The `.inner/` directory sits at the root of your projects folder and is picked up automatically by `inner` as a [local config directory](../configuration).
+
+### Profile: `myapp-workspace.toml`
+
+```toml
+schema_version = "1"
+name           = "myapp-workspace"
+description    = "Interactive session with myapp (rw) and mylib sources (ro)"
+extends        = "claude-interactive"
+
+[mounts]
+"~/Projects/myapp" = { dest = "/workspace/myapp", mode = "rw" }
+"~/Projects/mylib" = { dest = "/workspace/mylib", mode = "ro" }
+```
+
+`extends = "claude-interactive"` inherits network, env, and entrypoint from the built-in profile. Only the mounts are declared here.
+
+The agent sees:
+
+```
+/workspace/
+  myapp/    ← read-write: the agent can edit files here
+  mylib/    ← read-only: reference only, cannot be modified
+```
+
+### Local alias: `~/Projects/.inner/config.toml`
+
+```toml
+[aliases]
+myapp-workspace = "run -p myapp-workspace"
+```
+
+### Usage
+
+Start an interactive session:
+
+```bash
+cd ~/Projects
+inner myapp-workspace
+```
+
+One-shot task referencing both trees:
+
+```bash
+inner run -p myapp-workspace \
+  --prompt "update myapp to use the new Config API introduced in mylib v2"
+```
+
+With an explicit extra mount added at runtime (e.g. shared build cache):
+
+```bash
+inner run -p myapp-workspace -m /tmp/build-cache:/cache:rw \
+  --prompt "rebuild and run the integration tests"
+```
+
+### When to use an alias vs a profile
+
+Use a **profile** when the set of source trees is fixed and you use it regularly — it is versioned alongside your projects and readable at a glance.
+
+Use a **CLI alias** (or just multiple `-m` flags) when the combination is ad-hoc:
+
+```bash
+inner run -p claude-interactive \
+  -m ~/Projects/myapp:/workspace/myapp:rw \
+  -m ~/Projects/mylib:/workspace/mylib:ro
+```
+
+Both approaches produce the same sandbox. The profile is more explicit; the flags are more flexible for one-off tasks.
+
+---
+
 ## Cleaning Up Logs
 
 List all run logs:
