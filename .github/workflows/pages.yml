@@ -25,6 +25,9 @@ jobs:
       - name: Install Hugo
         run: go install github.com/gohugoio/hugo@latest
 
+      - name: Add Hugo to PATH
+        run: echo "$HOME/go/bin" >> $GITHUB_PATH
+
       - uses: actions/configure-pages@v5
 
       - name: Build site
