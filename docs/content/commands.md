@@ -27,7 +27,7 @@ inner run [flags] [-- extra-args]
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
 | `--profile` | `-p` | string | configured default (see `inner config`) | Profile to use |
-| `--workdir` | `-w` | path | — | Mount PATH read-write inside the sandbox (at the same path); also sets the initial working directory |
+| `--workdir` | `-w` | path | profile `entrypoint.workdir`, then cwd | Mount PATH read-write inside the sandbox (at the same path); also sets the initial working directory. Overrides `entrypoint.workdir` from the profile. |
 | `--network` | | bool | profile default | Enable network access |
 | `--no-network` | | bool | — | Disable network access |
 | `--interactive` | `-i` | bool | profile default | Force interactive mode (connect stdin/stdout directly to the sandbox) |
@@ -496,6 +496,7 @@ inner config edit --local   # opens .inner/config.toml in the current directory
 |-----|---------|-------------|
 | `default_profile` | `"default"` | Profile used when `-p` is not specified |
 | `log_dir` | `~/.inner/logs/` | Directory where run logs are written |
+| `workspaces_path` | — | Host directory where workspace mount-point directories are pre-created. Required when a profile mount uses `${workspaces_path}` in its `dest` field. Local config overrides global. |
 
 **Tip:** commit `.inner/config.toml` to a project repository to give all contributors a consistent default profile without touching their personal `~/.inner/config.toml`.
 

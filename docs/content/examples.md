@@ -226,13 +226,32 @@ When a project depends on a library and you want the agent to see both source tr
 ~/Projects/
   myapp/                        ← your application
   mylib/                        ← the dependency you're also working on
+  workspaces/                   ← mount-point staging area (created automatically)
   .inner/
-    config.toml                 ← local aliases
+    config.toml                 ← local config with workspaces_path and aliases
     profiles/
       myapp-workspace.toml      ← profile that mounts both trees
 ```
 
 The `.inner/` directory sits at the root of your projects folder and is picked up automatically by `inner` as a [local config directory](../configuration).
+
+### Local config: `~/Projects/.inner/config.toml`
+
+```toml
+workspaces_path = "~/Projects/workspaces"
+
+[aliases]
+myapp = "run -p myapp-workspace"
+```
+
+`workspaces_path` points to a directory on the host where `inner` will pre-create the
+mount-point directories before starting `bwrap`. The `myapp` alias is a shorthand for
+the full profile run command.
+
+> `~/Projects/workspaces/` must exist on the host before running:
+> ```bash
+> mkdir -p ~/Projects/workspaces
+> ```
 
 ### Profile: `myapp-workspace.toml`
 
@@ -240,37 +259,36 @@ The `.inner/` directory sits at the root of your projects folder and is picked u
 schema_version = "1"
 name           = "myapp-workspace"
 description    = "Interactive session with myapp (rw) and mylib sources (ro)"
-extends        = "claude-interactive"
+extends        = "shell-with-claude"
 
 [mounts]
-"~/Projects/myapp" = { dest = "/workspace/myapp", mode = "rw" }
-"~/Projects/mylib" = { dest = "/workspace/mylib", mode = "ro" }
+"~/Projects/myapp" = { dest = "${workspaces_path}/myapp", mode = "rw" }
+"~/Projects/mylib" = { dest = "${workspaces_path}/mylib", mode = "ro" }
+
+[entrypoint]
+workdir = "${workspaces_path}/myapp"
 ```
 
-`extends = "claude-interactive"` inherits network, env, and entrypoint from the built-in profile. Only the mounts are declared here.
+`${workspaces_path}` is substituted with `~/Projects/workspaces` at runtime.
+`inner` pre-creates `workspaces/myapp` and `workspaces/mylib` before starting `bwrap`,
+so the mount destinations exist when needed. `entrypoint.workdir` sets the initial
+working directory inside the sandbox.
 
 The agent sees:
 
 ```
-/workspace/
+~/Projects/workspaces/
   myapp/    ← read-write: the agent can edit files here
   mylib/    ← read-only: reference only, cannot be modified
 ```
 
-### Local alias: `~/Projects/.inner/config.toml`
-
-```toml
-[aliases]
-myapp-workspace = "run -p myapp-workspace"
-```
-
 ### Usage
 
-Start an interactive session:
+Start an interactive session (lands in `workspaces/myapp`):
 
 ```bash
 cd ~/Projects
-inner myapp-workspace
+inner myapp
 ```
 
 One-shot task referencing both trees:
@@ -280,7 +298,13 @@ inner run -p myapp-workspace \
   --prompt "update myapp to use the new Config API introduced in mylib v2"
 ```
 
-With an explicit extra mount added at runtime (e.g. shared build cache):
+Override workdir at runtime (e.g. to start in the library tree):
+
+```bash
+inner run -p myapp-workspace -w ~/Projects/workspaces/mylib
+```
+
+With an explicit extra mount added at runtime:
 
 ```bash
 inner run -p myapp-workspace -m /tmp/build-cache:/cache:rw \
@@ -291,15 +315,17 @@ inner run -p myapp-workspace -m /tmp/build-cache:/cache:rw \
 
 Use a **profile** when the set of source trees is fixed and you use it regularly — it is versioned alongside your projects and readable at a glance.
 
-Use a **CLI alias** (or just multiple `-m` flags) when the combination is ad-hoc:
+Use **CLI flags** when the combination is ad-hoc:
 
 ```bash
 inner run -p claude-interactive \
-  -m ~/Projects/myapp:/workspace/myapp:rw \
-  -m ~/Projects/mylib:/workspace/mylib:ro
+  -m ~/Projects/myapp:~/Projects/myapp:rw \
+  -m ~/Projects/mylib:~/Projects/mylib:ro
 ```
 
-Both approaches produce the same sandbox. The profile is more explicit; the flags are more flexible for one-off tasks.
+With CLI flags the dest paths must already exist on the host (or be existing host
+paths used as src=dest). The profile + `${workspaces_path}` approach handles
+pre-creation automatically.
 
 ---
 

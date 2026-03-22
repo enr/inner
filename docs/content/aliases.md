@@ -60,6 +60,24 @@ review = "run --profile my-project-review"  # used only inside /my-project
 - **Built-in commands are never shadowed.** If an alias name collides with an existing `inner` subcommand (e.g. `run`, `profile`, `config`), the built-in takes precedence and the alias is ignored.
 - Aliases are expanded **one level only** — aliases cannot expand into other aliases.
 
+## Token expansion
+
+The `${workspaces_path}` token is expanded in alias values to the effective `workspaces_path`
+configured in the global or local `config.toml`. This lets you reference workspace
+directories without hardcoding absolute paths:
+
+```toml
+# ~/.inner/config.toml  (or .inner/config.toml for per-project)
+workspaces_path = "~/Projects/workspaces"
+
+[aliases]
+myproject = "run -p myproject-profile"
+```
+
+The token is expanded when the alias is looked up, before the command is parsed. If
+`workspaces_path` is not configured the token is left as-is (which will cause an error
+at runtime if bwrap receives it as a path).
+
 ## Limitations
 
 - Alias values are split on whitespace using `strings.Fields`. Quoted arguments with spaces (e.g. `--arg "hello world"`) are not supported in the alias definition; pass them directly on the command line after the alias name.
