@@ -124,15 +124,28 @@ func (l *Loader) LoadProfileAuto(nameOrPath string) (*Profile, error) {
 	return l.LoadProfile(nameOrPath)
 }
 
-// Build loads global config and the named profile, then produces a RunConfig.
-// profileName defaults to "default" if empty.
-func (l *Loader) Build(profileName string) (*RunConfig, error) {
-	if profileName == "" {
-		profileName = "default"
+// DefaultProfileName returns the effective default profile name.
+// It reads GlobalConfig.DefaultProfile from config.toml; if unset, returns "default".
+func (l *Loader) DefaultProfileName() string {
+	g, err := l.LoadGlobal()
+	if err != nil || g.DefaultProfile == "" {
+		return "default"
 	}
+	return g.DefaultProfile
+}
+
+// Build loads global config and the named profile, then produces a RunConfig.
+// profileName defaults to GlobalConfig.DefaultProfile (or "default") if empty.
+func (l *Loader) Build(profileName string) (*RunConfig, error) {
 	global, err := l.LoadGlobal()
 	if err != nil {
 		return nil, err
+	}
+	if profileName == "" {
+		profileName = global.DefaultProfile
+	}
+	if profileName == "" {
+		profileName = "default"
 	}
 	profile, err := l.LoadProfileAuto(profileName)
 	if err != nil {

@@ -65,7 +65,7 @@ func installConfig(dir string) (bool, error) {
 	if _, err := os.Stat(cfgPath); err == nil {
 		return false, nil // already present
 	}
-	const tmpl = "# inner global configuration\n\n# Directory where run logs are stored.\n# log_dir = \"~/.inner/logs/\"\n"
+	const tmpl = "# inner global configuration\n\n# Profile used by default when -p is not specified.\ndefault_profile = \"shell\"\n\n# Directory where run logs are stored.\n# log_dir = \"~/.inner/logs/\"\n"
 	return true, os.WriteFile(cfgPath, []byte(tmpl), 0o644)
 }
 

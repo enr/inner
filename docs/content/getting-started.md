@@ -60,10 +60,10 @@ On the first invocation `inner` initializes `~/.inner/` and installs the built-i
 
 ```
 ~/.inner/
-├── config.toml        # global configuration
+├── config.toml        # global configuration (default_profile = "shell")
 ├── profiles/          # sandbox profiles (TOML)
-│   ├── default.toml
 │   ├── shell.toml
+│   ├── default.toml
 │   ├── claude-interactive.toml
 │   ├── claude-one-shot.toml
 │   └── claude-containers.toml
@@ -98,10 +98,16 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 ## Quick Start
 
-Start an interactive shell in the default sandbox:
+Start an interactive shell in the default sandbox (`shell` profile by default):
 
 ```bash
 inner run
+```
+
+To change the default profile, edit `~/.inner/config.toml`:
+
+```toml
+default_profile = "claude-interactive"
 ```
 
 Run Claude Code in interactive mode with network access:

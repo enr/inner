@@ -819,6 +819,61 @@ timeout_seconds = 60
 	}
 }
 
+func TestDefaultProfileName_noConfig(t *testing.T) {
+	// No config.toml → falls back to "default".
+	l := NewLoader(t.TempDir())
+	if got := l.DefaultProfileName(); got != "default" {
+		t.Errorf("DefaultProfileName() = %q, want %q", got, "default")
+	}
+}
+
+func TestDefaultProfileName_withConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "config.toml"), `default_profile = "shell"`)
+	l := NewLoader(dir)
+	if got := l.DefaultProfileName(); got != "shell" {
+		t.Errorf("DefaultProfileName() = %q, want %q", got, "shell")
+	}
+}
+
+func TestBuild_defaultProfileFromConfig(t *testing.T) {
+	// Build("") with default_profile set in config → loads the configured profile.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "config.toml"), `default_profile = "shell"`)
+	writeFile(t, filepath.Join(dir, "profiles", "shell.toml"), `
+[entrypoint]
+cmd = "bash"
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("")
+	if err != nil {
+		t.Fatalf("Build with default_profile=shell: %v", err)
+	}
+	if rc.Entrypoint.Cmd != "bash" {
+		t.Errorf("Entrypoint.Cmd = %q, want bash", rc.Entrypoint.Cmd)
+	}
+}
+
+func TestBuild_explicitProfileWinsOverDefault(t *testing.T) {
+	// An explicit profileName always wins over default_profile in config.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "config.toml"), `default_profile = "shell"`)
+	writeFile(t, filepath.Join(dir, "profiles", "shell.toml"), `[entrypoint]
+cmd = "bash"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "other.toml"), `[entrypoint]
+cmd = "zsh"
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("other")
+	if err != nil {
+		t.Fatalf("Build with explicit name: %v", err)
+	}
+	if rc.Entrypoint.Cmd != "zsh" {
+		t.Errorf("Entrypoint.Cmd = %q, want zsh", rc.Entrypoint.Cmd)
+	}
+}
+
 func TestBuild_emptyNoop(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `name = "p"`)

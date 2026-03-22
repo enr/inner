@@ -62,6 +62,9 @@ func (a *App) configEdit(_ io.Writer) error {
 func globalConfigTemplate() string {
 	return `# inner global configuration
 
+# Profile used by default when -p is not specified.
+# default_profile = "shell"
+
 # Directory where run logs are stored.
 # log_dir = "~/.inner/logs/"
 `

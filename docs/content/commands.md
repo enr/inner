@@ -26,7 +26,7 @@ inner run [flags] [-- extra-args]
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--profile` | `-p` | string | `default` | Profile to use |
+| `--profile` | `-p` | string | configured default (see `inner config`) | Profile to use |
 | `--workdir` | `-w` | path | — | Mount PATH read-write inside the sandbox (at the same path); also sets the initial working directory |
 | `--network` | | bool | profile default | Enable network access |
 | `--no-network` | | bool | — | Disable network access |

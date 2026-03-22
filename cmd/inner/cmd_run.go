@@ -60,7 +60,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	// 2. Load RunConfig from profile.
 	profileName := flags.profile
 	if profileName == "" {
-		profileName = "default"
+		profileName = a.loader.DefaultProfileName()
 	}
 	rc, err := a.loader.Build(profileName)
 	if err != nil {

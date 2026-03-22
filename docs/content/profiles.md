@@ -19,8 +19,8 @@ inner run -p /tmp/my-test-profile.toml
 
 | Name | Description |
 |------|-------------|
+| `shell` | Interactive bash shell, no network — **default for new installations** |
 | `default` | Interactive bash shell, no network, package managers blocked |
-| `shell` | Explicit bash shell, no network |
 | `claude-interactive` | ⚠ experimental — Claude Code interactive session, network enabled |
 | `claude-one-shot` | Claude Code non-interactive, `--dangerously-skip-permissions` |
 | `claude-containers` | Claude Code with Podman rootless container support |
@@ -429,6 +429,31 @@ inner run -p gemini-interactive
 - The agent **cannot read** previous sessions or history from the host.
 - Any data the agent writes **disappears** when the sandbox exits.
 - The host `~/.gemini` stays **pristine** regardless of what the agent does.
+
+---
+
+## Default Profile
+
+`inner run` (without `-p`) uses the profile configured in `~/.inner/config.toml`:
+
+```toml
+# ~/.inner/config.toml
+default_profile = "shell"
+```
+
+New installations set `default_profile = "shell"` automatically. To change it:
+
+```bash
+inner config edit   # opens config.toml in $EDITOR
+```
+
+Or edit directly:
+
+```toml
+default_profile = "claude-interactive"
+```
+
+The precedence is: **`-p` flag > `default_profile` in config.toml > `"default"`** (hard fallback).
 
 ---
 
