@@ -8,6 +8,8 @@ weight: 3
 
 A **profile** is a TOML file that fully describes a sandbox environment. Profiles are stored in `~/.inner/profiles/<name>.toml`.
 
+**Local (per-directory) profiles** can be placed in `.inner/profiles/` inside the current working directory. They are discovered automatically alongside global profiles and shown with a `[local]` tag in `inner profile list`.
+
 Alternatively, you can pass a **file path** directly to `-p`/`--profile`. If the value points to an existing file it is loaded as-is; otherwise it is treated as a profile name looked up in the profiles directory. This lets you use local or project-specific profile files without installing them in `~/.inner/profiles/`:
 
 ```bash

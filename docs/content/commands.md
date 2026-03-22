@@ -120,12 +120,16 @@ inner profile list
 Output:
 
 ```
-default              Interactive shell, no network
-shell                Bash shell, no network
-claude-interactive    Claude Code interactive, network enabled
-claude-one-shot             Claude Code non-interactive, dangerously-skip-permissions
-claude-containers     Claude Code with Podman rootless containers
+  NAME                DESCRIPTION
+* shell               Bash shell, no network
+  claude-interactive  Claude Code interactive, network enabled
+  claude-one-shot     Claude Code non-interactive, dangerously-skip-permissions
+  claude-containers   Claude Code with Podman rootless containers
+  my-project          Project-specific profile  [local]
 ```
+
+- `*` marks the profile that will be used when `-p` is not specified (the effective default, accounting for any local `default_profile` override).
+- `[local]` marks profiles found in `.inner/profiles/` of the current directory rather than `~/.inner/profiles/`.
 
 ### `inner profile show`
 

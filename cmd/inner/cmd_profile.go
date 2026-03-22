@@ -32,18 +32,52 @@ func (a *App) newProfileCmd() *cobra.Command {
 
 // profileList writes a table of available profiles to w.
 func (a *App) profileList(w io.Writer) error {
-	entries, err := os.ReadDir(a.loader.ProfilesDir())
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintln(w, "No profiles directory found. Run 'inner doctor' for setup help.")
-			return nil
+	defaultName := a.loader.DefaultProfileName()
+	// default_profile may be a file path (e.g. ".inner/profiles/foo.toml");
+	// normalise to the bare stem so it matches the name column.
+	if strings.HasSuffix(defaultName, ".toml") {
+		defaultName = strings.TrimSuffix(filepath.Base(defaultName), ".toml")
+	}
+
+	globalEntries, globalErr := os.ReadDir(a.loader.ProfilesDir())
+	if globalErr != nil && !os.IsNotExist(globalErr) {
+		return fmt.Errorf("reading profiles directory: %w", globalErr)
+	}
+
+	localDir := a.loader.LocalProfilesDir()
+	var localEntries []os.DirEntry
+	if localDir != "" {
+		var localErr error
+		localEntries, localErr = os.ReadDir(localDir)
+		if localErr != nil && !os.IsNotExist(localErr) {
+			return fmt.Errorf("reading local profiles directory: %w", localErr)
 		}
-		return fmt.Errorf("reading profiles directory: %w", err)
+	}
+
+	if os.IsNotExist(globalErr) && len(localEntries) == 0 {
+		fmt.Fprintln(w, "No profiles directory found. Run 'inner doctor' for setup help.")
+		return nil
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tDESCRIPTION")
-	for _, e := range entries {
+	fmt.Fprintln(tw, "\tNAME\tDESCRIPTION")
+
+	printEntry := func(name, desc string, isDefault, isLocal bool) {
+		marker := ""
+		if isDefault {
+			marker = "*"
+		}
+		if isLocal {
+			if desc != "" {
+				desc += "  [local]"
+			} else {
+				desc = "[local]"
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", marker, name, desc)
+	}
+
+	for _, e := range globalEntries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".toml") {
 			continue
 		}
@@ -55,8 +89,25 @@ func (a *App) profileList(w io.Writer) error {
 				desc = "[experimental] " + desc
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\n", name, desc)
+		printEntry(name, desc, name == defaultName, false)
 	}
+
+	for _, e := range localEntries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".toml") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".toml")
+		desc := ""
+		path := filepath.Join(localDir, e.Name())
+		if p, err := a.loader.LoadProfileFromPath(path); err == nil {
+			desc = p.Description
+			if p.Experimental {
+				desc = "[experimental] " + desc
+			}
+		}
+		printEntry(name, desc, name == defaultName, true)
+	}
+
 	return tw.Flush()
 }
 

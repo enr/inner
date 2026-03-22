@@ -20,6 +20,17 @@ func newTestApp(t *testing.T) (*App, string) {
 	}, dir
 }
 
+// newTestAppWithWorkDir returns an App wired to a temp config dir and a separate work dir.
+func newTestAppWithWorkDir(t *testing.T) (*App, string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	return &App{
+		loader:   config.NewLoaderWithWorkDir(dir, workDir),
+		editorFn: func(string) error { return nil },
+	}, dir, workDir
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -92,6 +103,93 @@ func TestProfileList_ignoresNonToml(t *testing.T) {
 	out := buf.String()
 	if strings.Contains(out, "README") {
 		t.Errorf("expected README.md to be ignored, got: %s", out)
+	}
+}
+
+func TestProfileList_localProfiles(t *testing.T) {
+	app, dir, workDir := newTestAppWithWorkDir(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "global.toml"),
+		`name = "global"\ndescription = "Global profile"`)
+	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "local.toml"),
+		`name = "local"\ndescription = "Local profile"`)
+
+	var buf bytes.Buffer
+	if err := app.profileList(&buf); err != nil {
+		t.Fatalf("profileList: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "global") {
+		t.Errorf("expected 'global' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "local") {
+		t.Errorf("expected 'local' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "[local]") {
+		t.Errorf("expected '[local]' tag in output, got: %s", out)
+	}
+}
+
+func TestProfileList_defaultMarked(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "config.toml"), `default_profile = "alpha"`)
+	writeTestFile(t, filepath.Join(dir, "profiles", "alpha.toml"),
+		`name = "alpha"\ndescription = "Alpha profile"`)
+	writeTestFile(t, filepath.Join(dir, "profiles", "beta.toml"),
+		`name = "beta"\ndescription = "Beta profile"`)
+
+	var buf bytes.Buffer
+	if err := app.profileList(&buf); err != nil {
+		t.Fatalf("profileList: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "*") {
+		t.Errorf("expected '*' marker in output, got: %s", out)
+	}
+	lines := strings.Split(out, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "alpha") && !strings.Contains(line, "*") {
+			t.Errorf("expected alpha line to have '*' marker, got: %s", line)
+		}
+		if strings.Contains(line, "beta") && strings.Contains(line, "*") {
+			t.Errorf("expected beta line to NOT have '*' marker, got: %s", line)
+		}
+	}
+}
+
+func TestProfileList_defaultAsPath(t *testing.T) {
+	// default_profile set to a file path like ".inner/profiles/local-prof.toml"
+	app, _, workDir := newTestAppWithWorkDir(t)
+	writeTestFile(t, filepath.Join(workDir, ".inner", "config.toml"),
+		`default_profile = ".inner/profiles/local-prof.toml"`)
+	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "local-prof.toml"),
+		`name = "local-prof"\ndescription = "My local profile"`)
+
+	var buf bytes.Buffer
+	if err := app.profileList(&buf); err != nil {
+		t.Fatalf("profileList: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "*") {
+		t.Errorf("expected '*' marker when default_profile is a path, got: %s", out)
+	}
+}
+
+func TestProfileList_localDefaultMarked(t *testing.T) {
+	app, _, workDir := newTestAppWithWorkDir(t)
+	writeTestFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-prof"`)
+	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "local-prof.toml"),
+		`name = "local-prof"\ndescription = "My local profile"`)
+
+	var buf bytes.Buffer
+	if err := app.profileList(&buf); err != nil {
+		t.Fatalf("profileList: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "*") {
+		t.Errorf("expected '*' marker for local default, got: %s", out)
+	}
+	if !strings.Contains(out, "[local]") {
+		t.Errorf("expected '[local]' tag, got: %s", out)
 	}
 }
 
