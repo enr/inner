@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ if .IsHome }}{{ .Site.Title }} — {{ .Site.Params.tagline }}{{ else }}{{ .Title }} — {{ .Site.Title }}{{ end }}</title>
-  <link rel="stylesheet" href="{{ "style.css" | absURL }}">
+  <link rel="stylesheet" href="{{ "style.css" | relURL }}">
 </head>
 <body>
   <aside class="sidebar">
