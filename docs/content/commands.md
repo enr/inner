@@ -38,7 +38,7 @@ inner run [flags] [-- extra-args]
 | `--arg` | `-a` | string | — | Append an argument to the entrypoint command. Repeatable. |
 | `--args-file` | | path | — | Read the file and append its entire content as a single entrypoint argument. |
 | `--timeout` | | int | `0` | Timeout in seconds (`0` = no timeout) |
-| `--dry-run` | | bool | false | Print the `bwrap` command without executing |
+| `--dry-run` | | bool | false | Print the resolved config and `bwrap` command without executing |
 
 ### Extra arguments
 
@@ -99,8 +99,27 @@ inner run -p claude-one-shot --entrypoint /usr/bin/gemini --arg "explain this co
 # Run a one-shot shell command in a sandbox
 inner run -p shell-oneshot --arg "ls -la ~/project"
 
-# Preview the bwrap command without running
+# Preview the resolved config and bwrap command without running
 inner run -p claude-interactive --dry-run
+```
+
+`--dry-run` prints the resolved profile, config file paths, effective sandbox settings, and the
+`bwrap` command that would be executed. The local config line is always shown so you can confirm
+whether a `.inner/config.toml` in the current directory is being picked up:
+
+```
+profile:       claude-interactive
+profile path:  ~/.inner/profiles/claude-interactive.toml
+global config: ~/.inner/config.toml
+local config:  ~/projects/myapp/.inner/config.toml (missing)
+
+entrypoint: /usr/bin/claude
+interactive: true
+network:     true
+...
+
+bwrap command:
+  bwrap --ro-bind / / ...
 ```
 
 ---

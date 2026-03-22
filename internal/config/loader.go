@@ -302,6 +302,7 @@ func toRunConfig(global *GlobalConfig, p *Profile) (*RunConfig, error) {
 	workspacesPath = ExpandPath(workspacesPath)
 
 	cfg := &RunConfig{
+		Name:               p.Name,
 		Network:            p.Sandbox.Network,
 		Clipboard:          p.Sandbox.Clipboard,
 		Env:                expandedEnv,

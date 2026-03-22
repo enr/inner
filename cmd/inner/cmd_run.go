@@ -101,7 +101,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		if home, err := os.UserHomeDir(); err == nil {
 			profilePath = strings.Replace(profilePath, home, "~", 1)
 		}
-		fmt.Fprintf(w, "inner starting using profile %q %s\n", profileName, profilePath)
+		fmt.Fprintf(w, "inner starting using profile %q %s\n", rc.Name, profilePath)
 	}
 
 	// 5. Resolve empty entrypoint cmd to $SHELL (same logic as the isolator).
@@ -204,7 +204,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 
 	// 14. Dry-run: print profile, effective config, and sandbox command.
 	if flags.dryRun {
-		printDryRun(w, profileName, a.loader.ResolveProfilePath(profileName), a.loader.GlobalConfigPath(), rc, cmd.Args)
+		printDryRun(w, a.loader.ResolveProfilePath(profileName), a.loader.GlobalConfigPath(), a.loader.LocalConfigPath(), rc, cmd.Args)
 		return nil
 	}
 
@@ -374,10 +374,17 @@ func parseEnvVar(s string) (string, string, error) {
 }
 
 // printDryRun writes a human-readable summary of what inner run would do.
-func printDryRun(w io.Writer, profileName, profilePath, globalConfigPath string, rc *config.RunConfig, cmdArgs []string) {
-	fmt.Fprintf(w, "profile:      %s\n", profileName)
-	fmt.Fprintf(w, "profile path: %s\n", profilePath)
+func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath string, rc *config.RunConfig, cmdArgs []string) {
+	fmt.Fprintf(w, "profile:       %s\n", rc.Name)
+	fmt.Fprintf(w, "profile path:  %s\n", profilePath)
 	fmt.Fprintf(w, "global config: %s\n", globalConfigPath)
+	if localConfigPath != "" {
+		if _, err := os.Stat(localConfigPath); err == nil {
+			fmt.Fprintf(w, "local config:  %s\n", localConfigPath)
+		} else {
+			fmt.Fprintf(w, "local config:  %s (missing)\n", localConfigPath)
+		}
+	}
 	fmt.Fprintln(w)
 
 	fmt.Fprintf(w, "entrypoint: %s\n", rc.Entrypoint.Cmd)

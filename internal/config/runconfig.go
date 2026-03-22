@@ -4,6 +4,10 @@ package config
 // It speaks in terms of intent, never backend-specific flags.
 // Produced by the Loader; consumed by the Isolator.
 type RunConfig struct {
+	// Name is the logical profile name (from the profile's name field, or
+	// derived from the filename). It may differ from the CLI argument used
+	// to select the profile (which can be a file path).
+	Name          string
 	Mounts        []Mount
 	Env           EnvConfig
 	Network       bool
