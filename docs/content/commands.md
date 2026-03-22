@@ -295,8 +295,11 @@ inner log clean --older-than 14
 Initialize (or re-initialize) the `~/.inner` directory:
 
 ```bash
-inner init
+inner init           # initialize ~/.inner (global, default)
+inner init --local   # create .inner/ in the current directory
 ```
+
+### Global init (default)
 
 Creates `~/.inner/` and its subdirectories, installs the built-in profiles, and writes a
 starter `config.toml` if none exists. Already-present files are never overwritten.
@@ -328,6 +331,44 @@ profile shell: already exists (skipped)
 
 To reset to defaults (for example, to pick up updated built-in profiles after an upgrade)
 use [`inner reset`](#inner-reset).
+
+### Local init (`--local`)
+
+Creates a `.inner/` directory in the current directory with a starter `config.toml` and an
+empty `profiles/` folder — so the directory structure is immediately visible and ready to
+customize:
+
+```
+inner init --local
+```
+
+Example output:
+
+```
+dir: /home/alice/projects/myapp
+created dirs: /home/alice/projects/myapp/.inner/profiles
+config: created
+```
+
+The created layout:
+
+```
+.inner/
+├── config.toml   # local config template (all options commented out)
+└── profiles/     # place project-specific profiles here
+```
+
+`--local` is idempotent: running it again in the same directory skips existing files.
+
+**Tip:** commit `.inner/` to the project repository. Team members get the directory structure
+and local defaults without any manual setup. To further customize, see
+[`inner config edit --local`](#inner-config) and the [profiles guide](../profiles/).
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--local` | Create `.inner/` in the current directory instead of initializing `~/.inner` |
 
 ---
 

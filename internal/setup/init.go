@@ -58,6 +58,44 @@ func InitVerbose(dir string) (InitResult, error) {
 	return r, nil
 }
 
+// InitLocal creates a .inner/ directory in workDir with a starter config.toml
+// and an empty profiles/ directory. Idempotent: safe to run multiple times.
+func InitLocal(workDir string) (InitResult, error) {
+	var r InitResult
+	innerDir := filepath.Join(workDir, ".inner")
+	profilesDir := filepath.Join(innerDir, "profiles")
+
+	if _, err := os.Stat(innerDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(innerDir, 0o755); err != nil {
+			return r, fmt.Errorf("creating .inner directory: %w", err)
+		}
+	} else if err != nil {
+		return r, fmt.Errorf("checking .inner directory: %w", err)
+	}
+
+	if _, err := os.Stat(profilesDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(profilesDir, 0o755); err != nil {
+			return r, fmt.Errorf("creating .inner/profiles directory: %w", err)
+		}
+		r.DirsCreated = append(r.DirsCreated, profilesDir)
+	} else if err != nil {
+		return r, fmt.Errorf("checking .inner/profiles directory: %w", err)
+	}
+
+	cfgPath := filepath.Join(innerDir, "config.toml")
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		const tmpl = "# inner local configuration (directory-level)\n# Settings here override ~/.inner/config.toml for this directory.\n\n# Profile used by default in this directory when -p is not specified.\n# default_profile = \"my-project-profile\"\n\n# Aliases expand a short name to a full inner command (local overrides global).\n# [aliases]\n# review = \"run --profile code-review\"\n"
+		if err := os.WriteFile(cfgPath, []byte(tmpl), 0o644); err != nil {
+			return r, fmt.Errorf("writing local config: %w", err)
+		}
+		r.ConfigCreated = true
+	} else if err != nil {
+		return r, fmt.Errorf("checking local config: %w", err)
+	}
+
+	return r, nil
+}
+
 // installConfig writes a default config.toml if one does not already exist.
 // Returns true if the file was created.
 func installConfig(dir string) (bool, error) {

@@ -21,7 +21,7 @@ func (a *App) reset_(w io.Writer, force bool) error {
 	// If ~/.inner does not exist at all, just init.
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		fmt.Fprintln(w, "~/.inner does not exist, running init...")
-		return a.init_(w)
+		return a.init_(w, false)
 	}
 
 	if !force {
