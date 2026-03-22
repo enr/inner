@@ -238,7 +238,7 @@ func TestApplyOverrides_entrypoint(t *testing.T) {
 }
 
 func TestApplyOverrides_entrypointWithArgs(t *testing.T) {
-	// --entrypoint clears profile args; --arg and extraArgs still append.
+	// --entrypoint clears profile args; extraArgs come before --arg flags.
 	rc := &config.RunConfig{
 		Entrypoint: config.Entrypoint{
 			Cmd:  "old-cmd",
@@ -251,10 +251,11 @@ func TestApplyOverrides_entrypointWithArgs(t *testing.T) {
 	}, []string{"--verbose"}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"script.py", "--verbose"}
+	// order: extraArgs (fixed structure) → --arg flags (variable input)
+	want := []string{"--verbose", "script.py"}
 	if len(rc.Entrypoint.Args) != 2 ||
-		rc.Entrypoint.Args[0] != "script.py" ||
-		rc.Entrypoint.Args[1] != "--verbose" {
+		rc.Entrypoint.Args[0] != "--verbose" ||
+		rc.Entrypoint.Args[1] != "script.py" {
 		t.Errorf("unexpected args: %v, want %v", rc.Entrypoint.Args, want)
 	}
 }
@@ -275,7 +276,7 @@ func TestApplyOverrides_argMultiple(t *testing.T) {
 	if err := applyOverrides(rc, flags, nil); err != nil {
 		t.Fatal(err)
 	}
-	// order: profile args → --arg flags → --prompt → extraArgs
+	// order: profile args → extraArgs (none here) → --arg flags
 	want := []string{"--existing", "first", "second"}
 	if len(rc.Entrypoint.Args) != 3 || rc.Entrypoint.Args[0] != "--existing" ||
 		rc.Entrypoint.Args[1] != "first" || rc.Entrypoint.Args[2] != "second" {

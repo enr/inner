@@ -366,7 +366,7 @@ fi
 
 section "Extra arguments"
 
-RESULT=$(inner run -p "$NONET" --no-interactive -a "hello-from-arg" -- -c 'echo "$1"' 2>/dev/null || true)
+RESULT=$(inner run -p "$NONET" --no-interactive -a "hello-from-arg" -- -c 'echo "$0"' 2>/dev/null || true)
 RESULT=$(echo "$RESULT" | tr -d '[:space:]')
 if [[ "$RESULT" == "hello-from-arg" ]]; then
     pass "--arg: value passed to entrypoint"
@@ -374,7 +374,7 @@ else
     fail "--arg: expected 'hello-from-arg', got '$RESULT'"
 fi
 
-RESULT=$(inner run -p "$NONET" --no-interactive -a "first" -a "second" -- -c 'echo "$1 $2"' 2>/dev/null || true)
+RESULT=$(inner run -p "$NONET" --no-interactive -a "first" -a "second" -- -c 'echo "$0 $1"' 2>/dev/null || true)
 RESULT=$(echo "$RESULT" | tr -d '[:space:]')
 if [[ "$RESULT" == "firstsecond" ]]; then
     pass "--arg repeatable: both values passed to entrypoint"
@@ -384,7 +384,7 @@ fi
 
 ISSUE_FILE="$TMPWORK/issue.md"
 echo -n "fix the login bug" > "$ISSUE_FILE"
-RESULT=$(inner run -p "$NONET" --no-interactive --args-file "$ISSUE_FILE" -- -c 'echo "$1"' 2>/dev/null || true)
+RESULT=$(inner run -p "$NONET" --no-interactive --args-file "$ISSUE_FILE" -- -c 'echo "$0"' 2>/dev/null || true)
 RESULT=$(echo "$RESULT" | tr -d '\n')
 if [[ "$RESULT" == "fix the login bug" ]]; then
     pass "--args-file: file content passed as single argument"
@@ -394,7 +394,7 @@ fi
 
 MULTILINE_FILE="$TMPWORK/multiline.md"
 printf "line one\nline two" > "$MULTILINE_FILE"
-LINE_COUNT=$(inner run -p "$NONET" --no-interactive --args-file "$MULTILINE_FILE" -- -c 'printf "%s" "$1" | wc -l' 2>/dev/null || echo "0")
+LINE_COUNT=$(inner run -p "$NONET" --no-interactive --args-file "$MULTILINE_FILE" -- -c 'printf "%s" "$0" | wc -l' 2>/dev/null || echo "0")
 LINE_COUNT=$(echo "$LINE_COUNT" | tr -d '[:space:]')
 if [[ "$LINE_COUNT" == "1" ]]; then
     pass "--args-file multiline: content passed as single arg (1 newline, 2 lines)"

@@ -305,6 +305,11 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 		rc.Entrypoint.Args = nil
 	}
 
+	// Extra args after -- (includes --args-file content, pre-loaded by runSandbox).
+	// These come first so they form the fixed command structure (flags, subcommands);
+	// --arg values follow as the variable input (prompt, positional arguments).
+	rc.Entrypoint.Args = append(rc.Entrypoint.Args, extraArgs...)
+
 	// --arg flags → each appended as a separate entrypoint arg.
 	rc.Entrypoint.Args = append(rc.Entrypoint.Args, flags.args...)
 
@@ -312,9 +317,6 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 	if flags.prompt != "" {
 		rc.Entrypoint.Args = append(rc.Entrypoint.Args, flags.prompt)
 	}
-
-	// Extra args after -- (includes --args-file content, pre-loaded by runSandbox).
-	rc.Entrypoint.Args = append(rc.Entrypoint.Args, extraArgs...)
 
 	return nil
 }

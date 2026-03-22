@@ -100,7 +100,7 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 	if profileName == "" {
 		profileName = "default"
 	}
-	if p, err := a.loader.LoadProfile(profileName); err == nil {
+	if p, err := a.loader.LoadProfileAuto(profileName); err == nil {
 		allow = p.Sandbox.Allow
 		custom = p.Verify.Custom.Checks
 		networkEnabled = p.Sandbox.Network
