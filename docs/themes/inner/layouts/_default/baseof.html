@@ -11,6 +11,7 @@
     <div class="sidebar-logo">
       <a href="{{ "/" | absURL }}">{{ .Site.Title }}</a>
       <span class="tagline">{{ .Site.Params.tagline }}</span>
+      {{ with .Site.Params.currentAppVersion }}<span class="version">v{{ . }}</span>{{ end }}
     </div>
     <nav class="sidebar-nav">
       {{- range .Site.RegularPages.ByWeight }}

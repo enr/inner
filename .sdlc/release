@@ -75,7 +75,8 @@ trap cleanup SIGINT
 
 # --- release commit ---
 echo "${release_version}" > VERSION
-git add VERSION
+sed -i "s/^  currentAppVersion = .*/  currentAppVersion = \"${release_version}\"/" docs/hugo.toml
+git add VERSION docs/hugo.toml
 git commit -m "release ${release_version}"
 git tag -a "${tag_name}" -m "Release ${release_version}"
 
