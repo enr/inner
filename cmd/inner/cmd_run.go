@@ -619,5 +619,9 @@ to the entrypoint command.`,
 	cmd.Flags().IntVar(&flags.timeout, "timeout", 0, "Timeout in seconds (0 = none)")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Print the sandbox command without executing it")
 
+	_ = cmd.RegisterFlagCompletionFunc("profile", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+	})
+
 	return cmd
 }

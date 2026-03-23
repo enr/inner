@@ -77,6 +77,36 @@ func (l *Loader) ProfilesDir() string {
 	return filepath.Join(l.Dir, "profiles")
 }
 
+// ProfileNames returns the names of all available profiles.
+// Local profiles (WorkDir/.inner/profiles) are listed first and shadow global ones.
+func (l *Loader) ProfileNames() []string {
+	seen := make(map[string]bool)
+	var names []string
+
+	addFrom := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".toml") {
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), ".toml")
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+
+	if localDir := l.LocalProfilesDir(); localDir != "" {
+		addFrom(localDir)
+	}
+	addFrom(l.ProfilesDir())
+	return names
+}
+
 // LoadGlobal reads the global config file.
 // Returns an empty GlobalConfig (not an error) if the file does not exist.
 func (l *Loader) LoadGlobal() (*GlobalConfig, error) {

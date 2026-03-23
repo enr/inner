@@ -350,7 +350,7 @@ func (a *App) profileListCmd() *cobra.Command {
 }
 
 func (a *App) profileShowCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show NAME|PATH",
 		Short: "Print the contents of a profile (name or file path)",
 		Args:  cobra.ExactArgs(1),
@@ -358,6 +358,10 @@ func (a *App) profileShowCmd() *cobra.Command {
 			return a.profileShow(cmd.OutOrStdout(), args[0])
 		},
 	}
+	cmd.ValidArgsFunction = func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+	}
+	return cmd
 }
 
 func (a *App) profileValidateCmd() *cobra.Command {
@@ -380,6 +384,9 @@ func (a *App) profileValidateCmd() *cobra.Command {
 			}
 			return nil
 		},
+		ValidArgsFunction: func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+			return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all profiles")
 	return cmd
@@ -397,7 +404,7 @@ func (a *App) profileNewCmd() *cobra.Command {
 }
 
 func (a *App) profileEditCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "edit NAME",
 		Short: "Open a profile in $EDITOR",
 		Args:  cobra.ExactArgs(1),
@@ -405,10 +412,14 @@ func (a *App) profileEditCmd() *cobra.Command {
 			return a.profileEdit(cmd.OutOrStdout(), args[0])
 		},
 	}
+	cmd.ValidArgsFunction = func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+	}
+	return cmd
 }
 
 func (a *App) profileCloneCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "clone SRC DST",
 		Short: "Clone a profile",
 		Args:  cobra.ExactArgs(2),
@@ -416,4 +427,12 @@ func (a *App) profileCloneCmd() *cobra.Command {
 			return a.profileClone(cmd.OutOrStdout(), args[0], args[1])
 		},
 	}
+	// Complete the first arg (SRC) with existing profile names; DST is a new name, no completion.
+	cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return cmd
 }
