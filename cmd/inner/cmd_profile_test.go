@@ -393,6 +393,52 @@ func TestProfileEdit_notFound(t *testing.T) {
 	}
 }
 
+func TestProfileEdit_localProfile(t *testing.T) {
+	// Regression: profileEdit used ProfilePath (global only) instead of
+	// ResolveProfilePath, so local-only profiles were reported as not found.
+	called := false
+	var editedPath string
+	app, _, workDir := newTestAppWithWorkDir(t)
+	app.editorFn = func(path string) error {
+		called = true
+		editedPath = path
+		return nil
+	}
+	localPath := filepath.Join(workDir, ".inner", "profiles", "local-only.toml")
+	writeTestFile(t, localPath, `name = "local-only"`)
+
+	if err := app.profileEdit(&bytes.Buffer{}, "local-only"); err != nil {
+		t.Fatalf("profileEdit: %v", err)
+	}
+	if !called {
+		t.Error("expected editorFn to be called")
+	}
+	if editedPath != localPath {
+		t.Errorf("expected editor to open %s, got %s", localPath, editedPath)
+	}
+}
+
+func TestProfileEdit_localOverridesGlobal(t *testing.T) {
+	// When a local and a global profile share the same name, edit should open
+	// the local one (same precedence as show/run).
+	var editedPath string
+	app, dir, workDir := newTestAppWithWorkDir(t)
+	app.editorFn = func(path string) error {
+		editedPath = path
+		return nil
+	}
+	writeTestFile(t, filepath.Join(dir, "profiles", "shared.toml"), `name = "shared"`)
+	localPath := filepath.Join(workDir, ".inner", "profiles", "shared.toml")
+	writeTestFile(t, localPath, `name = "shared"`)
+
+	if err := app.profileEdit(&bytes.Buffer{}, "shared"); err != nil {
+		t.Fatalf("profileEdit: %v", err)
+	}
+	if editedPath != localPath {
+		t.Errorf("expected local profile path %s, got %s", localPath, editedPath)
+	}
+}
+
 // ── profileClone ──────────────────────────────────────────────────────────────
 
 func TestProfileClone_ok(t *testing.T) {

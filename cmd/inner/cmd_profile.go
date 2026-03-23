@@ -264,7 +264,7 @@ func (a *App) profileNew(w io.Writer, name string) error {
 
 // profileEdit opens an existing profile in the editor.
 func (a *App) profileEdit(_ io.Writer, name string) error {
-	path := a.loader.ProfilePath(name)
+	path := a.loader.ResolveProfilePath(name)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("profile %q not found", name)
