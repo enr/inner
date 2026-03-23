@@ -20,6 +20,9 @@ type BwrapIsolator struct {
 	// statFn checks whether a path exists. Defaults to os.Lstat.
 	// Overridable in tests to avoid filesystem dependencies.
 	statFn func(string) (os.FileInfo, error)
+	// evalSymlinksFn resolves symlinks to a canonical path. Defaults to
+	// filepath.EvalSymlinks. Overridable in tests.
+	evalSymlinksFn func(string) (string, error)
 }
 
 // pathExists reports whether the path exists on the host.
@@ -251,10 +254,22 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			if isUnderTmpfs(cfg.Mounts, r.path) {
 				continue
 			}
+			// Resolve symlinks so bwrap receives the canonical path. On
+			// systems where /var/run is a symlink to /run, passing the
+			// unresolved path as a bind destination fails because bwrap
+			// cannot create a mount point through a symlink in the sandbox.
+			evalSymlinks := b.evalSymlinksFn
+			if evalSymlinks == nil {
+				evalSymlinks = filepath.EvalSymlinks
+			}
+			bindPath := r.path
+			if resolved, err := evalSymlinks(r.path); err == nil {
+				bindPath = resolved
+			}
 			if r.dir {
-				args = append(args, "--tmpfs", r.path)
+				args = append(args, "--tmpfs", bindPath)
 			} else {
-				args = append(args, "--bind", "/dev/null", r.path)
+				args = append(args, "--bind", "/dev/null", bindPath)
 			}
 		}
 	}

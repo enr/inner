@@ -20,6 +20,9 @@ func testIsolator(info runtime.RuntimeInfo) *BwrapIsolator {
 func testIsolatorAllExist(info runtime.RuntimeInfo) *BwrapIsolator {
 	iso := newBwrapIsolatorWithInfo("/fake/bwrap", info)
 	iso.statFn = func(string) (os.FileInfo, error) { return nil, nil }
+	// Return the path unchanged so tests are deterministic regardless of the
+	// host filesystem layout (e.g. whether /var/run is a symlink to /run).
+	iso.evalSymlinksFn = func(p string) (string, error) { return p, nil }
 	return iso
 }
 
@@ -472,6 +475,29 @@ func TestBuild_dockerSocket_hiddenByDefault(t *testing.T) {
 	})
 	if !hasSeq(args, "--bind", "/dev/null", "/var/run/docker.sock") {
 		t.Errorf("expected /var/run/docker.sock to be shadowed, got %v", args)
+	}
+}
+
+func TestBuild_dockerSocket_hiddenViaSymlink(t *testing.T) {
+	// Simulate systems where /var/run is a symlink to /run (common on systemd
+	// distros). EvalSymlinks resolves /var/run/docker.sock → /run/docker.sock.
+	// bwrap must receive the canonical path so it can create the bind mount
+	// point without having to traverse a symlink.
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	iso.evalSymlinksFn = func(p string) (string, error) {
+		if p == "/var/run/docker.sock" {
+			return "/run/docker.sock", nil
+		}
+		return p, nil
+	}
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if !hasSeq(args, "--bind", "/dev/null", "/run/docker.sock") {
+		t.Errorf("expected canonical /run/docker.sock to be shadowed, got %v", args)
+	}
+	if hasSeq(args, "--bind", "/dev/null", "/var/run/docker.sock") {
+		t.Errorf("expected symlink path /var/run/docker.sock NOT to be used, got %v", args)
 	}
 }
 
