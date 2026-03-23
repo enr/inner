@@ -5,7 +5,7 @@ title = "inner"
 theme = "inner"
 
 [params]
-  tagline = "Run agentic tools in isolated sandboxes"
+  tagline = "Isolated sandboxes to run agents or untrusted code."
   repoURL = "https://github.com/enr/inner"
   currentAppVersion = "0.1.3"
 
