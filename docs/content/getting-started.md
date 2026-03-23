@@ -32,12 +32,7 @@ cat /proc/sys/kernel/unprivileged_userns_clone
 
 Download the latest binary from [GitHub Releases](https://github.com/enr/inner/releases/latest):
 
-```bash
-# Download and extract (replace VERSION and ARCH as needed)
-curl -L https://github.com/enr/inner/releases/latest/download/inner-linux-amd64.zip -o inner.zip
-unzip inner.zip
-sudo mv inner /usr/local/bin/inner
-```
+{{< download-linux >}}
 
 Or build from source:
 
