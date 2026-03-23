@@ -1041,3 +1041,67 @@ func TestResolveProfilePath_localOverridesGlobal(t *testing.T) {
 		t.Errorf("ResolveProfilePath = %q, want local path %q", got, absLocal)
 	}
 }
+
+func TestBuild_workdirTokenInMountSrc(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "wdtest.toml"), `
+[mounts]
+"${workdir}" = { dest = "/workspace", mode = "rw" }
+`)
+	l := NewLoaderWithWorkDir(dir, workDir)
+	rc, err := l.Build("wdtest")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.Mounts) != 1 {
+		t.Fatalf("Mounts len = %d, want 1", len(rc.Mounts))
+	}
+	if rc.Mounts[0].Src != workDir {
+		t.Errorf("mount Src = %q, want %q", rc.Mounts[0].Src, workDir)
+	}
+	if rc.Mounts[0].Dest != "/workspace" {
+		t.Errorf("mount Dest = %q, want /workspace", rc.Mounts[0].Dest)
+	}
+}
+
+func TestBuild_workdirTokenWithSubpath(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "wdtest.toml"), `
+[mounts]
+"${workdir}/src" = { dest = "/workspace", mode = "ro" }
+`)
+	l := NewLoaderWithWorkDir(dir, workDir)
+	rc, err := l.Build("wdtest")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.Mounts) != 1 {
+		t.Fatalf("Mounts len = %d, want 1", len(rc.Mounts))
+	}
+	want := workDir + "/src"
+	if rc.Mounts[0].Src != want {
+		t.Errorf("mount Src = %q, want %q", rc.Mounts[0].Src, want)
+	}
+}
+
+func TestBuild_workdirTokenEmptyWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "wdtest.toml"), `
+[mounts]
+"${workdir}" = { dest = "/workspace", mode = "rw" }
+`)
+	// No WorkDir set — token becomes empty string, ExpandPath leaves it as-is.
+	l := NewLoader(dir)
+	rc, err := l.Build("wdtest")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.Mounts) != 1 {
+		t.Fatalf("Mounts len = %d, want 1", len(rc.Mounts))
+	}
+	if rc.Mounts[0].Src != "" {
+		t.Errorf("mount Src = %q, want empty string when WorkDir unset", rc.Mounts[0].Src)
+	}
+}

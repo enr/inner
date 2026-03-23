@@ -308,13 +308,17 @@ func (l *Loader) Build(profileName string) (*RunConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return toRunConfig(global, profile)
+	return toRunConfig(global, profile, l.WorkDir)
 }
 
 // toRunConfig converts a loaded Profile (and GlobalConfig) into a RunConfig,
 // applying path expansion. Returns an error if a mount dest uses the
 // ${workspaces_path} token but no workspaces_path is configured.
-func toRunConfig(global *GlobalConfig, p *Profile) (*RunConfig, error) {
+//
+// workDir is the directory from which inner was invoked (the project root that
+// contains .inner/). It is substituted for the ${workdir} token in mount
+// source paths, making local profiles portable across machines.
+func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, error) {
 	// Expand ~ and ${UID} in env.set values (e.g. DOCKER_HOST with socket paths).
 	expandedEnv := p.Env
 	if len(p.Env.Set) > 0 {
@@ -349,11 +353,17 @@ func toRunConfig(global *GlobalConfig, p *Profile) (*RunConfig, error) {
 	// Mounts: expand paths, default mode to "ro".
 	// If dest contains ${workspaces_path}, substitute it and record the path
 	// so the workspace manager can pre-create the directory on the host.
+	// If src contains ${workdir}, substitute it with the invocation directory
+	// (the project root containing .inner/) so local profiles are portable.
 	const token = "${workspaces_path}"
+	const workdirToken = "${workdir}"
 	for src, entry := range p.Mounts {
 		mode := entry.Mode
 		if mode == "" {
 			mode = "ro"
+		}
+		if strings.Contains(src, workdirToken) {
+			src = strings.ReplaceAll(src, workdirToken, workDir)
 		}
 		dest := entry.Dest
 		if strings.Contains(dest, token) {

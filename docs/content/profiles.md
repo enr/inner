@@ -210,9 +210,29 @@ Mount host paths into the sandbox. Keys are host paths, values are mount descrip
 | `dest` | string | Destination path inside the sandbox |
 | `mode` | string | `ro` (read-only) or `rw` (read-write) |
 
-Paths support `~` expansion.
+Source paths (keys) support `~` expansion, `$VAR`/`${VAR}` environment variable substitution, and the `${workdir}` token described below.
 
 The `--workdir` flag at runtime is a shorthand for adding a `rw` mount of PATH at the same path inside the sandbox (e.g. `-w ~/my-project` mounts `~/my-project` → `~/my-project`).
+
+### Portable source paths (`${workdir}`) {#portable-source-paths-workdir}
+
+When a profile lives inside a project's `.inner/profiles/` directory, hard-coding the host source path ties the profile to a specific machine. Use the `${workdir}` token in the mount source to refer portably to the directory from which `inner` is invoked (i.e. the project root that contains `.inner/`):
+
+```toml
+# .inner/profiles/my-project.toml
+[mounts]
+"${workdir}" = { dest = "~/projects/myapp", mode = "rw" }
+```
+
+On any machine, `${workdir}` expands to the cwd at the time `inner run` is called — no per-developer edits needed.
+
+The token can also appear as part of a longer path:
+
+```toml
+"${workdir}/src" = { dest = "/workspace/src", mode = "rw" }
+```
+
+> **Note:** `${workdir}` is only meaningful in mount **source** (key) paths. It is not expanded in `dest` fields or elsewhere — use `${workspaces_path}` for dest-side indirection.
 
 ### `dest` path requirements
 
@@ -249,7 +269,7 @@ At runtime `inner` resolves `${workspaces_path}` → `~/.inner/workspaces` and r
 "~/src/c" = { dest = "${workspaces_path}/x/y/z",    mode = "rw" }
 ```
 
-> **Note:** the `${workspaces_path}` token is expanded in mount `dest` fields, in `entrypoint.workdir`, and in alias values (using the global/local config `workspaces_path`). It is never expanded in mount source (key) paths.
+> **Note:** the `${workspaces_path}` token is expanded in mount `dest` fields, in `entrypoint.workdir`, and in alias values. It is not expanded in mount source (key) paths — use `${workdir}` there instead.
 
 #### `workspaces_path` precedence
 

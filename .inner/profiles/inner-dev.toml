@@ -9,7 +9,7 @@ clipboard = false
 [mounts]
 "~/.claude"          = { dest = "~/.claude",          mode = "rw" }
 "/run/user/$UID"     = { dest = "/run/user/$UID",      mode = "tmpfs" }
-"~/Projects/inner"   = { dest = "~/Projects/inner",    mode = "rw" }
+"${workdir}"         = { dest = "~/Projects/inner",    mode = "rw" }
 
 [env]
 clearenv = true
