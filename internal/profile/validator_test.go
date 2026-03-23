@@ -16,7 +16,7 @@ func TestValidate_mountExists(t *testing.T) {
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
 
-	r := Validate(p)
+	r := Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("expected no errors for existing mount, got: %v", r.Issues)
 	}
@@ -30,7 +30,7 @@ func TestValidate_mountMissing(t *testing.T) {
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
 
-	r := Validate(p)
+	r := Validate(p, "")
 	if !r.HasErrors() {
 		t.Error("expected error for missing mount source")
 	}
@@ -45,7 +45,7 @@ func TestValidate_mountInvalidMode(t *testing.T) {
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
 
-	r := Validate(p)
+	r := Validate(p, "")
 	if !r.HasErrors() {
 		t.Error("expected error for invalid mode")
 	}
@@ -59,7 +59,7 @@ func TestValidate_entrypointNotInPath(t *testing.T) {
 		},
 	}
 
-	r := Validate(p)
+	r := Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("missing entrypoint should be warning, not error: %v", r.Issues)
 	}
@@ -82,7 +82,7 @@ func TestValidate_entrypointInPath(t *testing.T) {
 		},
 	}
 
-	r := Validate(p)
+	r := Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("unexpected errors: %v", r.Issues)
 	}
@@ -99,7 +99,7 @@ func TestValidate_nonInteractiveNoTimeout(t *testing.T) {
 		},
 	}
 
-	r := Validate(p)
+	r := Validate(p, "")
 	hasWarning := false
 	for _, i := range r.Issues {
 		if i.Level == LevelWarning {
@@ -122,7 +122,7 @@ func TestValidate_nonInteractiveWithTimeout(t *testing.T) {
 		},
 	}
 
-	r := Validate(p)
+	r := Validate(p, "")
 	// Only check that the "no timeout" warning is not present.
 	for _, i := range r.Issues {
 		if i.Level == LevelWarning && i.Message != "" {
@@ -155,7 +155,7 @@ func TestValidate_noMountsSectionOk(t *testing.T) {
 	p := &config.Profile{
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
-	r := Validate(p)
+	r := Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("profile with no mounts should be valid, got: %v", r.Issues)
 	}
@@ -166,7 +166,7 @@ func TestValidate_unknownAllowKey_isWarning(t *testing.T) {
 		Sandbox:    config.SandboxConfig{Allow: []string{"ssh-keys", "not-a-real-key"}},
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
-	r := Validate(p)
+	r := Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("unknown allow key should be warning, not error: %v", r.Issues)
 	}
@@ -186,7 +186,7 @@ func TestValidate_knownAllowKeys_noIssues(t *testing.T) {
 		Sandbox:    config.SandboxConfig{Allow: config.ValidAllowKeys},
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
-	r := Validate(p)
+	r := Validate(p, "")
 	for _, i := range r.Issues {
 		if i.Level == LevelWarning && len(r.Issues) == 1 {
 			// Only the "no timeout" warning is acceptable.
@@ -195,6 +195,26 @@ func TestValidate_knownAllowKeys_noIssues(t *testing.T) {
 	}
 	if r.HasErrors() {
 		t.Errorf("all valid allow keys should produce no errors: %v", r.Issues)
+	}
+}
+
+func TestValidate_workdirTokenExpanded(t *testing.T) {
+	dir := t.TempDir()
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			"${workdir}": {Dest: "/workspace", Mode: "rw"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	// With workDir set to an existing directory: no error.
+	r := Validate(p, dir)
+	if r.HasErrors() {
+		t.Errorf("expected no errors when ${workdir} expands to existing dir, got: %v", r.Issues)
+	}
+	// With empty workDir: skip check (no error).
+	r = Validate(p, "")
+	if r.HasErrors() {
+		t.Errorf("expected no errors when workDir is empty (skip check), got: %v", r.Issues)
 	}
 }
 
@@ -210,7 +230,7 @@ func TestValidate_tildeMountExpanded(t *testing.T) {
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
 	_ = home
-	r := Validate(p)
+	r := Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("~ should expand to home dir and exist: %v", r.Issues)
 	}

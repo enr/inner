@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 
 	"github.com/enr/inner/internal/config"
 )
@@ -52,14 +53,24 @@ func (r *Result) addWarning(msg string) {
 
 // Validate checks the semantic consistency of a Profile.
 // It does not execute anything and does not modify any state.
-func Validate(p *config.Profile) Result {
+// workDir is the directory from which inner was invoked; it is substituted
+// for the ${workdir} token in mount source paths before path expansion.
+func Validate(p *config.Profile, workDir string) Result {
 	var r Result
 
+	const workdirToken = "${workdir}"
 	// 1. Verify mount source paths exist on the host (after expansion).
 	for src, entry := range p.Mounts {
 		if entry.Mode == "tmpfs" {
 			// tmpfs mounts have no host source — skip existence check.
 			continue
+		}
+		if strings.Contains(src, workdirToken) {
+			if workDir == "" {
+				// No workdir context available; skip existence check.
+				continue
+			}
+			src = strings.ReplaceAll(src, workdirToken, workDir)
 		}
 		expanded := config.ExpandPath(src)
 		if _, err := os.Stat(expanded); err != nil {

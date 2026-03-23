@@ -61,7 +61,7 @@ func (a *App) doctor(w io.Writer) error {
 				fmt.Fprintf(w, "[!!]  profile %q: %v\n", name, err)
 				continue
 			}
-			for _, issue := range profile.Validate(p).Issues {
+			for _, issue := range profile.Validate(p, a.loader.WorkDir).Issues {
 				fmt.Fprintf(w, "[??]  profile %q: %s\n", name, issue)
 			}
 		}

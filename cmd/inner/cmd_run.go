@@ -129,7 +129,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 
 	// 7. Validate — print all issues; block on unknown allow keys or errors.
 	if p, err := a.loader.LoadProfileAuto(profileName); err == nil {
-		result := profile.Validate(p)
+		result := profile.Validate(p, a.loader.WorkDir)
 		for _, issue := range result.Issues {
 			fmt.Fprintf(w, "profile %s\n", issue)
 		}

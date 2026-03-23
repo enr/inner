@@ -231,7 +231,7 @@ func (a *App) profileValidate(w io.Writer, names []string) (anyError bool, err e
 			anyError = true
 			continue
 		}
-		result := profile.Validate(p)
+		result := profile.Validate(p, a.loader.WorkDir)
 		if len(result.Issues) == 0 {
 			fmt.Fprintf(w, "%s: ok\n", name)
 			continue
