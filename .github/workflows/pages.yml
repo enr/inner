@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'docs/**'
+    tags:
+      - '*'
 
 permissions:
   contents: read
