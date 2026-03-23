@@ -59,6 +59,8 @@ func Validate(p *config.Profile, workDir string) Result {
 	var r Result
 
 	const workdirToken = "${workdir}"
+	const workspacesPathToken = "${workspaces_path}"
+
 	// 1. Verify mount source paths exist on the host (after expansion).
 	for src, entry := range p.Mounts {
 		if entry.Mode == "tmpfs" {
@@ -85,21 +87,38 @@ func Validate(p *config.Profile, workDir string) Result {
 		}
 	}
 
-	// 2. Warn on unknown sandbox.allow keys.
+	// 2. Verify mount dest paths exist on the host (after expansion).
+	// Dests using ${workspaces_path} are pre-created by the workspace manager
+	// (os.MkdirAll) before bwrap starts, so they are exempt from this check.
+	for _, entry := range p.Mounts {
+		if strings.Contains(entry.Dest, workspacesPathToken) {
+			continue
+		}
+		dest := config.ExpandPath(entry.Dest)
+		if _, err := os.Stat(dest); err != nil {
+			if os.IsNotExist(err) {
+				r.addError(fmt.Sprintf("mount dest %q does not exist on host (expanded: %q)", entry.Dest, dest))
+			} else {
+				r.addError(fmt.Sprintf("mount dest %q cannot be accessed: %v", entry.Dest, err))
+			}
+		}
+	}
+
+	// 3. Warn on unknown sandbox.allow keys.
 	for _, key := range p.Sandbox.Allow {
 		if !slices.Contains(config.ValidAllowKeys, key) {
 			r.addWarning(fmt.Sprintf("unknown allow key %q (valid keys: %v)", key, config.ValidAllowKeys))
 		}
 	}
 
-	// 3. Verify entrypoint.cmd is reachable in PATH (warning only).
+	// 4. Verify entrypoint.cmd is reachable in PATH (warning only).
 	if p.Entrypoint.Cmd != "" {
 		if _, err := exec.LookPath(p.Entrypoint.Cmd); err != nil {
 			r.addWarning(fmt.Sprintf("entrypoint command %q not found in PATH", p.Entrypoint.Cmd))
 		}
 	}
 
-	// 3. Logical constraint: non-interactive with no timeout.
+	// 5. Logical constraint: non-interactive with no timeout.
 	if !p.Entrypoint.Interactive && p.Output.TimeoutSeconds == 0 {
 		r.addWarning("entrypoint is non-interactive but no timeout is set (agent may run indefinitely)")
 	}

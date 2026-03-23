@@ -2,16 +2,18 @@ package profile
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/enr/inner/internal/config"
 )
 
 func TestValidate_mountExists(t *testing.T) {
-	dir := t.TempDir()
+	src := t.TempDir()
+	dest := t.TempDir()
 	p := &config.Profile{
 		Mounts: map[string]config.MountEntry{
-			dir: {Dest: "/workspace", Mode: "rw"},
+			src: {Dest: dest, Mode: "rw"},
 		},
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
@@ -23,9 +25,10 @@ func TestValidate_mountExists(t *testing.T) {
 }
 
 func TestValidate_mountMissing(t *testing.T) {
+	dest := t.TempDir()
 	p := &config.Profile{
 		Mounts: map[string]config.MountEntry{
-			"/nonexistent/path/xyz": {Dest: "/workspace", Mode: "rw"},
+			"/nonexistent/path/xyz": {Dest: dest, Mode: "rw"},
 		},
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
@@ -37,10 +40,11 @@ func TestValidate_mountMissing(t *testing.T) {
 }
 
 func TestValidate_mountInvalidMode(t *testing.T) {
-	dir := t.TempDir()
+	src := t.TempDir()
+	dest := t.TempDir()
 	p := &config.Profile{
 		Mounts: map[string]config.MountEntry{
-			dir: {Dest: "/workspace", Mode: "readwrite"},
+			src: {Dest: dest, Mode: "readwrite"},
 		},
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
@@ -200,9 +204,10 @@ func TestValidate_knownAllowKeys_noIssues(t *testing.T) {
 
 func TestValidate_workdirTokenExpanded(t *testing.T) {
 	dir := t.TempDir()
+	dest := t.TempDir()
 	p := &config.Profile{
 		Mounts: map[string]config.MountEntry{
-			"${workdir}": {Dest: "/workspace", Mode: "rw"},
+			"${workdir}": {Dest: dest, Mode: "rw"},
 		},
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
@@ -211,7 +216,7 @@ func TestValidate_workdirTokenExpanded(t *testing.T) {
 	if r.HasErrors() {
 		t.Errorf("expected no errors when ${workdir} expands to existing dir, got: %v", r.Issues)
 	}
-	// With empty workDir: skip check (no error).
+	// With empty workDir: skip src check (no error).
 	r = Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("expected no errors when workDir is empty (skip check), got: %v", r.Issues)
@@ -223,9 +228,10 @@ func TestValidate_tildeMountExpanded(t *testing.T) {
 	if err != nil {
 		t.Skip("cannot determine home dir")
 	}
+	dest := t.TempDir()
 	p := &config.Profile{
 		Mounts: map[string]config.MountEntry{
-			"~": {Dest: "/host-home", Mode: "ro"},
+			"~": {Dest: dest, Mode: "ro"},
 		},
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
@@ -233,5 +239,69 @@ func TestValidate_tildeMountExpanded(t *testing.T) {
 	r := Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("~ should expand to home dir and exist: %v", r.Issues)
+	}
+}
+
+func TestValidate_destMissing(t *testing.T) {
+	src := t.TempDir()
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			src: {Dest: "/nonexistent/dest/xyz", Mode: "ro"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if !r.HasErrors() {
+		t.Error("expected error for missing mount dest")
+	}
+	found := false
+	for _, i := range r.Issues {
+		if i.Level == LevelError && strings.Contains(i.Message, "dest") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a dest-related error, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_destWorkspacesPathTokenSkipped(t *testing.T) {
+	src := t.TempDir()
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			src: {Dest: "${workspaces_path}/myworkspace", Mode: "rw"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if r.HasErrors() {
+		t.Errorf("dest with ${workspaces_path} should be skipped (managed by workspace manager), got: %v", r.Issues)
+	}
+}
+
+func TestValidate_tmpfsDestExists(t *testing.T) {
+	dest := t.TempDir()
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			dest: {Dest: dest, Mode: "tmpfs"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if r.HasErrors() {
+		t.Errorf("tmpfs with existing dest should have no errors, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_tmpfsDestMissing(t *testing.T) {
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			"/nonexistent/tmpfs/dest": {Dest: "/nonexistent/tmpfs/dest", Mode: "tmpfs"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if !r.HasErrors() {
+		t.Error("expected error for tmpfs with non-existent dest")
 	}
 }

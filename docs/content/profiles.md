@@ -243,6 +243,14 @@ The token can also appear as part of a longer path:
 | Path that already exists on the host (e.g. `~/projects`) | No action needed — bwrap binds over it directly |
 | Path that does not yet exist on the host | Must be pre-created; use the `${workspaces_path}` token (see below) |
 
+`inner profile validate` (and `inner run`) checks that every `dest` exists on the host before launching `bwrap`. A missing dest produces a clear error:
+
+```
+profile [error] mount dest "/nonexistent/path" does not exist on host (expanded: "/nonexistent/path")
+```
+
+Dests that use the `${workspaces_path}` token are exempt — `inner` creates them automatically (see [Workspace directories](#workspace-directories-workspaces_path)).
+
 ### Workspace directories (`${workspaces_path}`) {#workspace-directories-workspaces_path}
 
 When a mount destination does not exist on the host, use the `${workspaces_path}` token in `dest`. `inner` will pre-create the directory before running `bwrap` and remove it (if empty) after the sandbox exits.
