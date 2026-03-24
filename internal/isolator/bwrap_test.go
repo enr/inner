@@ -78,7 +78,15 @@ func indexSeq(args []string, needle ...string) int {
 // ── Base flags ────────────────────────────────────────────────────────────────
 
 func TestBuild_baseFlags(t *testing.T) {
+	// Mock /dev/ptmx to test its inclusion.
 	iso := testIsolator(runtime.RuntimeInfo{})
+	iso.statFn = func(path string) (os.FileInfo, error) {
+		if path == "/dev/ptmx" {
+			return nil, nil
+		}
+		return nil, os.ErrNotExist
+	}
+
 	args := cmdArgs(t, iso, config.RunConfig{
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
@@ -87,7 +95,8 @@ func TestBuild_baseFlags(t *testing.T) {
 		{"--ro-bind", "/", "/"},
 		{"--proc", "/proc"},
 		{"--dev", "/dev"},
-		{"--dev-bind", "/dev/pts", "/dev/pts"},
+		{"--bind", "/dev/pts", "/dev/pts"},
+		{"--dev-bind", "/dev/ptmx", "/dev/ptmx"},
 		{"--tmpfs", "/tmp"},
 		{"--die-with-parent"},
 	} {

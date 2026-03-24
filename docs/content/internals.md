@@ -44,11 +44,14 @@ CLI overrides (`applyOverrides` in `cmd_run.go`) are applied on top of the loade
 --ro-bind / /          bind host root read-only
 --proc /proc           fresh /proc
 --dev /dev             minimal devtmpfs
---dev-bind /dev/pts /dev/pts   (always, see below)
---tmpfs /tmp           empty writable /tmp
-```
+--bind /dev/pts /dev/pts       (always, see below)
+--dev-bind /dev/ptmx /dev/ptmx (if present, see below)
 
-`/dev/pts` is always bound read-write from the host, unconditionally. The reason: `bwrap --dev` creates a minimal devtmpfs that does not include `/dev/pts`. Interactive TUI apps (Node.js/claude, gemini) call `ttyname_r()` internally to resolve their controlling terminal path (e.g. `/dev/pts/3`). Without this bind the syscall returns `ENOENT` and the app cannot initialise its terminal handling. The bind is harmless for non-interactive runs.
+...
+
+`/dev/pts` is always bound read-write from the host, unconditionally. The reason: `bwrap --dev` creates a minimal devtmpfs that does not include the host's pseudo-terminal nodes. Interactive TUI apps (Node.js/claude, gemini) call `ttyname_r()` internally to resolve their controlling terminal path (e.g. `/dev/pts/3`). Without this bind the syscall returns `ENOENT` and the app cannot initialise its terminal handling. The bind is harmless for non-interactive runs.
+
+`/dev/ptmx` is bound from the host if it exists. Modern Linux systems (e.g., Ubuntu, Debian) often use the `devpts` filesystem with `ptmxmode=000` on the `ptmx` node inside `/dev/pts`. In such cases, opening `/dev/ptmx` via the sandbox's default symlink to `pts/ptmx` would fail. Binding the host's `/dev/ptmx` ensures the kernel uses the global multiplexer node, which correctly routes to the bound `/dev/pts` instance. This prevents `forkpty(3) failed` errors when sandboxed agents attempt to spawn shell processes.
 
 ### Additional mounts
 

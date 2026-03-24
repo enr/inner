@@ -96,7 +96,15 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	args = append(args, "--dev", "/dev")
 	// Expose the host's /dev/pts entries inside the sandbox so that interactive
 	// TUI apps can resolve the controlling-terminal path returned by ttyname_r().
-	args = append(args, "--dev-bind", "/dev/pts", "/dev/pts")
+	args = append(args, "--bind", "/dev/pts", "/dev/pts")
+	// Ensure /dev/ptmx is accessible. bwrap --dev creates /dev/ptmx as a symlink
+	// to pts/ptmx. Since we bound the host's /dev/pts, /dev/pts/ptmx is the host's
+	// one. If the host has ptmxmode=000 (common on Debian/Ubuntu), opening it
+	// directly via the symlink fails. Binding the host's /dev/ptmx ensures we
+	// use the global ptmx node which the kernel handles correctly.
+	if b.pathExists("/dev/ptmx") {
+		args = append(args, "--dev-bind", "/dev/ptmx", "/dev/ptmx")
+	}
 	args = append(args, "--tmpfs", "/tmp")
 
 	// ── Additional mounts ────────────────────────────────────────────────────
