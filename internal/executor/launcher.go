@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -164,9 +165,20 @@ func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bo
 	// with readline's bracketed-paste echo, making pasted text invisible.
 	if forceRawMode {
 		if f, ok := l.Stdin.(*os.File); ok {
-			if term.IsTerminal(int(f.Fd())) {
-				if oldState, err := term.MakeRaw(int(f.Fd())); err == nil {
-					defer term.Restore(int(f.Fd()), oldState)
+			fd := int(f.Fd())
+			if term.IsTerminal(fd) {
+				if oldState, err := term.MakeRaw(fd); err == nil {
+					defer term.Restore(fd, oldState)
+					// MakeRaw clears OPOST, disabling \n → \r\n translation in
+					// output. Re-enable it: we only need raw input mode (so that
+					// terminal capability responses aren't buffered by the line
+					// discipline); output post-processing must stay on or every
+					// bare \n moves the cursor down without returning to column 0,
+					// producing a staircase/slanted display.
+					if t, err := unix.IoctlGetTermios(fd, unix.TCGETS); err == nil {
+						t.Oflag |= unix.OPOST
+						_ = unix.IoctlSetTermios(fd, unix.TCSETS, t)
+					}
 				}
 			}
 		}
@@ -198,7 +210,7 @@ func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bo
 // forwardSignals relays SIGINT and SIGTERM to the child process until done is closed.
 func forwardSignals(cmd *exec.Cmd, done <-chan struct{}) {
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
 	go func() {
 		defer signal.Stop(sigCh)
 		for {

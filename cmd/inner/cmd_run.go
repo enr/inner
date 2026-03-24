@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/executor"
 	"github.com/enr/inner/internal/git"
@@ -122,6 +124,24 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		rc.Env.Set["PS1"] = sandboxPS1()
 	}
 
+	// 5d. For TUI sessions, inject COLUMNS and LINES from the actual host
+	//     terminal so that Node.js apps (cursor-agent, claude) get the correct
+	//     dimensions even when clearenv removes the parent-shell values and
+	//     TIOCGWINSZ is unavailable or returns 0 inside the sandbox.
+	if rc.Entrypoint.TUI {
+		if cols, rows, err := term.GetSize(int(os.Stdout.Fd())); err == nil && cols > 0 {
+			if rc.Env.Set == nil {
+				rc.Env.Set = make(map[string]string)
+			}
+			if _, ok := rc.Env.Set["COLUMNS"]; !ok {
+				rc.Env.Set["COLUMNS"] = strconv.Itoa(cols)
+			}
+			if _, ok := rc.Env.Set["LINES"]; !ok {
+				rc.Env.Set["LINES"] = strconv.Itoa(rows)
+			}
+		}
+	}
+
 	// 6. For interactive bash: inject --init-file so PS1 survives ~/.bashrc.
 	if err := prepareInteractiveShell(rc, a.loader.Dir, rc.Env.Set["PS1"]); err != nil {
 		return fmt.Errorf("preparing interactive shell: %w", err)
@@ -180,6 +200,15 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return fmt.Errorf("sandboxing gemini home: %w", err)
 	}
 	defer cleanupGemini()
+
+	// 11b. Sandbox ~/.cursor and ~/.config/cursor — replace with temporary clones
+	//     containing only cli-config.json, skills-cursor/ (settings) and auth.json
+	//     (OAuth tokens). All other state starts fresh.
+	cleanupCursor, err := applyCursor(rc)
+	if err != nil {
+		return fmt.Errorf("sandboxing cursor home: %w", err)
+	}
+	defer cleanupCursor()
 
 	// 12. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
