@@ -419,55 +419,56 @@ and local defaults without any manual setup. To further customize, see
 
 ## `inner reset`
 
-Archive the current `~/.inner` contents and reinitialize with default profiles and config:
+Restore all built-in profiles to the versions embedded in the binary:
 
 ```bash
 inner reset          # asks for confirmation
 inner reset --force  # skips confirmation (useful in scripts)
 ```
 
-The command:
+The command overwrites every file in `~/.inner/profiles/` whose name matches a
+built-in profile. Files that do not match any built-in name — user-created
+profiles, cloned profiles under a custom name — are left completely untouched.
 
-1. Moves everything inside `~/.inner/` (except `backups/`) into `~/.inner/backups/<datetime>/`
-2. Runs `inner init` to recreate default profiles and a starter `config.toml`
-
-The `~/.inner` directory itself is never deleted — only its contents are archived.
+Use this after upgrading `inner` to pick up changes to the built-in profiles
+without losing your own customizations.
 
 Example output:
 
 ```
-backup saved to: /home/alice/.inner/backups/20260319-142301
-profile claude-containers: installed
-profile claude-interactive: installed
-profile claude-one-shot: installed
-profile gemini-interactive: installed
-profile gemini-one-shot: installed
-profile shell: installed
-profile shell-containers: installed
-profile shell-oneshot: installed
-profile shell-with-claude: installed
-config: created
+profile claude-containers: reset
+profile claude-interactive: reset
+profile claude-one-shot: reset
+profile gemini-interactive: reset
+profile gemini-one-shot: reset
+profile shell: reset
+profile shell-containers: reset
+profile shell-oneshot: reset
+profile shell-with-claude: reset
 
 reset complete.
-to undo: mv /home/alice/.inner/backups/20260319-142301/* /home/alice/.inner/
 ```
 
-### Undoing a reset
+### What is affected
 
-The undo command is printed at the end of each reset:
+| File | Outcome |
+|------|---------|
+| Built-in profile (e.g. `shell.toml`) | Overwritten with the embedded version |
+| User-created profile (e.g. `my-agent.toml`) | Left untouched |
+| Cloned profile under a new name | Left untouched |
+| `config.toml` | Left untouched |
+
+### Preserving a customized built-in profile
+
+If you have modified a built-in profile and want to keep your changes after a reset,
+clone it under a new name first:
 
 ```bash
-mv ~/.inner/backups/20260319-142301/* ~/.inner/
+inner profile clone shell my-shell
+inner reset
 ```
 
-### Managing backups
-
-Backups accumulate under `~/.inner/backups/`. Remove old ones manually when no longer needed:
-
-```bash
-ls ~/.inner/backups/
-rm -rf ~/.inner/backups/20260319-142301
-```
+`my-shell.toml` is not a built-in name, so it survives the reset unchanged.
 
 ---
 
