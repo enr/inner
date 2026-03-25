@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/enr/inner/internal/config"
 )
@@ -60,6 +64,91 @@ func sandboxPS1() string {
 	return `\[\033[1;33m\](inner)\[\033[0m\] \[\033[1;32m\]\u@\h\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ `
 }
 
+// claudeTokenExpired reports whether the OAuth token in credPath appears to be
+// expired based on a Unix-timestamp "expires_at" field in the JSON. Returns
+// (false, nil) if the file cannot be read, cannot be parsed, or contains no
+// recognisable expiry field — the caller must treat an indeterminate result as
+// "not expired" (be optimistic).
+func claudeTokenExpired(credPath string) (bool, error) {
+	data, err := os.ReadFile(credPath)
+	if err != nil {
+		return false, err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false, nil // unparseable — be optimistic
+	}
+	ts := extractExpiresAt(raw)
+	if ts == 0 {
+		return false, nil // no recognisable expiry field — be optimistic
+	}
+	return time.Now().Unix() >= ts, nil
+}
+
+// extractExpiresAt looks for an expiry timestamp in the decoded credential
+// object and returns it as Unix seconds. It recognises:
+//   - "expiresAt"         top-level, milliseconds  (Claude Code current format)
+//   - "expires_at"        top-level, seconds        (older / alternative format)
+//   - "oauth_token.expires_at"  nested, seconds
+//
+// Values > 1e10 are treated as milliseconds and divided by 1000.
+func extractExpiresAt(raw map[string]json.RawMessage) int64 {
+	if v, ok := raw["expiresAt"]; ok {
+		var ts int64
+		if json.Unmarshal(v, &ts) == nil && ts > 0 {
+			return normaliseTimestamp(ts)
+		}
+	}
+	if v, ok := raw["expires_at"]; ok {
+		var ts int64
+		if json.Unmarshal(v, &ts) == nil && ts > 0 {
+			return normaliseTimestamp(ts)
+		}
+	}
+	if nested, ok := raw["oauth_token"]; ok {
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(nested, &obj) == nil {
+			if v, ok := obj["expires_at"]; ok {
+				var ts int64
+				if json.Unmarshal(v, &ts) == nil && ts > 0 {
+					return normaliseTimestamp(ts)
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// normaliseTimestamp converts a timestamp to Unix seconds.
+// Values above 1e10 are assumed to be milliseconds (Claude Code stores ms).
+func normaliseTimestamp(ts int64) int64 {
+	if ts > 10_000_000_000 {
+		return ts / 1000
+	}
+	return ts
+}
+
+// ensureClaudeTokenFresh runs "claude --version" on the host with a short
+// timeout so that Claude's startup sequence can silently refresh an expired
+// OAuth token before the sandbox copies .credentials.json. This is a
+// best-effort operation: errors are reported as warnings, not failures.
+func ensureClaudeTokenFresh(w io.Writer) {
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		fmt.Fprintln(w, "inner: warning: claude not found in PATH; cannot pre-refresh token")
+		return
+	}
+	fmt.Fprintln(w, "inner: OAuth token expired — refreshing via host claude...")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, claudePath, "--version")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(w, "inner: warning: host claude exited with error: %v\n", err)
+	}
+}
+
 // claudeHomeDir returns the canonical (expanded) path to ~/.claude.
 func claudeHomeDir() string {
 	return config.ExpandPath("~/.claude")
@@ -87,6 +176,18 @@ func prepareClaude(src string) (string, func(), error) {
 
 	// ── Required: auth credentials ────────────────────────────────────────────
 	credSrc := filepath.Join(src, ".credentials.json")
+
+	// (Option A) If the token is detectably expired at this point
+	// (ensureClaudeTokenFresh was already attempted), fail fast with an
+	// actionable message rather than letting the sandbox start and receive a 401.
+	if expired, err := claudeTokenExpired(credSrc); err == nil && expired {
+		cleanup()
+		return "", nil, fmt.Errorf(
+			"Claude OAuth token is expired and could not be refreshed automatically.\n" +
+				"Run 'claude' on the host machine to renew it, then relaunch inner.",
+		)
+	}
+
 	credDst := filepath.Join(tmp, ".credentials.json")
 	if err := copyFile(credSrc, credDst); err != nil {
 		cleanup()

@@ -184,6 +184,16 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		rc.GitConfigPath = gitPath
 	}
 
+	// 9b. If the entrypoint is claude and the OAuth token is detectably expired,
+	//     run "claude --version" on the host to trigger an automatic token
+	//     refresh before copying .credentials.json into the sandbox (Option E).
+	if filepath.Base(rc.Entrypoint.Cmd) == "claude" {
+		credPath := filepath.Join(claudeHomeDir(), ".credentials.json")
+		if expired, _ := claudeTokenExpired(credPath); expired {
+			ensureClaudeTokenFresh(w)
+		}
+	}
+
 	// 10. Sandbox ~/.claude — replace the real dir with a temporary clone that
 	//    contains only auth credentials, settings, and skills; everything else
 	//    (sessions, history, projects, …) starts fresh.

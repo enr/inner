@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/enr/inner/internal/config"
 )
@@ -44,6 +46,84 @@ func TestPrepareClaude_copiesCredentials(t *testing.T) {
 	if string(data) != `{"token":"abc"}` {
 		t.Errorf("credentials content mismatch: %s", data)
 	}
+}
+
+func TestPrepareClaude_expiredToken_camelCase_ms(t *testing.T) {
+	src := t.TempDir()
+	expiredAt := (time.Now().Unix() - 3600) * 1000 // one hour ago, in ms (Claude Code format)
+	makeClaudeHome(t, src, map[string]string{
+		".credentials.json": fmt.Sprintf(`{"expiresAt":%d}`, expiredAt),
+	})
+
+	_, cleanup, err := prepareClaude(src)
+	if err == nil {
+		cleanup()
+		t.Fatal("expected error for expired token, got nil")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("error should mention 'expired', got: %v", err)
+	}
+}
+
+func TestPrepareClaude_freshToken_camelCase_ms(t *testing.T) {
+	src := t.TempDir()
+	freshAt := (time.Now().Unix() + 3600) * 1000 // one hour from now, in ms
+	makeClaudeHome(t, src, map[string]string{
+		".credentials.json": fmt.Sprintf(`{"expiresAt":%d}`, freshAt),
+	})
+
+	_, cleanup, err := prepareClaude(src)
+	if err != nil {
+		t.Fatalf("expected no error for fresh token, got: %v", err)
+	}
+	cleanup()
+}
+
+func TestPrepareClaude_expiredToken_snakeCase_seconds(t *testing.T) {
+	src := t.TempDir()
+	expiredAt := time.Now().Unix() - 3600 // one hour ago, in seconds
+	makeClaudeHome(t, src, map[string]string{
+		".credentials.json": fmt.Sprintf(`{"expires_at":%d}`, expiredAt),
+	})
+
+	_, cleanup, err := prepareClaude(src)
+	if err == nil {
+		cleanup()
+		t.Fatal("expected error for expired token, got nil")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("error should mention 'expired', got: %v", err)
+	}
+}
+
+func TestPrepareClaude_nestedExpiresAt_expired(t *testing.T) {
+	src := t.TempDir()
+	expiredAt := time.Now().Unix() - 3600
+	makeClaudeHome(t, src, map[string]string{
+		".credentials.json": fmt.Sprintf(`{"oauth_token":{"expires_at":%d}}`, expiredAt),
+	})
+
+	_, cleanup, err := prepareClaude(src)
+	if err == nil {
+		cleanup()
+		t.Fatal("expected error for expired nested token, got nil")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("error should mention 'expired', got: %v", err)
+	}
+}
+
+func TestPrepareClaude_noExpiryField_succeeds(t *testing.T) {
+	src := t.TempDir()
+	makeClaudeHome(t, src, map[string]string{
+		".credentials.json": `{"access_token":"abc"}`, // no expiry field
+	})
+
+	_, cleanup, err := prepareClaude(src)
+	if err != nil {
+		t.Fatalf("expected no error when expiry field is absent, got: %v", err)
+	}
+	cleanup()
 }
 
 func TestPrepareClaude_missingCredentials_returnsError(t *testing.T) {
