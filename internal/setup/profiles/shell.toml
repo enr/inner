@@ -14,6 +14,11 @@ inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
 cmd         = "/bin/bash"
 args        = []
 interactive = true
+history     = [
+  "git status",
+  "git log --oneline -10",
+  "ls -la",
+]
 
 [output]
 summary         = false

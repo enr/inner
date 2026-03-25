@@ -8,3 +8,10 @@ extends        = "shell-containers"
 
 [env]
 inherit = ["JAVA_HOME"]
+
+[entrypoint]
+history = [
+  "mvn clean install -DskipTests",
+  "mvn test",
+  "mvn clean package",
+]

@@ -26,6 +26,11 @@ set      = { "DOCKER_HOST" = "unix:///run/user/${UID}/podman/podman.sock" }
 cmd         = "/bin/bash"
 args        = []
 interactive = true
+history     = [
+  "podman ps",
+  "podman images",
+  "podman run --rm -it",
+]
 
 [output]
 summary         = false

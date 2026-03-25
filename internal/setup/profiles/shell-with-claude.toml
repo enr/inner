@@ -9,3 +9,7 @@ args        = []
 interactive = true
 # bash does not need raw mode pre-start (unlike the claude Node.js runtime)
 tui         = false
+history     = [
+  "claude",
+  "claude --dangerously-skip-permissions",
+]
