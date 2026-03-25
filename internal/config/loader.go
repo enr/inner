@@ -389,6 +389,7 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 		Args:        p.Entrypoint.Args,
 		Interactive: p.Entrypoint.Interactive,
 		TUI:         p.Entrypoint.TUI,
+		History:     p.Entrypoint.History,
 	}
 
 	// Workdir from profile (supports ${workspaces_path} token).

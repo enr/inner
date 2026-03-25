@@ -109,6 +109,9 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("entrypoint", "workdir") {
 		result.Entrypoint.Workdir = overlay.Entrypoint.Workdir
 	}
+	if meta.IsDefined("entrypoint", "history") {
+		result.Entrypoint.History = mergeUnique(base.Entrypoint.History, overlay.Entrypoint.History)
+	}
 
 	// --- [output] ---
 	if meta.IsDefined("output", "summary") {

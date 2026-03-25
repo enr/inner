@@ -43,6 +43,13 @@ func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
 	content := "# inner sandbox — shell initialization\n" +
 		"PS1=" + fmt.Sprintf("%q", ps1) + "\n"
 
+	// Pre-populate shell history so the user can recall useful commands
+	// immediately with the up-arrow key. Commands are injected oldest-first
+	// so the last entry in the list sits at the top of the history stack.
+	for _, cmd := range rc.Entrypoint.History {
+		content += "history -s " + fmt.Sprintf("%q", cmd) + "\n"
+	}
+
 	if err := os.WriteFile(initPath, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("writing shell-init.sh: %w", err)
 	}

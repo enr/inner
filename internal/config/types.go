@@ -106,6 +106,10 @@ type EntrypointConfig struct {
 	// Overridable at runtime via --workdir / -w; if neither is set the
 	// caller's cwd is used. Supports ~ expansion and ${workspaces_path}.
 	Workdir string `toml:"workdir"`
+	// History is a list of commands pre-loaded into the shell history so the
+	// user can recall them immediately with the up-arrow key. Supported for
+	// interactive bash sessions; silently ignored for other shells.
+	History []string `toml:"history"`
 }
 
 // OutputConfig controls logging and summarization.

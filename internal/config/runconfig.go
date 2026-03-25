@@ -58,4 +58,7 @@ type Entrypoint struct {
 	// TUI marks the entrypoint as a TUI application that probes terminal
 	// capabilities during initialisation. See EntrypointConfig.TUI.
 	TUI bool
+	// History is a list of commands pre-loaded into the shell history.
+	// See EntrypointConfig.History.
+	History []string
 }
