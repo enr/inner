@@ -142,6 +142,67 @@ func TestAgentContainersProfile_hasNoopBlock(t *testing.T) {
 	}
 }
 
+func TestResetProfiles_overwritesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	// Corrupt a built-in profile.
+	shellPath := filepath.Join(dir, "profiles", "shell.toml")
+	if err := os.WriteFile(shellPath, []byte("# corrupted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := ResetProfiles(dir)
+	if err != nil {
+		t.Fatalf("ResetProfiles: %v", err)
+	}
+
+	// shell must be in the reset list.
+	found := false
+	for _, n := range names {
+		if n == "shell" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'shell' in reset list, got: %v", names)
+	}
+
+	// File must be restored to embedded content.
+	data, _ := os.ReadFile(shellPath)
+	if string(data) == "# corrupted" {
+		t.Error("ResetProfiles did not overwrite the corrupted profile")
+	}
+}
+
+func TestResetProfiles_leavesUserFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	// Add a user-created profile.
+	userPath := filepath.Join(dir, "profiles", "my-custom.toml")
+	const userContent = `name = "my-custom"`
+	if err := os.WriteFile(userPath, []byte(userContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ResetProfiles(dir); err != nil {
+		t.Fatalf("ResetProfiles: %v", err)
+	}
+
+	data, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("user profile deleted: %v", err)
+	}
+	if string(data) != userContent {
+		t.Errorf("ResetProfiles modified user profile: got %q", string(data))
+	}
+}
+
 func TestDefaultProfiles_nonEmpty(t *testing.T) {
 	fsys := DefaultProfilesFS()
 	entries, _ := fs.ReadDir(fsys, ".")

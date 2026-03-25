@@ -143,3 +143,29 @@ func installProfiles(dir string) (installed, skipped []string, err error) {
 	}
 	return installed, skipped, nil
 }
+
+// ResetProfiles overwrites every embedded default profile in dir/profiles/
+// with the version built into the binary. Files whose name does not match any
+// embedded profile are left untouched. Returns the list of profile names reset.
+func ResetProfiles(dir string) ([]string, error) {
+	entries, err := fs.ReadDir(defaultProfiles, "profiles")
+	if err != nil {
+		return nil, err
+	}
+	var reset []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := defaultProfiles.ReadFile("profiles/" + e.Name())
+		if err != nil {
+			return reset, err
+		}
+		dest := filepath.Join(dir, "profiles", e.Name())
+		if err := os.WriteFile(dest, data, 0o644); err != nil {
+			return reset, fmt.Errorf("resetting profile %s: %w", e.Name(), err)
+		}
+		reset = append(reset, strings.TrimSuffix(e.Name(), ".toml"))
+	}
+	return reset, nil
+}

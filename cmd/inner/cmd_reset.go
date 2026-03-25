@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/enr/inner/internal/setup"
 	"github.com/spf13/cobra"
 )
 
-// reset_ backs up the current ~/.inner contents into ~/.inner/backups/<datetime>/
-// and re-initializes ~/.inner with default profiles and config.
+// reset_ overwrites the built-in default profiles in ~/.inner/profiles/ with
+// the versions embedded in the binary. Only files whose name matches an
+// embedded profile are touched; user-created profiles are left untouched.
 func (a *App) reset_(w io.Writer, force bool) error {
 	dir := a.loader.Dir
 
@@ -25,7 +24,8 @@ func (a *App) reset_(w io.Writer, force bool) error {
 	}
 
 	if !force {
-		fmt.Fprintf(w, "this command archives the contents of %s and recreates the default configuration.\n", dir)
+		fmt.Fprintf(w, "this command overwrites all built-in profiles in %s/profiles/.\n", dir)
+		fmt.Fprintln(w, "user-created profiles are not affected.")
 		fmt.Fprint(w, "continue? [y/N] ")
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')
@@ -35,58 +35,16 @@ func (a *App) reset_(w io.Writer, force bool) error {
 		}
 	}
 
-	// Collect entries to back up (everything except backups/ itself).
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("reading %s: %w", dir, err)
-	}
-
-	var toMove []string
-	for _, e := range entries {
-		if e.Name() == "backups" {
-			continue
-		}
-		toMove = append(toMove, e.Name())
-	}
-
-	// Create backup dir (even if there is nothing to move, record the attempt).
-	timestamp := time.Now().Format("20060102-150405")
-	backupDir := filepath.Join(dir, "backups", timestamp)
-	if err := os.MkdirAll(backupDir, 0o755); err != nil {
-		return fmt.Errorf("creating backup dir: %w", err)
-	}
-
-	// Move each entry into the backup.
-	for _, name := range toMove {
-		src := filepath.Join(dir, name)
-		dst := filepath.Join(backupDir, name)
-		if err := os.Rename(src, dst); err != nil {
-			return fmt.Errorf("moving %s: %w", name, err)
-		}
-	}
-
-	if len(toMove) > 0 {
-		fmt.Fprintf(w, "backup salvato in: %s\n", backupDir)
-	}
-
-	// Re-initialize.
-	r, err := setup.InitVerbose(dir)
+	names, err := setup.ResetProfiles(dir)
 	if err != nil {
 		return err
 	}
 
-	for _, name := range r.ProfilesInstalled {
-		fmt.Fprintf(w, "profile %s: installed\n", name)
+	for _, name := range names {
+		fmt.Fprintf(w, "profile %s: reset\n", name)
 	}
-	if r.ConfigCreated {
-		fmt.Fprintln(w, "config: created")
-	}
-
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "reset complete.")
-	if len(toMove) > 0 {
-		fmt.Fprintf(w, "to undo: mv %s/* %s/\n", backupDir, dir)
-	}
 	return nil
 }
 
@@ -95,12 +53,13 @@ func (a *App) newResetCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "reset",
-		Short: "Archive ~/.inner and restore the default configuration",
-		Long: `Moves the contents of ~/.inner into ~/.inner/backups/<datetime>/ and
-recreates default profiles and configuration via init.
+		Short: "Restore built-in profiles to the versions embedded in the binary",
+		Long: `Overwrites all built-in default profiles in ~/.inner/profiles/ with the
+versions embedded in the current binary.
 
-Useful for updating built-in profiles after an upgrade or starting fresh
-without losing history (the backup remains in ~/.inner/backups/).`,
+Only profiles whose filename matches a built-in profile are overwritten.
+User-created profiles (any file not shipped by inner) are left untouched.
+Use this command to pick up updated built-in profiles after an upgrade.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.reset_(cmd.OutOrStdout(), force)
 		},
