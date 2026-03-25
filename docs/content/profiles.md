@@ -361,6 +361,7 @@ Defines what runs inside the sandbox.
 | `interactive` | bool | `true` | Whether to allocate a PTY |
 | `tui` | bool | `false` | Mark as a TUI app that probes terminal capabilities at startup (see below) |
 | `workdir` | string | `""` | Default working directory inside the sandbox. Supports `~` and `${workspaces_path}`. Overridable with `--workdir`/`-w` at runtime; falls back to the caller's cwd if unset. |
+| `history` | list | `[]` | Commands pre-loaded into the shell history. Recall them with the up-arrow key immediately after entering the sandbox. Currently supported for interactive bash sessions; silently ignored for other shells. |
 
 ```toml
 [entrypoint]
@@ -370,6 +371,23 @@ interactive = false
 ```
 
 Arguments appended via `--` on the command line, or via `--arg`, are added after `args`.
+
+### `history` — pre-populated shell history
+
+Use `history` to pre-load a list of commands into the shell history so users can recall them immediately with the up-arrow key:
+
+```toml
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = true
+history     = [
+  "git status",
+  "mvn clean install -DskipTests",
+  "claude --dangerously-skip-permissions",
+]
+```
+
+Commands are injected oldest-first, so the **last entry in the list sits at the top of the history stack** and is recalled first with up-arrow. The feature is currently implemented for interactive bash sessions; it is silently ignored for other shells.
 
 ### `tui` — terminal initialisation
 
@@ -450,12 +468,29 @@ mounted into the sandbox and is never modified by the agent.
 | Path | Source | Why |
 |------|--------|-----|
 | `.credentials.json` | copied from `~/.claude` | Required — auth token for Anthropic API |
-| `settings.json` | copied from `~/.claude` | Optional — user preferences (theme, model, …) |
+| `settings.json` | copied from `~/.claude`, stripped | Optional — user preferences (theme, model, …); `mcpServers` and `enabledPlugins` keys are removed to prevent MCP servers from being spawned inside the sandbox, where they would hang |
 | `skills/` | copied from `~/.claude` | Optional — user-defined skill definitions |
 | `sessions/`, `cache/`, `projects/`, `tasks/`, `history/`, … | created empty | Fresh state for this run |
 
 The files are **copied** from the originals before the sandbox starts, so the originals
 remain untouched even if the agent writes to its own copies.
+
+### OAuth token expiry
+
+`inner` checks whether the OAuth token in `.credentials.json` is expired **before** copying it into the sandbox. If the token looks expired, `inner` runs `claude --version` on the host to trigger Claude's automatic token refresh, then re-checks. This happens transparently:
+
+```
+inner: OAuth token expired — refreshing via host claude...
+```
+
+If the token is still expired after the refresh attempt, `inner` aborts with an actionable error instead of launching a sandbox that would immediately receive a 401:
+
+```
+Claude OAuth token is expired and could not be refreshed automatically.
+Run 'claude' on the host machine to renew it, then relaunch inner.
+```
+
+To manually renew the token, run `claude` (or `claude --version`) directly on the host — Claude's startup sequence handles the OAuth refresh automatically.
 
 ### Lifecycle
 
