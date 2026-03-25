@@ -13,7 +13,13 @@ type Profile struct {
 	WorkspacesPath string `toml:"workspaces_path"`
 	// Experimental marks a profile as not yet ready for use.
 	// inner run refuses to start with an explicit error message.
-	Experimental bool                  `toml:"experimental"`
+	Experimental bool `toml:"experimental"`
+	// Capabilities lists the named tool integrations to activate at runtime
+	// (e.g. "claude", "gemini", "cursor"). Each name maps to a handler that
+	// injects mounts, runs pre-flight checks, and provides an Explain output.
+	// Valid values are listed in ValidCapabilities.
+	// Inherited from base profiles via extends (union, no duplicates).
+	Capabilities []string             `toml:"capabilities"`
 	Sandbox      SandboxConfig         `toml:"sandbox"`
 	Mounts       map[string]MountEntry `toml:"mounts"`
 	Env          EnvConfig             `toml:"env"`
@@ -29,6 +35,10 @@ var ValidAllowKeys = []string{
 	"ssh-keys", "git-credentials", "gpg-keys",
 	"docker-socket", "podman-socket", "nested-user-ns", "netrc",
 }
+
+// ValidCapabilities is the exhaustive set of named capabilities accepted in
+// the profile capabilities field.
+var ValidCapabilities = []string{"claude", "gemini", "cursor"}
 
 // SandboxConfig controls high-level sandbox capabilities.
 type SandboxConfig struct {

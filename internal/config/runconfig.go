@@ -24,6 +24,9 @@ type RunConfig struct {
 	// Allow lists sensitive resources explicitly permitted in this sandbox.
 	// See SandboxConfig.Allow for valid keys.
 	Allow []string
+	// Capabilities lists the named tool integrations active for this run.
+	// Populated from Profile.Capabilities; inherited via extends.
+	Capabilities []string
 	// ShimDir is the path to the directory containing shim scripts.
 	// Empty if no noop config is active. Set by cmd_run.go after shim.Builder.Build().
 	ShimDir string

@@ -1105,3 +1105,132 @@ func TestBuild_workdirTokenEmptyWorkDir(t *testing.T) {
 		t.Errorf("mount Src = %q, want empty string when WorkDir unset", rc.Mounts[0].Src)
 	}
 }
+
+// ── capabilities ──────────────────────────────────────────────────────────────
+
+func TestLoadProfile_capabilitiesParsed(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "cap.toml"), `
+schema_version = "1"
+name           = "cap"
+capabilities   = ["claude", "gemini"]
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("cap")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if len(p.Capabilities) != 2 {
+		t.Fatalf("Capabilities len = %d, want 2", len(p.Capabilities))
+	}
+	if p.Capabilities[0] != "claude" || p.Capabilities[1] != "gemini" {
+		t.Errorf("Capabilities = %v, want [claude gemini]", p.Capabilities)
+	}
+}
+
+func TestBuild_capabilitiesPropagatesToRunConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "cap.toml"), `
+schema_version = "1"
+name           = "cap"
+capabilities   = ["cursor"]
+[entrypoint]
+cmd = "cursor-agent"
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("cap")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(rc.Capabilities) != 1 || rc.Capabilities[0] != "cursor" {
+		t.Errorf("RunConfig.Capabilities = %v, want [cursor]", rc.Capabilities)
+	}
+}
+
+func TestLoadProfile_capabilitiesInheritedViaExtends(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+schema_version = "1"
+name           = "base"
+capabilities   = ["claude"]
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+schema_version = "1"
+name           = "child"
+extends        = "base"
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile child: %v", err)
+	}
+	if len(p.Capabilities) != 1 || p.Capabilities[0] != "claude" {
+		t.Errorf("child.Capabilities = %v, want [claude] (inherited from base)", p.Capabilities)
+	}
+}
+
+func TestLoadProfile_capabilitiesMergedInExtends(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+schema_version = "1"
+name           = "base"
+capabilities   = ["claude"]
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+schema_version = "1"
+name           = "child"
+extends        = "base"
+capabilities   = ["gemini"]
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile child: %v", err)
+	}
+	if len(p.Capabilities) != 2 {
+		t.Fatalf("child.Capabilities len = %d, want 2; got %v", len(p.Capabilities), p.Capabilities)
+	}
+	// Base capability first, then child's addition — union, order preserved.
+	if p.Capabilities[0] != "claude" || p.Capabilities[1] != "gemini" {
+		t.Errorf("child.Capabilities = %v, want [claude gemini]", p.Capabilities)
+	}
+}
+
+func TestLoadProfile_capabilitiesNoDuplicatesOnExtends(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+schema_version = "1"
+name           = "base"
+capabilities   = ["claude"]
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+schema_version = "1"
+name           = "child"
+extends        = "base"
+capabilities   = ["claude"]
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile child: %v", err)
+	}
+	if len(p.Capabilities) != 1 {
+		t.Errorf("duplicate capability: child.Capabilities = %v, want [claude]", p.Capabilities)
+	}
+}
+
+func TestLoadProfile_noCapabilities_emptySlice(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "plain.toml"), `
+schema_version = "1"
+name           = "plain"
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("plain")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if len(p.Capabilities) != 0 {
+		t.Errorf("Capabilities = %v, want empty for profile without capabilities", p.Capabilities)
+	}
+}

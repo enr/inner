@@ -212,6 +212,34 @@ func TestPrepareClaude_createsFreshDirs(t *testing.T) {
 	}
 }
 
+func TestPrepareClaude_stripsSettingsMcpServers(t *testing.T) {
+	src := t.TempDir()
+	makeClaudeHome(t, src, map[string]string{
+		".credentials.json": `{}`,
+		"settings.json":     `{"effortLevel":"high","mcpServers":{"my-server":{}},"enabledPlugins":["p"]}`,
+	})
+
+	dst, cleanup, err := prepareClaude(src)
+	if err != nil {
+		t.Fatalf("prepareClaude: %v", err)
+	}
+	defer cleanup()
+
+	data, err := os.ReadFile(filepath.Join(dst, "settings.json"))
+	if err != nil {
+		t.Fatalf("reading sandboxed settings.json: %v", err)
+	}
+	if strings.Contains(string(data), "mcpServers") {
+		t.Error("mcpServers should be stripped from sandboxed settings.json")
+	}
+	if strings.Contains(string(data), "enabledPlugins") {
+		t.Error("enabledPlugins should be stripped from sandboxed settings.json")
+	}
+	if !strings.Contains(string(data), "effortLevel") {
+		t.Error("effortLevel should be preserved in sandboxed settings.json")
+	}
+}
+
 func TestPrepareClaude_doesNotExposeHistoryFromSrc(t *testing.T) {
 	src := t.TempDir()
 	makeClaudeHome(t, src, map[string]string{

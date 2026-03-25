@@ -194,31 +194,12 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		}
 	}
 
-	// 10. Sandbox ~/.claude — replace the real dir with a temporary clone that
-	//    contains only auth credentials, settings, and skills; everything else
-	//    (sessions, history, projects, …) starts fresh.
-	cleanupClaude, err := applyClaude(rc)
+	// 10–11b. Sandbox capability directories (claude, gemini, cursor).
+	cleanupCaps, err := applyCapabilities(rc)
 	if err != nil {
-		return fmt.Errorf("sandboxing claude home: %w", err)
+		return err
 	}
-	defer cleanupClaude()
-
-	// 11. Sandbox ~/.gemini — replace the real dir with a temporary clone that
-	//    contains only settings.json; auth is handled via GEMINI_API_KEY env var.
-	cleanupGemini, err := applyGemini(rc)
-	if err != nil {
-		return fmt.Errorf("sandboxing gemini home: %w", err)
-	}
-	defer cleanupGemini()
-
-	// 11b. Sandbox ~/.cursor and ~/.config/cursor — replace with temporary clones
-	//     containing only cli-config.json, skills-cursor/ (settings) and auth.json
-	//     (OAuth tokens). All other state starts fresh.
-	cleanupCursor, err := applyCursor(rc)
-	if err != nil {
-		return fmt.Errorf("sandboxing cursor home: %w", err)
-	}
-	defer cleanupCursor()
+	defer cleanupCaps()
 
 	// 12. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
@@ -276,6 +257,49 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		os.Exit(result.ExitCode)
 	}
 	return nil
+}
+
+// applyCapabilities applies all tool-specific sandbox transformations to rc:
+// it sandboxes ~/.claude, ~/.gemini, ~/.cursor, and ~/.config/cursor.
+// Returns a combined cleanup that removes all temporary directories.
+// This is the single call-site the test suite targets so that the migration
+// from hardcoded calls to a capability registry leaves the tests intact.
+func applyCapabilities(rc *config.RunConfig) (func(), error) {
+	var cleanups []func()
+	// push accumulates an Apply result. On error it runs all prior cleanups so
+	// no temporary directories are leaked. Contract: every Apply function MUST
+	// return a non-nil cleanup when err is nil; a nil cleanup with nil error
+	// is a programming mistake and will panic here rather than silently corrupt
+	// state later when the combined cleanup is called.
+	push := func(fn func(), err error) error {
+		if err != nil {
+			for _, c := range cleanups {
+				c()
+			}
+			return err
+		}
+		if fn == nil {
+			panic("capability Apply returned nil cleanup with nil error — violates Capability.Apply contract")
+		}
+		cleanups = append(cleanups, fn)
+		return nil
+	}
+
+	if err := push(applyClaude(rc)); err != nil {
+		return nil, fmt.Errorf("sandboxing claude home: %w", err)
+	}
+	if err := push(applyGemini(rc)); err != nil {
+		return nil, fmt.Errorf("sandboxing gemini home: %w", err)
+	}
+	if err := push(applyCursor(rc)); err != nil {
+		return nil, fmt.Errorf("sandboxing cursor home: %w", err)
+	}
+
+	return func() {
+		for _, c := range cleanups {
+			c()
+		}
+	}, nil
 }
 
 // applyOverrides merges CLI flags into rc.

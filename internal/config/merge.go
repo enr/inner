@@ -41,6 +41,11 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 		result.Sandbox.Allow = mergeUnique(base.Sandbox.Allow, overlay.Sandbox.Allow)
 	}
 
+	// --- capabilities ---
+	if meta.IsDefined("capabilities") {
+		result.Capabilities = mergeUnique(base.Capabilities, overlay.Capabilities)
+	}
+
 	// --- [mounts] ---
 	if len(overlay.Mounts) > 0 {
 		merged := make(map[string]MountEntry, len(base.Mounts)+len(overlay.Mounts))
