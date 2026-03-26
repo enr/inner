@@ -19,7 +19,7 @@ type Profile struct {
 	// injects mounts, runs pre-flight checks, and provides an Explain output.
 	// Valid values are listed in ValidCapabilities.
 	// Inherited from base profiles via extends (union, no duplicates).
-	Capabilities []string             `toml:"capabilities"`
+	Capabilities []string              `toml:"capabilities"`
 	Sandbox      SandboxConfig         `toml:"sandbox"`
 	Mounts       map[string]MountEntry `toml:"mounts"`
 	Env          EnvConfig             `toml:"env"`

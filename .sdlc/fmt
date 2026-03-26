@@ -10,5 +10,5 @@ prj_home="$( cd -P "$( dirname "$sdlc_dir" )" && pwd )"
 cd "${prj_home}"
 
 echo "==> fmt"
-find . -name '*.go' -not -path '*/vendor/*' -not -path '*/.gopath/*' | xargs gofmt -w
+find . -name '*.go' -not -path '*/vendor/*' -not -path '*/.gopath/*' -not -path '*/.gomodcache/*' | xargs gofmt -w
 echo "    ok"
