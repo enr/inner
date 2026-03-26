@@ -199,6 +199,7 @@ cmd = "gemini"
 // and ~/.config/cursor are sandboxed by the pipeline.
 func TestPipeline_CursorProfile_HasBothCursorMounts(t *testing.T) {
 	fakeHome := makeFakeHome(t)
+	t.Setenv("XDG_CONFIG_HOME", "") // ensure cursorConfigDir() falls back to ~/.config
 
 	cursorDir := filepath.Join(fakeHome, ".cursor")
 	if err := os.MkdirAll(cursorDir, 0o755); err != nil {
