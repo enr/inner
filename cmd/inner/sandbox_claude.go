@@ -240,6 +240,15 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 	credPath := filepath.Join(claudeDir, ".credentials.json")
 	if expired, _ := claudeTokenExpired(credPath); expired {
 		ensureClaudeTokenFresh(os.Stderr)
+		// Re-read the file: if the token is still expired after the refresh
+		// attempt, fail fast with an actionable message rather than letting
+		// the sandbox start and receive a 401.
+		if stillExpired, _ := claudeTokenExpired(credPath); stillExpired {
+			return nil, fmt.Errorf(
+				"Claude OAuth token is expired and could not be refreshed automatically.\n" +
+					"Run 'claude' on the host machine to renew it, then relaunch inner.",
+			)
+		}
 	}
 
 	var cleanups []func()

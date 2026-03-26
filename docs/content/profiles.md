@@ -539,7 +539,7 @@ Claude OAuth token is expired and could not be refreshed automatically.
 Run 'claude' on the host machine to renew it, then relaunch inner.
 ```
 
-To manually renew the token, run `claude` (or `claude --version`) directly on the host — Claude's startup sequence handles the OAuth refresh automatically.
+To manually renew the token, run `claude auth login` on the host. If the OAuth **refresh token** is still valid, Claude will refresh silently without opening a browser; otherwise the full browser-based login flow runs. Running `claude --version` alone may not be sufficient — it does not always write an updated token back to `.credentials.json`.
 
 ### Lifecycle
 
