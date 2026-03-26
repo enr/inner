@@ -350,52 +350,53 @@ func TestPrepareInteractiveShell_noopIfInitFileAlreadySet(t *testing.T) {
 
 // ── applyClaude ───────────────────────────────────────────────────────────────
 
-func TestApplyClaude_replacesMountSrc(t *testing.T) {
-	src := t.TempDir()
-	makeClaudeHome(t, src, map[string]string{
+func TestApplyClaude_injectsMount(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	claudeDir := filepath.Join(fakeHome, ".claude")
+	makeClaudeHome(t, claudeDir, map[string]string{
 		".credentials.json": `{}`,
 	})
 
-	rc := &config.RunConfig{
-		Mounts: []config.Mount{
-			{Src: src, Dest: "~/.claude", Mode: "rw"},
-		},
-	}
-
-	cleanup, err := applyClaudeDir(rc, src)
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
 	if err != nil {
-		t.Fatalf("applyClaudeDir: %v", err)
+		t.Fatalf("applyClaude: %v", err)
 	}
 	defer cleanup()
 
-	if rc.Mounts[0].Src == src {
-		t.Error("applyClaudeDir should have replaced Src with sandbox path")
+	// applyClaude must inject a mount with Dest = claudeHomeDir().
+	found := false
+	for _, m := range rc.Mounts {
+		if m.Dest == claudeDir {
+			found = true
+			if m.Src == claudeDir {
+				t.Error("mount Src should be a sandboxed tmp path, not the real ~/.claude")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected mount with Dest=%s; mounts: %v", claudeDir, rc.Mounts)
 	}
 }
 
 func TestApplyClaude_claudeJsonMountedAsCopy(t *testing.T) {
-	src := t.TempDir()
-	makeClaudeHome(t, src, map[string]string{
+	fakeHome := makeFakeHome(t)
+	claudeDir := filepath.Join(fakeHome, ".claude")
+	makeClaudeHome(t, claudeDir, map[string]string{
 		".credentials.json": `{}`,
 	})
-	// Create a fake ~/.claude.json next to the claude dir.
-	claudeJsonPath := src + ".json"
+	// Create ~/.claude.json next to ~/.claude.
+	claudeJsonPath := claudeDir + ".json"
 	if err := os.WriteFile(claudeJsonPath, []byte(`{"numStartups":5}`), 0o600); err != nil {
 		t.Fatalf("writing claude.json: %v", err)
 	}
-	defer os.Remove(claudeJsonPath)
 
-	rc := &config.RunConfig{
-		Mounts: []config.Mount{
-			{Src: src, Dest: "~/.claude", Mode: "rw"},
-		},
-	}
-
-	cleanup, err := applyClaudeDir(rc, src)
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
 	if err != nil {
-		t.Fatalf("applyClaudeDir: %v", err)
+		t.Fatalf("applyClaude: %v", err)
 	}
-	defer cleanup()
 
 	// Find the mount for claude.json.
 	var jsonMount *config.Mount
@@ -406,6 +407,7 @@ func TestApplyClaude_claudeJsonMountedAsCopy(t *testing.T) {
 		}
 	}
 	if jsonMount == nil {
+		cleanup()
 		t.Fatal("expected a mount for .claude.json")
 	}
 	// Src must be a temp copy, not the original file.
@@ -415,6 +417,7 @@ func TestApplyClaude_claudeJsonMountedAsCopy(t *testing.T) {
 	// The temp copy must exist and have the same content.
 	data, err := os.ReadFile(jsonMount.Src)
 	if err != nil {
+		cleanup()
 		t.Fatalf("reading temp copy: %v", err)
 	}
 	if string(data) != `{"numStartups":5}` {
@@ -427,24 +430,5 @@ func TestApplyClaude_claudeJsonMountedAsCopy(t *testing.T) {
 	}
 	if _, err := os.Stat(claudeJsonPath); err != nil {
 		t.Error("original .claude.json should still exist after cleanup")
-	}
-}
-
-func TestApplyClaude_noClaudeMount_noOp(t *testing.T) {
-	rc := &config.RunConfig{
-		Mounts: []config.Mount{
-			{Src: "/some/other/path", Dest: "/workspace", Mode: "rw"},
-		},
-	}
-	originalSrc := rc.Mounts[0].Src
-
-	cleanup, err := applyClaudeDir(rc, "/home/user/.claude")
-	if err != nil {
-		t.Fatalf("applyClaudeDir: %v", err)
-	}
-	cleanup()
-
-	if rc.Mounts[0].Src != originalSrc {
-		t.Error("applyClaudeDir should not modify non-claude mounts")
 	}
 }

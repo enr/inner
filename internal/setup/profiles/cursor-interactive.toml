@@ -1,24 +1,13 @@
 schema_version = "1"
 name          = "cursor-interactive"
 description   = "Interactive Cursor Agent (network enabled)"
+capabilities  = ["cursor"]
 
 [sandbox]
 network   = true
 clipboard = false
 
 [mounts]
-# ~/.cursor is NOT mounted directly. inner intercepts this at runtime and
-# replaces it with a sanitized temporary clone containing only:
-#   cli-config.json  (settings — optional)
-#   skills-cursor/   (user skill definitions — optional)
-# All other subdirs (ai-tracking/, extensions/, projects/, …) start fresh.
-# The clone is deleted when the sandbox exits; the real ~/.cursor is untouched.
-"~/.cursor" = { dest = "~/.cursor", mode = "rw" }
-# ~/.config/cursor is NOT mounted directly. inner intercepts this at runtime
-# and replaces it with a temporary clone containing only:
-#   auth.json  (auth token — required)
-# cursor-agent stores OAuth tokens in this file (app name "cursor", XDG path).
-"~/.config/cursor" = { dest = "~/.config/cursor", mode = "rw" }
 # Hide host runtime sockets (dbus, systemd, pipewire, …) from the sandbox.
 # cursor-agent (Node.js/libuv) would otherwise probe them at startup.
 # The system keychain (libsecret) uses a dbus socket; cursor-agent falls back

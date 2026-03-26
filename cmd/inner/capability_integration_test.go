@@ -47,13 +47,11 @@ func findMount(rc *config.RunConfig, dest string) *config.Mount {
 }
 
 // profileWithClaudeMount returns a minimal claude-interactive-style profile TOML
-// that declares an explicit ~/.claude mount (current, pre-capability style).
+// that declares the claude capability (capability-based style).
 const profileWithClaudeMount = `
 schema_version = "1"
 name           = "claude-interactive"
-
-[mounts]
-"~/.claude" = { dest = "~/.claude", mode = "rw" }
+capabilities   = ["claude"]
 
 [entrypoint]
 cmd = "claude"
@@ -175,9 +173,7 @@ func TestPipeline_GeminiProfile_MountDestIsGeminiHome(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "profiles", "gemini-interactive.toml"), `
 schema_version = "1"
 name           = "gemini-interactive"
-
-[mounts]
-"~/.gemini" = { dest = "~/.gemini", mode = "rw" }
+capabilities   = ["gemini"]
 
 [entrypoint]
 cmd = "gemini"
@@ -224,10 +220,7 @@ func TestPipeline_CursorProfile_HasBothCursorMounts(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "profiles", "cursor-interactive.toml"), `
 schema_version = "1"
 name           = "cursor-interactive"
-
-[mounts]
-"~/.cursor"        = { dest = "~/.cursor",        mode = "rw" }
-"~/.config/cursor" = { dest = "~/.config/cursor", mode = "rw" }
+capabilities   = ["cursor"]
 
 [entrypoint]
 cmd = "cursor-agent"
@@ -294,9 +287,7 @@ func TestApplyCapabilities_claudeFails_returnsError(t *testing.T) {
 	}
 
 	rc := &config.RunConfig{
-		Mounts: []config.Mount{
-			{Src: claudeDir, Dest: claudeDir, Mode: "rw"},
-		},
+		Capabilities: []string{"claude"},
 	}
 
 	_, err := applyCapabilities(rc)
@@ -340,10 +331,7 @@ func TestApplyCapabilities_cursorFails_claudeCleanedUp(t *testing.T) {
 	beforeClaude := countTmpDirsByPrefix("inner-claude-")
 
 	rc := &config.RunConfig{
-		Mounts: []config.Mount{
-			{Src: claudeDir, Dest: claudeDir, Mode: "rw"},
-			{Src: cursorCfgDir, Dest: cursorCfgDir, Mode: "rw"},
-		},
+		Capabilities: []string{"claude", "cursor"},
 	}
 
 	_, err := applyCapabilities(rc)
@@ -370,9 +358,7 @@ func TestApplyCapabilities_cleanupRemovesAllTmpDirs(t *testing.T) {
 	})
 
 	rc := &config.RunConfig{
-		Mounts: []config.Mount{
-			{Src: claudeDir, Dest: claudeDir, Mode: "rw"},
-		},
+		Capabilities: []string{"claude"},
 	}
 
 	beforeClaude := countTmpDirsByPrefix("inner-claude-")
@@ -393,6 +379,42 @@ func TestApplyCapabilities_cleanupRemovesAllTmpDirs(t *testing.T) {
 	if afterClaude != beforeClaude {
 		t.Errorf("inner-claude-* tmp dirs leaked after cleanup: before=%d after=%d",
 			beforeClaude, afterClaude)
+	}
+}
+
+// TestPipeline_InnerDev_ClaudeMountIsRaw verifies that a profile that declares
+// an explicit ~/.claude mount WITHOUT a "claude" capability leaves the mount
+// pointing to the real host directory — not a sandboxed temporary clone.
+// This is the inner-dev contract: full ~/.claude access, no sandboxing.
+func TestPipeline_InnerDev_ClaudeMountIsRaw(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	claudeDir := filepath.Join(fakeHome, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "inner-dev.toml"), `
+schema_version = "1"
+name = "inner-dev"
+
+[mounts]
+"~/.claude" = { dest = "~/.claude", mode = "rw" }
+
+[entrypoint]
+cmd = "claude"
+`)
+
+	rc, cleanup := buildRCAndApply(t, app, "inner-dev")
+	defer cleanup()
+
+	// The explicit mount must not be sandboxed.
+	m := findMount(rc, claudeDir)
+	if m == nil {
+		t.Fatalf("expected mount with Dest=%s; mounts: %v", claudeDir, rc.Mounts)
+	}
+	if m.Src != claudeDir {
+		t.Errorf("inner-dev mount Src should be the real ~/.claude (%s), got sandboxed path %s", claudeDir, m.Src)
 	}
 }
 

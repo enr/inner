@@ -305,3 +305,134 @@ func TestValidate_tmpfsDestMissing(t *testing.T) {
 		t.Error("expected error for tmpfs with non-existent dest")
 	}
 }
+
+// ── safe-rw mode (Step 2) ─────────────────────────────────────────────────────
+
+func TestValidate_safeRwMode_valid(t *testing.T) {
+	src := t.TempDir()
+	dest := t.TempDir()
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			src: {Dest: dest, Mode: "safe-rw"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	for _, issue := range r.Issues {
+		if issue.Level == LevelError && strings.Contains(issue.Message, "mode") {
+			t.Errorf("safe-rw should be a valid mode, got error: %s", issue.Message)
+		}
+	}
+}
+
+func TestValidate_safeRwMode_srcMissing_returnsError(t *testing.T) {
+	dest := t.TempDir()
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			"/nonexistent/safe-rw-src": {Dest: dest, Mode: "safe-rw"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if !r.HasErrors() {
+		t.Error("expected error for safe-rw with missing src")
+	}
+}
+
+// ── capability validation (Step 1g) ──────────────────────────────────────────
+
+func TestValidate_unknownCapability_returnsError(t *testing.T) {
+	p := &config.Profile{
+		Capabilities: []string{"not-a-real-capability"},
+		Entrypoint:   config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if !r.HasErrors() {
+		t.Error("expected error for unknown capability")
+	}
+	found := false
+	for _, i := range r.Issues {
+		if i.Level == LevelError && strings.Contains(i.Message, "not-a-real-capability") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error mentioning the unknown capability name, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_knownCapability_dirMissing_returnsWarning(t *testing.T) {
+	// Set HOME to a temp dir that has no .claude subdir.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	p := &config.Profile{
+		Capabilities: []string{"claude"},
+		Entrypoint:   config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	// Must not be a fatal error — just a warning.
+	if r.HasErrors() {
+		t.Errorf("missing capability dir should be a warning, not an error: %v", r.Issues)
+	}
+	found := false
+	for _, i := range r.Issues {
+		if i.Level == LevelWarning && strings.Contains(i.Message, "claude") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning mentioning capability 'claude', got: %v", r.Issues)
+	}
+}
+
+func TestValidate_capabilityConflictsWithExplicitMount_returnsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Create ~/.claude so the dir-exists check doesn't also warn.
+	if err := os.MkdirAll(home+"/.claude", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeDest := home + "/.claude"
+	p := &config.Profile{
+		Capabilities: []string{"claude"},
+		Mounts: map[string]config.MountEntry{
+			// Explicit mount whose dest conflicts with the claude capability.
+			claudeDest: {Dest: claudeDest, Mode: "rw"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if !r.HasErrors() {
+		t.Error("expected error for capability-mount conflict on same dest")
+	}
+	found := false
+	for _, i := range r.Issues {
+		if i.Level == LevelError && strings.Contains(i.Message, "claude") && strings.Contains(i.Message, "conflict") || strings.Contains(i.Message, "target") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a conflict error mentioning 'claude', got: %v", r.Issues)
+	}
+}
+
+func TestValidate_knownCapability_dirExists_noIssues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(home+"/.claude", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &config.Profile{
+		Capabilities: []string{"claude"},
+		Entrypoint:   config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "claude") {
+			t.Errorf("unexpected issue for valid claude capability: %s", i.Message)
+		}
+	}
+}

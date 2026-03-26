@@ -172,6 +172,15 @@ Display the TOML content of a profile:
 inner profile show claude-interactive
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--explain` | Append an explanation of each declared capability (injected mounts, pre-run actions, notes) |
+
+```bash
+# Show profile content with capability details
+inner profile show claude-interactive --explain
+```
+
 ### `inner profile new`
 
 Create a new profile from a template, then open it in `$EDITOR`:

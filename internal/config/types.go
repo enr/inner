@@ -40,6 +40,15 @@ var ValidAllowKeys = []string{
 // the profile capabilities field.
 var ValidCapabilities = []string{"claude", "gemini", "cursor"}
 
+// CapabilityHostDirs maps each capability name to the host directories it
+// sandboxes at runtime. Used by the validator to detect missing directories
+// and conflicts with explicit profile mounts.
+var CapabilityHostDirs = map[string][]string{
+	"claude": {"~/.claude"},
+	"gemini": {"~/.gemini"},
+	"cursor": {"~/.cursor", "~/.config/cursor"},
+}
+
 // SandboxConfig controls high-level sandbox capabilities.
 type SandboxConfig struct {
 	Network   bool `toml:"network"`
@@ -81,7 +90,7 @@ type CustomCheck struct {
 // The map key is the host source path.
 type MountEntry struct {
 	Dest string `toml:"dest"`
-	Mode string `toml:"mode"` // "ro" or "rw"; defaults to "ro"
+	Mode string `toml:"mode"` // "ro", "rw", "safe-rw", or "tmpfs"; defaults to "ro"
 }
 
 // EnvConfig describes how environment variables are handled inside the sandbox.

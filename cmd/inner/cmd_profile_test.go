@@ -478,6 +478,126 @@ func TestProfileClone_dstExists(t *testing.T) {
 	}
 }
 
+// ── profileShowExplain ────────────────────────────────────────────────────────
+
+// TestProfileShowExplain_claudeInteractive_showsCapabilitySection verifies
+// that profileShowExplain appends a capability section after the raw TOML.
+func TestProfileShowExplain_claudeInteractive_showsCapabilitySection(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "claude-interactive.toml"), `
+schema_version = "1"
+name           = "claude-interactive"
+capabilities   = ["claude"]
+
+[entrypoint]
+cmd = "claude"
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowExplain(&buf, "claude-interactive"); err != nil {
+		t.Fatalf("profileShowExplain: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, `capabilities   = ["claude"]`) {
+		t.Error("expected raw TOML to appear in output")
+	}
+	if !strings.Contains(out, "capability: claude") {
+		t.Errorf("expected 'capability: claude' section; got:\n%s", out)
+	}
+	if !strings.Contains(out, "mounts injected") {
+		t.Errorf("expected 'mounts injected' in output; got:\n%s", out)
+	}
+	if !strings.Contains(out, "~/.claude") {
+		t.Errorf("expected '~/.claude' in capability section; got:\n%s", out)
+	}
+}
+
+// TestProfileShowExplain_claudeContainers_showsInheritedCapability verifies
+// that capabilities inherited via extends appear in the explain output, even
+// though the child profile file does not declare them directly.
+func TestProfileShowExplain_claudeContainers_showsInheritedCapability(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "claude-interactive.toml"), `
+schema_version = "1"
+name         = "claude-interactive"
+capabilities = ["claude"]
+
+[entrypoint]
+cmd = "claude"
+`)
+	writeTestFile(t, filepath.Join(dir, "profiles", "claude-containers.toml"), `
+schema_version = "1"
+name    = "claude-containers"
+extends = "claude-interactive"
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowExplain(&buf, "claude-containers"); err != nil {
+		t.Fatalf("profileShowExplain: %v", err)
+	}
+	out := buf.String()
+
+	// Raw TOML shown is the child's file, not the parent's.
+	if !strings.Contains(out, `name    = "claude-containers"`) {
+		t.Errorf("expected child's raw TOML; got:\n%s", out)
+	}
+	// Capability inherited from parent must appear in the explain section.
+	if !strings.Contains(out, "capability: claude") {
+		t.Errorf("expected inherited 'capability: claude' section; got:\n%s", out)
+	}
+}
+
+// TestProfileShowExplain_noCapabilities_noSection verifies that profiles
+// without capabilities produce no capability section in the explain output.
+func TestProfileShowExplain_noCapabilities_noSection(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "shell.toml"), `
+schema_version = "1"
+name = "shell"
+
+[entrypoint]
+cmd = "bash"
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowExplain(&buf, "shell"); err != nil {
+		t.Fatalf("profileShowExplain: %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, "capability:") {
+		t.Errorf("expected no capability section for profile without capabilities; got:\n%s", out)
+	}
+	if !strings.Contains(out, `name = "shell"`) {
+		t.Errorf("expected raw TOML in output; got:\n%s", out)
+	}
+}
+
+// TestProfileShowExplain_withoutFlag_rawTOMLOnly verifies that profileShow
+// (without --explain) returns only the raw TOML even when capabilities are set.
+func TestProfileShowExplain_withoutFlag_rawTOMLOnly(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "claude-interactive.toml"), `
+schema_version = "1"
+name         = "claude-interactive"
+capabilities = ["claude"]
+
+[entrypoint]
+cmd = "claude"
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShow(&buf, "claude-interactive"); err != nil {
+		t.Fatalf("profileShow: %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, "capability:") {
+		t.Errorf("profileShow without --explain must not include capability section; got:\n%s", out)
+	}
+}
+
 // ── profileTemplate ───────────────────────────────────────────────────────────
 
 func TestProfileTemplate_containsName(t *testing.T) {

@@ -1,19 +1,11 @@
 schema_version = "1"
-name = "gemini-one-shot"
-description = "Non-interactive Gemini CLI agent (--yolo)"
+name         = "gemini-one-shot"
+description  = "Non-interactive Gemini CLI agent (--yolo)"
+capabilities = ["gemini"]
 
 [sandbox]
 network   = true
 clipboard = false
-
-[mounts]
-# ~/.gemini is NOT mounted directly. inner intercepts this at runtime and
-# replaces it with a sanitized temporary clone containing only:
-#   settings.json      (user preferences — optional)
-# Authentication uses the GEMINI_API_KEY environment variable (inherited via
-# the env.inherit list below); no credentials file is needed.
-# The clone is deleted when the sandbox exits; the real ~/.gemini is untouched.
-"~/.gemini" = { dest = "~/.gemini", mode = "rw" }
 
 [env]
 clearenv = true

@@ -90,7 +90,7 @@ extends = "~/my-base.toml"  # explicit file path (~ and absolute paths supported
 | Type | Behaviour |
 |------|-----------|
 | Scalar (`bool`, `string`, `int`) | Child wins only when the key is explicitly present in the child file. A missing key keeps the base value, including `false` booleans. |
-| Slice (`allow`, `env.inherit`, `noop.block`, `git.strip_sections`) | Union: base items first, then any new items from the child. Duplicates are removed. |
+| Slice (`allow`, `capabilities`, `env.inherit`, `noop.block`, `git.strip_sections`) | Union: base items first, then any new items from the child. Duplicates are removed. |
 | Map (`mounts`, `env.set`, `noop.rewrite`, `git.overrides`) | Merge: all base entries kept; child entries added or override matching keys. |
 | `verify.custom.checks` | Append: base checks first, child checks after. |
 
@@ -143,6 +143,7 @@ If the value contains `/`, starts with `~`, or is an absolute path, it is treate
 | `extends` | string | `""` | Name or path of the base profile to inherit from (see above) |
 | `workspaces_path` | string | `""` | Override the global `workspaces_path` for this profile (see [`[mounts]` — workspace directories](#workspace-directories-workspaces_path)) |
 | `experimental` | bool | `false` | When `true`, `inner run` refuses to start with an error. The profile remains visible in `inner profile list` with an `[experimental]` prefix. Use this to keep a work-in-progress profile in the repository without accidentally running it. |
+| `capabilities` | list | `[]` | Named integrations to activate for this sandbox (e.g. `["claude"]`). Each capability injects preconfigured mounts at runtime without requiring explicit `[mounts]` entries. See [Capabilities](#capabilities). |
 
 ---
 
@@ -208,11 +209,26 @@ Mount host paths into the sandbox. Keys are host paths, values are mount descrip
 | Key in value | Type | Description |
 |------|------|-------------|
 | `dest` | string | Destination path inside the sandbox |
-| `mode` | string | `ro` (read-only) or `rw` (read-write) |
+| `mode` | string | `ro` (read-only), `rw` (read-write), `safe-rw` (copy-on-run, see below), or `tmpfs` (in-memory filesystem) |
 
 Source paths (keys) support `~` expansion, `$VAR`/`${VAR}` environment variable substitution, and the `${workdir}` token described below.
 
 The `--workdir` flag at runtime is a shorthand for adding a `rw` mount of PATH at the same path inside the sandbox (e.g. `-w ~/my-project` mounts `~/my-project` → `~/my-project`).
+
+### `safe-rw` — copy-on-run {#safe-rw}
+
+When `mode = "safe-rw"`, `inner` copies the source directory to a temporary directory before the sandbox starts, binds the copy as `rw`, then deletes the temporary directory when the sandbox exits. The original source is never mounted and is never modified.
+
+```toml
+[mounts]
+"~/projects/myapp" = { dest = "/workspace", mode = "safe-rw" }
+```
+
+Use this when you want an agent to have full write access to a directory without risking changes to the host copy. It is the generic equivalent of what the built-in `claude` capability does automatically for `~/.claude`.
+
+> **Note:** The validator requires the source to exist on the host at validation time (so the copy can succeed at run time). Missing sources produce a validation error.
+
+---
 
 ### Portable source paths (`${workdir}`) {#portable-source-paths-workdir}
 
@@ -450,18 +466,51 @@ checks = [
 
 ---
 
-## Claude Code sandbox (`~/.claude`)
+## Capabilities {#capabilities}
 
-The agent profiles (`claude-interactive`, `claude-one-shot`) declare a mount for `~/.claude`:
+A **capability** is a named integration that injects preconfigured mounts at runtime. Instead of listing the required host paths manually in `[mounts]`, a profile just declares which capabilities it needs:
 
 ```toml
-[mounts]
-"~/.claude" = { dest = "~/.claude", mode = "rw" }
+capabilities = ["claude"]
 ```
 
-This looks like the entire directory is shared, but `inner` intercepts it at runtime and
-**replaces the mount with a sanitized temporary clone**. The real `~/.claude` is never
-mounted into the sandbox and is never modified by the agent.
+`inner` resolves the capability at startup, copies the relevant directories to sandboxed temporary locations, and binds them as `rw` mounts — all without any explicit `[mounts]` entries.
+
+### Known capabilities
+
+| Name | What it injects |
+|------|----------------|
+| `claude` | `~/.claude` (sanitized clone) and `~/.claude.json` (copy, if present). Also refreshes the OAuth token if expired before copying credentials. |
+| `gemini` | `~/.gemini` (sanitized clone with `settings.json` only) |
+| `cursor` | `~/.cursor` (sanitized clone) and `~/.config/cursor` (sanitized clone) |
+
+Capabilities compose with `extends`: if a base profile declares `capabilities = ["claude"]` every child profile inherits it automatically (union merge, no duplicates).
+
+### Inspecting a capability
+
+```bash
+inner profile show claude-interactive --explain
+```
+
+The `--explain` flag appends a `── capability: <name> ───` section to the output that lists the mounts injected, any pre-run actions (e.g. token refresh), and notes about the capability's behaviour.
+
+### Validator checks
+
+- Unknown capability names are a **validation error**.
+- If a capability's primary host directory does not exist (e.g. `~/.claude` is absent), `inner profile validate` emits a **warning** — the run-time handler will produce a clearer error when it actually needs the directory.
+- Declaring a capability **and** an explicit mount whose `dest` overlaps with one of the capability's injected destinations is a **validation error** (would cause a double-bind in bwrap).
+
+---
+
+## Claude Code sandbox (`~/.claude`)
+
+The agent profiles (`claude-interactive`, `claude-one-shot`) activate the `claude` capability:
+
+```toml
+capabilities = ["claude"]
+```
+
+At runtime, `inner` **creates a sanitized temporary clone** of `~/.claude` and binds that into the sandbox. The real `~/.claude` is never mounted and is never modified by the agent.
 
 ### What the clone contains
 
@@ -522,15 +571,13 @@ sandbox before it exits, or review captured output with `inner log show`.
 
 ## Gemini CLI sandbox (`~/.gemini`)
 
-The `gemini-interactive` profile declares a mount for `~/.gemini`:
+The `gemini-interactive` profile activates the `gemini` capability:
 
 ```toml
-[mounts]
-"~/.gemini" = { dest = "~/.gemini", mode = "rw" }
+capabilities = ["gemini"]
 ```
 
-Like `~/.claude`, this mount is intercepted at runtime and **replaced with a
-sanitized temporary clone**. The real `~/.gemini` is never mounted into the sandbox.
+Like `claude`, at runtime `inner` **creates a sanitized temporary clone** of `~/.gemini` and binds that into the sandbox. The real `~/.gemini` is never mounted.
 
 ### Authentication
 

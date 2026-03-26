@@ -82,8 +82,8 @@ func Validate(p *config.Profile, workDir string) Result {
 				r.addError(fmt.Sprintf("mount source %q cannot be accessed: %v", src, err))
 			}
 		}
-		if entry.Mode != "" && entry.Mode != "ro" && entry.Mode != "rw" {
-			r.addError(fmt.Sprintf("mount %q has invalid mode %q (must be \"ro\", \"rw\", or \"tmpfs\")", src, entry.Mode))
+		if entry.Mode != "" && entry.Mode != "ro" && entry.Mode != "rw" && entry.Mode != "safe-rw" {
+			r.addError(fmt.Sprintf("mount %q has invalid mode %q (must be \"ro\", \"rw\", \"safe-rw\", or \"tmpfs\")", src, entry.Mode))
 		}
 	}
 
@@ -121,6 +121,37 @@ func Validate(p *config.Profile, workDir string) Result {
 	// 5. Logical constraint: non-interactive with no timeout.
 	if !p.Entrypoint.Interactive && p.Output.TimeoutSeconds == 0 {
 		r.addWarning("entrypoint is non-interactive but no timeout is set (agent may run indefinitely)")
+	}
+
+	// 6. Validate capabilities (step 1g).
+	//    Build the set of expanded mount dests for conflict detection.
+	expandedMountDests := make(map[string]bool, len(p.Mounts))
+	for _, entry := range p.Mounts {
+		if entry.Dest != "" {
+			expandedMountDests[config.ExpandPath(entry.Dest)] = true
+		}
+	}
+	for _, cap := range p.Capabilities {
+		if !slices.Contains(config.ValidCapabilities, cap) {
+			r.addError(fmt.Sprintf("unknown capability %q (valid values: %v)", cap, config.ValidCapabilities))
+			continue
+		}
+		dirs, ok := config.CapabilityHostDirs[cap]
+		if !ok {
+			continue
+		}
+		// Warn if the primary host directory does not exist on this machine.
+		primary := config.ExpandPath(dirs[0])
+		if _, err := os.Stat(primary); os.IsNotExist(err) {
+			r.addWarning(fmt.Sprintf("capability %q: host directory %q does not exist — runtime will fail", cap, dirs[0]))
+		}
+		// Error if any capability directory conflicts with an explicit mount dest.
+		for _, dir := range dirs {
+			expanded := config.ExpandPath(dir)
+			if expandedMountDests[expanded] {
+				r.addError(fmt.Sprintf("capability %q and explicit mount both target dest %q — remove the explicit mount (capability injects it)", cap, dir))
+			}
+		}
 	}
 
 	return r

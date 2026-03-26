@@ -184,22 +184,19 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		rc.GitConfigPath = gitPath
 	}
 
-	// 9b. If the entrypoint is claude and the OAuth token is detectably expired,
-	//     run "claude --version" on the host to trigger an automatic token
-	//     refresh before copying .credentials.json into the sandbox (Option E).
-	if filepath.Base(rc.Entrypoint.Cmd) == "claude" {
-		credPath := filepath.Join(claudeHomeDir(), ".credentials.json")
-		if expired, _ := claudeTokenExpired(credPath); expired {
-			ensureClaudeTokenFresh(w)
-		}
-	}
-
 	// 10–11b. Sandbox capability directories (claude, gemini, cursor).
 	cleanupCaps, err := applyCapabilities(rc)
 	if err != nil {
 		return err
 	}
 	defer cleanupCaps()
+
+	// 11c. Apply generic safe-rw mounts (copy src → tmp, set mode to rw).
+	cleanupSafe, err := applyGenericSafeMounts(rc)
+	if err != nil {
+		return err
+	}
+	defer cleanupSafe()
 
 	// 12. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
@@ -259,11 +256,11 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	return nil
 }
 
-// applyCapabilities applies all tool-specific sandbox transformations to rc:
-// it sandboxes ~/.claude, ~/.gemini, ~/.cursor, and ~/.config/cursor.
+// applyCapabilities applies the sandbox transformations for each capability
+// declared in rc.Capabilities. Each registered Apply function may inject mounts
+// and create temporary directories; it returns a cleanup that removes them.
 // Returns a combined cleanup that removes all temporary directories.
-// This is the single call-site the test suite targets so that the migration
-// from hardcoded calls to a capability registry leaves the tests intact.
+// The validator guarantees every name in rc.Capabilities is in the registry.
 func applyCapabilities(rc *config.RunConfig) (func(), error) {
 	var cleanups []func()
 	// push accumulates an Apply result. On error it runs all prior cleanups so
@@ -285,14 +282,11 @@ func applyCapabilities(rc *config.RunConfig) (func(), error) {
 		return nil
 	}
 
-	if err := push(applyClaude(rc)); err != nil {
-		return nil, fmt.Errorf("sandboxing claude home: %w", err)
-	}
-	if err := push(applyGemini(rc)); err != nil {
-		return nil, fmt.Errorf("sandboxing gemini home: %w", err)
-	}
-	if err := push(applyCursor(rc)); err != nil {
-		return nil, fmt.Errorf("sandboxing cursor home: %w", err)
+	for _, name := range rc.Capabilities {
+		cap := capabilityRegistry[name]
+		if err := push(cap.Apply(rc)); err != nil {
+			return nil, fmt.Errorf("capability %q: %w", name, err)
+		}
 	}
 
 	return func() {

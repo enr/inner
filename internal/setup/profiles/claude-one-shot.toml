@@ -1,20 +1,13 @@
 schema_version = "1"
-name = "claude-one-shot"
-description = "Non-interactive Claude Code agent (dangerously-skip-permissions)"
+name         = "claude-one-shot"
+description  = "Non-interactive Claude Code agent (dangerously-skip-permissions)"
+capabilities = ["claude"]
 
 [sandbox]
 network   = true
 clipboard = false
 
 [mounts]
-# ~/.claude is NOT mounted directly. inner intercepts this at runtime and
-# replaces it with a sanitized temporary clone containing only:
-#   .credentials.json  (auth token — required)
-#   settings.json      (user preferences — optional)
-#   skills/            (user skill definitions — optional)
-# All other subdirs (sessions/, history/, projects/, …) start fresh and empty.
-# The clone is deleted when the sandbox exits; the real ~/.claude is untouched.
-"~/.claude" = { dest = "~/.claude", mode = "rw" }
 # Hide host runtime sockets (dbus, systemd, pipewire, …) from the sandbox.
 # Claude's Node.js runtime would otherwise find and connect to them via the
 # root ro-bind, which can cause blocking calls that hang startup.

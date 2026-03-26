@@ -41,34 +41,20 @@ func prepareGemini(src string) (string, func(), error) {
 	return tmp, cleanup, nil
 }
 
-// applyGemini replaces any mount whose Src is ~/.gemini with a sandboxed
-// temporary clone. Returns the cleanup function; the caller must defer it.
+// applyGemini injects the gemini sandbox mount into rc.
+// It creates a sandboxed temporary clone of ~/.gemini and appends the mount
+// to rc.Mounts. Returns the cleanup function; the caller must defer it.
 func applyGemini(rc *config.RunConfig) (func(), error) {
-	return applyGeminiDir(rc, geminiHomeDir())
-}
+	geminiDir := geminiHomeDir()
 
-// applyGeminiDir is the testable core of applyGemini.
-func applyGeminiDir(rc *config.RunConfig, geminiDir string) (func(), error) {
-	var cleanups []func()
-
-	for i, m := range rc.Mounts {
-		if m.Src != geminiDir {
-			continue
-		}
-		sandboxed, cleanup, err := prepareGemini(m.Src)
-		if err != nil {
-			for _, fn := range cleanups {
-				fn()
-			}
-			return nil, err
-		}
-		cleanups = append(cleanups, cleanup)
-		rc.Mounts[i].Src = sandboxed
+	sandboxed, cleanup, err := prepareGemini(geminiDir)
+	if err != nil {
+		return nil, err
 	}
-
-	return func() {
-		for _, fn := range cleanups {
-			fn()
-		}
-	}, nil
+	rc.Mounts = append(rc.Mounts, config.Mount{
+		Src:  sandboxed,
+		Dest: geminiDir,
+		Mode: "rw",
+	})
+	return cleanup, nil
 }

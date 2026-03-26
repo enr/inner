@@ -89,41 +89,39 @@ func prepareCursorConfig(src string) (string, func(), error) {
 	return tmp, cleanup, nil
 }
 
-// applyCursor replaces mounts for ~/.cursor and ~/.config/cursor with sandboxed
-// temporary clones. Returns the cleanup function; the caller must defer it.
+// applyCursor injects sandbox mounts for ~/.cursor and ~/.config/cursor into rc.
+// It creates sandboxed temporary clones of both directories and appends their
+// mounts to rc.Mounts. Returns the cleanup function; the caller must defer it.
 func applyCursor(rc *config.RunConfig) (func(), error) {
-	return applyCursorDirs(rc, cursorHomeDir(), cursorConfigDir())
-}
+	homeDir := cursorHomeDir()
+	cfgDir := cursorConfigDir()
 
-// applyCursorDirs is the testable core of applyCursor.
-func applyCursorDirs(rc *config.RunConfig, homeDir, cfgDir string) (func(), error) {
 	var cleanups []func()
 
-	for i, m := range rc.Mounts {
-		switch m.Src {
-		case homeDir:
-			sandboxed, cleanup, err := prepareCursor(m.Src)
-			if err != nil {
-				for _, fn := range cleanups {
-					fn()
-				}
-				return nil, err
-			}
-			cleanups = append(cleanups, cleanup)
-			rc.Mounts[i].Src = sandboxed
-
-		case cfgDir:
-			sandboxed, cleanup, err := prepareCursorConfig(m.Src)
-			if err != nil {
-				for _, fn := range cleanups {
-					fn()
-				}
-				return nil, err
-			}
-			cleanups = append(cleanups, cleanup)
-			rc.Mounts[i].Src = sandboxed
-		}
+	sandboxedHome, cleanupHome, err := prepareCursor(homeDir)
+	if err != nil {
+		return nil, err
 	}
+	cleanups = append(cleanups, cleanupHome)
+	rc.Mounts = append(rc.Mounts, config.Mount{
+		Src:  sandboxedHome,
+		Dest: homeDir,
+		Mode: "rw",
+	})
+
+	sandboxedCfg, cleanupCfg, err := prepareCursorConfig(cfgDir)
+	if err != nil {
+		for _, fn := range cleanups {
+			fn()
+		}
+		return nil, err
+	}
+	cleanups = append(cleanups, cleanupCfg)
+	rc.Mounts = append(rc.Mounts, config.Mount{
+		Src:  sandboxedCfg,
+		Dest: cfgDir,
+		Mode: "rw",
+	})
 
 	return func() {
 		for _, fn := range cleanups {

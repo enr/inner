@@ -130,12 +130,10 @@ cat > "$CLAUDE" <<'EOF'
 schema_version = "1"
 name           = "inner-e2e-claude"
 description    = "e2e test profile — claude home sandboxing"
+capabilities   = ["claude"]
 
 [sandbox]
 network = false
-
-[mounts]
-"~/.claude" = { dest = "~/.claude", mode = "rw" }
 
 [env]
 clearenv = true

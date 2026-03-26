@@ -199,6 +199,66 @@ func (a *App) profileShow(w io.Writer, nameOrPath string) error {
 	return err
 }
 
+// profileShowExplain writes the raw TOML content of a profile to w, followed
+// by a human-readable explanation of each capability it declares (including
+// capabilities inherited via extends). If the merged profile cannot be loaded,
+// the capability section is silently omitted so the raw TOML is always shown.
+func (a *App) profileShowExplain(w io.Writer, nameOrPath string) error {
+	// 1. Print the raw TOML file (same as profileShow).
+	if err := a.profileShow(w, nameOrPath); err != nil {
+		return err
+	}
+
+	// 2. Load the merged profile to resolve inherited capabilities.
+	p, err := a.loader.LoadProfileAuto(nameOrPath)
+	if err != nil || len(p.Capabilities) == 0 {
+		return nil // graceful degradation: raw TOML already shown
+	}
+
+	fmt.Fprintln(w)
+	for _, name := range p.Capabilities {
+		cap, ok := capabilityRegistry[name]
+		if !ok {
+			continue
+		}
+		printCapabilityExplain(w, name, cap.Explain())
+	}
+	return nil
+}
+
+// printCapabilityExplain writes a formatted capability section to w.
+func printCapabilityExplain(w io.Writer, name string, e CapabilityExplain) {
+	const lineWidth = 70
+	header := "── capability: " + name + " "
+	dashes := lineWidth - len(header)
+	if dashes < 4 {
+		dashes = 4
+	}
+	fmt.Fprintf(w, "%s%s\n", header, strings.Repeat("─", dashes))
+
+	if len(e.Mounts) > 0 {
+		fmt.Fprintln(w, "  mounts injected at runtime:")
+		for _, m := range e.Mounts {
+			fmt.Fprintf(w, "    %-22s → %-22s [safe copy]\n", m.Src, m.Dest)
+			if m.Detail != "" {
+				fmt.Fprintf(w, "    %-22s   %s\n", "", m.Detail)
+			}
+		}
+	}
+	if len(e.PreRun) > 0 {
+		fmt.Fprintln(w, "  pre-run:")
+		for _, action := range e.PreRun {
+			fmt.Fprintf(w, "    %s\n", action)
+		}
+	}
+	if len(e.Notes) > 0 {
+		fmt.Fprintln(w, "  notes:")
+		for _, note := range e.Notes {
+			fmt.Fprintf(w, "    %s\n", note)
+		}
+	}
+}
+
 // resolveValidateNames returns the list of profile names to validate.
 // If all is true it reads the profiles directory; otherwise it uses args.
 func (a *App) resolveValidateNames(args []string, all bool) ([]string, error) {
@@ -350,14 +410,19 @@ func (a *App) profileListCmd() *cobra.Command {
 }
 
 func (a *App) profileShowCmd() *cobra.Command {
+	var explain bool
 	cmd := &cobra.Command{
 		Use:   "show NAME|PATH",
 		Short: "Print the contents of a profile (name or file path)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if explain {
+				return a.profileShowExplain(cmd.OutOrStdout(), args[0])
+			}
 			return a.profileShow(cmd.OutOrStdout(), args[0])
 		},
 	}
+	cmd.Flags().BoolVar(&explain, "explain", false, "Append human-readable capability details after the raw TOML")
 	cmd.ValidArgsFunction = func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
 	}

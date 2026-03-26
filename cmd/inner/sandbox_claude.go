@@ -225,31 +225,35 @@ func prepareClaude(src string) (string, func(), error) {
 	return tmp, cleanup, nil
 }
 
-// applyClaude replaces any mount whose Src is ~/.claude with a sandboxed
-// temporary clone. Returns the cleanup function; the caller must defer it.
+// applyClaude injects the claude sandbox mounts into rc.
+// It creates a sandboxed temporary clone of ~/.claude and — when ~/.claude.json
+// exists on the host — a temporary copy of that file, then appends both mounts
+// to rc.Mounts.
+//
+// Token refresh: if the OAuth token is detectably expired, "claude --version"
+// is run on the host before copying .credentials.json so the freshest token is
+// always captured in the sandbox. Warnings are written to os.Stderr.
 func applyClaude(rc *config.RunConfig) (func(), error) {
-	return applyClaudeDir(rc, claudeHomeDir())
-}
+	claudeDir := claudeHomeDir()
 
-// applyClaudeDir is the testable core of applyClaude: it matches mounts by
-// comparing their Src against claudeDir instead of the real ~/.claude path.
-func applyClaudeDir(rc *config.RunConfig, claudeDir string) (func(), error) {
+	// Pre-flight: attempt a token refresh if the stored token is expired.
+	credPath := filepath.Join(claudeDir, ".credentials.json")
+	if expired, _ := claudeTokenExpired(credPath); expired {
+		ensureClaudeTokenFresh(os.Stderr)
+	}
+
 	var cleanups []func()
 
-	for i, m := range rc.Mounts {
-		if m.Src != claudeDir {
-			continue
-		}
-		sandboxed, cleanup, err := prepareClaude(m.Src)
-		if err != nil {
-			for _, fn := range cleanups {
-				fn()
-			}
-			return nil, err
-		}
-		cleanups = append(cleanups, cleanup)
-		rc.Mounts[i].Src = sandboxed
+	sandboxed, cleanup, err := prepareClaude(claudeDir)
+	if err != nil {
+		return nil, err
 	}
+	cleanups = append(cleanups, cleanup)
+	rc.Mounts = append(rc.Mounts, config.Mount{
+		Src:  sandboxed,
+		Dest: claudeDir,
+		Mode: "rw",
+	})
 
 	// Bind ~/.claude.json writable so claude can update UI state (numStartups,
 	// tips history, …) regardless of whether the workdir makes the home
