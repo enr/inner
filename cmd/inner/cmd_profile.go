@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/BurntSushi/toml"
 	"github.com/enr/inner/internal/profile"
 	"github.com/spf13/cobra"
 )
@@ -192,6 +194,25 @@ func (a *App) profileShow(w io.Writer, nameOrPath string) error {
 		return err
 	}
 	content := string(data)
+	if f, ok := w.(*os.File); ok && isTTY(f) {
+		content = highlightTOML(content)
+	}
+	_, err = fmt.Fprint(w, content)
+	return err
+}
+
+// profileShowResolved writes the effective (fully merged) profile to w as TOML.
+// All extends chains and capabilities are resolved before serialisation.
+func (a *App) profileShowResolved(w io.Writer, nameOrPath string) error {
+	p, err := a.loader.LoadProfileAuto(nameOrPath)
+	if err != nil {
+		return fmt.Errorf("resolving profile %q: %w", nameOrPath, err)
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(p); err != nil {
+		return fmt.Errorf("encoding resolved profile: %w", err)
+	}
+	content := buf.String()
 	if f, ok := w.(*os.File); ok && isTTY(f) {
 		content = highlightTOML(content)
 	}
@@ -410,7 +431,7 @@ func (a *App) profileListCmd() *cobra.Command {
 }
 
 func (a *App) profileShowCmd() *cobra.Command {
-	var explain bool
+	var explain, resolved bool
 	cmd := &cobra.Command{
 		Use:   "show NAME|PATH",
 		Short: "Print the contents of a profile (name or file path)",
@@ -421,13 +442,18 @@ func (a *App) profileShowCmd() *cobra.Command {
 			return cobra.ExactArgs(1)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if explain {
+			switch {
+			case resolved:
+				return a.profileShowResolved(cmd.OutOrStdout(), args[0])
+			case explain:
 				return a.profileShowExplain(cmd.OutOrStdout(), args[0])
+			default:
+				return a.profileShow(cmd.OutOrStdout(), args[0])
 			}
-			return a.profileShow(cmd.OutOrStdout(), args[0])
 		},
 	}
 	cmd.Flags().BoolVar(&explain, "explain", false, "Append human-readable capability details after the raw TOML")
+	cmd.Flags().BoolVar(&resolved, "resolved", false, "Show the effective profile after resolving extends and capabilities")
 	cmd.ValidArgsFunction = func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
 	}

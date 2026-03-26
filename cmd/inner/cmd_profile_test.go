@@ -598,6 +598,64 @@ cmd = "claude"
 	}
 }
 
+// ── profileShowResolved ───────────────────────────────────────────────────────
+
+// TestProfileShowResolved_simpleProfile verifies that --resolved outputs valid
+// TOML reflecting the profile fields.
+func TestProfileShowResolved_simpleProfile(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "shell.toml"), `
+schema_version = "1"
+name = "shell"
+
+[entrypoint]
+cmd = "bash"
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowResolved(&buf, "shell"); err != nil {
+		t.Fatalf("profileShowResolved: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, `"bash"`) {
+		t.Errorf("expected entrypoint cmd in resolved output; got:\n%s", out)
+	}
+}
+
+// TestProfileShowResolved_extendsResolved verifies that capabilities inherited
+// via extends appear in the resolved output even though the child file omits them.
+func TestProfileShowResolved_extendsResolved(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+schema_version = "1"
+name         = "base"
+capabilities = ["claude"]
+
+[entrypoint]
+cmd = "claude"
+`)
+	writeTestFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+schema_version = "1"
+name    = "child"
+extends = "base"
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowResolved(&buf, "child"); err != nil {
+		t.Fatalf("profileShowResolved: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "claude") {
+		t.Errorf("expected inherited capability 'claude' in resolved output; got:\n%s", out)
+	}
+	// The raw child file has no entrypoint; the resolved one must have it from base.
+	if !strings.Contains(out, `"claude"`) {
+		t.Errorf("expected inherited entrypoint cmd in resolved output; got:\n%s", out)
+	}
+}
+
 // ── profileTemplate ───────────────────────────────────────────────────────────
 
 func TestProfileTemplate_containsName(t *testing.T) {
