@@ -22,7 +22,7 @@ inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
 
 [entrypoint]
 cmd         = "cursor-agent"
-args        = []
+args        = ["--trust"]
 interactive = true
 # cursor-agent (Node.js/libuv) probes terminal capabilities during module init,
 # before it calls setRawMode itself — tui = true makes the launcher put
