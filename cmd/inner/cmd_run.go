@@ -97,6 +97,20 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 
+	// 5a. Warn if a declared ro mount is a subpath of the workdir.
+	// bwrap emits the workdir --bind rw after declared mounts (slice order),
+	// so a parent-directory rw bind silently shadows a child ro-bind.
+	if rc.Workdir != "" {
+		for _, m := range rc.Mounts {
+			if m.Mode != "ro" {
+				continue
+			}
+			if strings.HasPrefix(m.Dest+"/", rc.Workdir+"/") {
+				fmt.Fprintf(w, "warning: mount %q is declared ro but is under workdir %q — the ro constraint will not be enforced\n", m.Dest, rc.Workdir)
+			}
+		}
+	}
+
 	// 5b. For interactive sessions, print which profile is being used.
 	if rc.Entrypoint.Interactive {
 		profilePath := a.loader.ResolveProfilePath(profileName)

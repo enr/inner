@@ -59,6 +59,8 @@ GIT_PROF="$TMPWORK/git.toml"
 CLAUDE="$TMPWORK/claude.toml"
 INTERACTIVE="$TMPWORK/interactive.toml"  # interactive=true, for dry-run only
 MOUNTS="$TMPWORK/mounts.toml"            # declared rw mount, for dry-run only
+ROMOUNTS="$TMPWORK/romounts.toml"        # declared ro mount, for dry-run and runtime
+CHILD="$TMPWORK/child.toml"              # extends $NONET, for profile show --resolved
 
 cat > "$NONET" <<'EOF'
 schema_version = "1"
@@ -191,6 +193,41 @@ interactive = false
 timeout_seconds = 15
 EOF
 
+# Note: unquoted EOF so $TMPWORK is expanded into the TOML at write time.
+cat > "$ROMOUNTS" <<EOF
+schema_version = "1"
+name           = "inner-e2e-romounts"
+description    = "e2e test profile — declared ro mount"
+
+[sandbox]
+network = false
+
+[mounts]
+"$TMPWORK" = { dest = "$TMPWORK", mode = "ro" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+# Note: unquoted EOF so $NONET is expanded into the TOML at write time.
+cat > "$CHILD" <<EOF
+schema_version = "1"
+name           = "inner-e2e-child"
+description    = "e2e test profile — extends nonet"
+extends        = "$NONET"
+
+[output]
+timeout_seconds = 30
+EOF
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 section "Working directory"
@@ -242,6 +279,12 @@ else
     pass "/usr is read-only: write correctly denied"
 fi
 
+if run_sandbox "$NONET" -- -c "touch /etc/inner-e2e-probe 2>/dev/null" 2>/dev/null; then
+    fail "/etc is read-only: write succeeded (should have been denied)"
+else
+    pass "/etc is read-only: write correctly denied"
+fi
+
 TMPFILE="/tmp/inner-e2e-isolation-$$"
 run_sandbox "$NONET" -- -c "touch '$TMPFILE'" 2>/dev/null || true
 if [[ -f "$TMPFILE" ]]; then
@@ -249,6 +292,74 @@ if [[ -f "$TMPFILE" ]]; then
     rm -f "$TMPFILE"
 else
     pass "/tmp is isolated: file in sandbox /tmp not visible on host"
+fi
+
+# $RODIR must be completely outside the cwd ($TMPWORK): inner adds the cwd
+# --bind rw AFTER declared mounts, which would hide a ro-bind on any subdir.
+RODIR=$(mktemp -d)
+ROFILE="$RODIR/ro-target.txt"
+echo "readonly-content" > "$ROFILE"
+ROMOUNTS_RT="$TMPWORK/romounts-rt.toml"
+cat > "$ROMOUNTS_RT" <<EOF
+schema_version = "1"
+name           = "inner-e2e-romounts-rt"
+
+[sandbox]
+network = false
+
+[mounts]
+"$RODIR" = { dest = "$RODIR", mode = "ro" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+if run_sandbox "$ROMOUNTS_RT" -w "$TMPWORK" -- -c "echo modified > '$ROFILE'" 2>/dev/null; then
+    fail "ro mount runtime: write to read-only mount succeeded (should be denied)"
+else
+    pass "ro mount runtime: write to read-only mount correctly denied"
+fi
+rm -rf "$RODIR"
+
+# ro mount under workdir: inner should emit a warning because the workdir rw
+# bind (emitted last by bwrap) silently shadows the declared ro subpath.
+ROSUBDIR="$TMPWORK/ro-subdir-$$"
+mkdir -p "$ROSUBDIR"
+echo "readonly-content" > "$ROSUBDIR/ro-target.txt"
+ROMOUNTS_WARN="$TMPWORK/romounts-warn.toml"
+cat > "$ROMOUNTS_WARN" <<EOF
+schema_version = "1"
+name           = "inner-e2e-romounts-warn"
+
+[sandbox]
+network = false
+
+[mounts]
+"$ROSUBDIR" = { dest = "$ROSUBDIR", mode = "ro" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+WARN_OUT=$(inner run -p "$ROMOUNTS_WARN" --no-interactive -w "$TMPWORK" -- -c true 2>/dev/null || true)
+if echo "$WARN_OUT" | grep -q "warning:.*ro.*workdir\|warning:.*workdir.*ro"; then
+    pass "ro mount under workdir: warning emitted"
+else
+    fail "ro mount under workdir: expected warning about ro mount under workdir, got: '$WARN_OUT'"
 fi
 
 # ── Network ───────────────────────────────────────────────────────────────────
@@ -400,6 +511,51 @@ else
     fail "--args-file multiline: expected 1 newline in single arg, wc -l returned '$LINE_COUNT'"
 fi
 
+# ── inner profile show ────────────────────────────────────────────────────────
+
+section "inner profile show"
+
+SHOW_OUT=$(inner profile show "$NONET" 2>/dev/null || true)
+if echo "$SHOW_OUT" | grep -q "inner-e2e-nonet"; then
+    pass "profile show: output contains profile name"
+else
+    fail "profile show: profile name not found in output"
+fi
+
+RESOLVED_OUT=$(inner profile show --resolved "$NONET" 2>/dev/null || true)
+if echo "$RESOLVED_OUT" | grep -q "inner-e2e-nonet"; then
+    pass "profile show --resolved: output contains profile name"
+else
+    fail "profile show --resolved: profile name not found in resolved output"
+fi
+
+EXPLAIN_OUT=$(inner profile show --explain "$CLAUDE" 2>/dev/null || true)
+if echo "$EXPLAIN_OUT" | grep -qi "claude\|capability"; then
+    pass "profile show --explain: capability explanation present"
+else
+    fail "profile show --explain: no capability explanation in output"
+fi
+
+if inner profile show "$TMPWORK/does-not-exist.toml" >/dev/null 2>&1; then
+    fail "profile show: nonexistent profile should exit non-zero"
+else
+    pass "profile show: nonexistent profile correctly exits non-zero"
+fi
+
+section "inner profile show --resolved with extends"
+
+RESOLVED=$(inner profile show --resolved "$CHILD" 2>/dev/null || true)
+if echo "$RESOLVED" | grep -q "network.*=.*false"; then
+    pass "profile show --resolved extends: inherited network=false from base"
+else
+    fail "profile show --resolved extends: network=false not found in resolved output"
+fi
+if echo "$RESOLVED" | grep -q "timeout_seconds.*=.*30"; then
+    pass "profile show --resolved extends: child override timeout_seconds=30 present"
+else
+    fail "profile show --resolved extends: timeout_seconds override not found"
+fi
+
 # ── Dry-run: bwrap command verification ───────────────────────────────────────
 # These tests inspect the bwrap command that inner would execute, without
 # actually running the sandbox. They verify that flag decisions are correct
@@ -476,6 +632,49 @@ else
     printf "  [SKIP] ~/.bash_history not found, skipping bash-history hiding test\n"
 fi
 
+section "Dry-run: additional sensitive resource hiding"
+
+for _item in \
+    "gpg-keys:.gnupg:d" \
+    "git-credentials:.git-credentials:f" \
+    "netrc:.netrc:f" \
+    "zsh-history:.zsh_history:f"
+do
+    _label="${_item%%:*}"; _rest="${_item#*:}"; _base="${_rest%%:*}"; _kind="${_rest##*:}"
+    _path="$HOME/$_base"
+    if { [[ "$_kind" == "d" ]] && [[ -d "$_path" ]]; } || \
+       { [[ "$_kind" == "f" ]] && [[ -f "$_path" ]]; }; then
+        _line=$(bwrap_line "$NONET")
+        if echo "$_line" | grep -qF "$_base"; then
+            pass "$_label: $_path referenced in bwrap command (hidden)"
+        else
+            fail "$_label: $_path not hidden in bwrap command"
+        fi
+    else
+        printf "  [SKIP] %s not found, skipping %s hiding test\n" "$_path" "$_label"
+    fi
+done
+
+section "Dry-run: capabilities"
+
+if [[ -d "$HOME/.claude" ]]; then
+    LINE=$(bwrap_line "$CLAUDE")
+    if echo "$LINE" | grep -qF ".claude"; then
+        pass "claude capability: ~/.claude referenced in bwrap command"
+    else
+        fail "claude capability: ~/.claude not referenced in bwrap command"
+    fi
+
+    LINE_NOCAP=$(bwrap_line "$NONET")
+    if echo "$LINE_NOCAP" | grep -qF ".claude"; then
+        fail "no-capability profile: ~/.claude unexpectedly present in bwrap command"
+    else
+        pass "no-capability profile: ~/.claude correctly absent from bwrap command"
+    fi
+else
+    printf "  [SKIP] ~/.claude not found, skipping claude capability dry-run\n"
+fi
+
 section "Dry-run: declared mounts"
 
 LINE=$(bwrap_line "$MOUNTS")
@@ -483,6 +682,21 @@ if echo "$LINE" | grep -qF -- "--bind $TMPWORK $TMPWORK"; then
     pass "rw mount: --bind $TMPWORK $TMPWORK present in bwrap command"
 else
     fail "rw mount: --bind $TMPWORK $TMPWORK missing from bwrap command"
+fi
+
+LINE=$(bwrap_line "$ROMOUNTS")
+if echo "$LINE" | grep -qF -- "--ro-bind $TMPWORK $TMPWORK"; then
+    pass "ro mount: --ro-bind $TMPWORK $TMPWORK present in bwrap command"
+else
+    fail "ro mount: --ro-bind $TMPWORK $TMPWORK missing from bwrap command"
+fi
+
+# Verify rw mount does not use --ro-bind
+LINE=$(bwrap_line "$MOUNTS")
+if echo "$LINE" | grep -qF -- "--ro-bind $TMPWORK $TMPWORK"; then
+    fail "rw mount: --ro-bind found instead of --bind"
+else
+    pass "rw mount: --bind used (not --ro-bind)"
 fi
 
 section "Dry-run: working directory"
