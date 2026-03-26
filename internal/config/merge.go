@@ -111,6 +111,9 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("entrypoint", "tui") {
 		result.Entrypoint.TUI = overlay.Entrypoint.TUI
 	}
+	if meta.IsDefined("entrypoint", "cursor_fix") {
+		result.Entrypoint.CursorFix = overlay.Entrypoint.CursorFix
+	}
 	if meta.IsDefined("entrypoint", "workdir") {
 		result.Entrypoint.Workdir = overlay.Entrypoint.Workdir
 	}

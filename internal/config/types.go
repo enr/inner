@@ -121,6 +121,16 @@ type EntrypointConfig struct {
 	// Plain interactive shells (bash, zsh) must NOT set this: they configure
 	// the terminal themselves and pre-raw mode breaks bracketed-paste echo.
 	TUI bool `toml:"tui"`
+	// CursorFix selects a strategy to repair cursor position after a TUI app
+	// exits without fully restoring the terminal. Allowed values:
+	//   ""         – no fix (default)
+	//   "newlines" – print \r\n after inner's child exits; suitable when the
+	//                entrypoint is a TUI app that doesn't need ForceRawMode.
+	//   "shell"    – inject PROMPT_COMMAND so bash resets the cursor and clears
+	//                stale TUI content before each prompt, and also print \r\n
+	//                after inner's child (the shell) exits. Use this when the
+	//                entrypoint is bash/zsh that will run TUI children.
+	CursorFix string `toml:"cursor_fix"`
 	// Workdir sets the default working directory inside the sandbox.
 	// Overridable at runtime via --workdir / -w; if neither is set the
 	// caller's cwd is used. Supports ~ expansion and ${workspaces_path}.

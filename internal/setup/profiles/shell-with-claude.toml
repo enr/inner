@@ -9,6 +9,8 @@ args        = []
 interactive = true
 # bash does not need raw mode pre-start (unlike the claude Node.js runtime)
 tui         = false
+# bash will run claude interactively; fix cursor position after claude exits
+cursor_fix  = "shell"
 history     = [
   "claude",
   "claude --dangerously-skip-permissions",

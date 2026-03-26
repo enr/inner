@@ -414,7 +414,12 @@ func (a *App) profileShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show NAME|PATH",
 		Short: "Print the contents of a profile (name or file path)",
-		Args:  cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("requires a profile name or path\n\nUsage: %s", cmd.UseLine())
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if explain {
 				return a.profileShowExplain(cmd.OutOrStdout(), args[0])

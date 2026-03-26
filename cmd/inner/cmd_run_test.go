@@ -549,3 +549,57 @@ allow = ["ssh-keys", "not-a-valid-key"]
 		t.Errorf("error should mention the bad key, got: %v", err)
 	}
 }
+
+// ── cursor_fix ────────────────────────────────────────────────────────────────
+
+func TestRunSandbox_cursorFixShell_injectsPromptCommand(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "fix-shell", `
+[entrypoint]
+cmd        = "/bin/bash"
+interactive = true
+cursor_fix = "shell"
+`)
+	var buf bytes.Buffer
+	if err := app.runSandbox(&buf, runCLIFlags{dryRun: true, profile: "fix-shell"}, nil); err != nil {
+		t.Fatalf("runSandbox: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "PROMPT_COMMAND") {
+		t.Errorf("expected PROMPT_COMMAND in dry-run output for cursor_fix=shell, got:\n%s", out)
+	}
+}
+
+func TestRunSandbox_cursorFixNone_noPromptCommand(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "fix-none", `
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = true
+`)
+	var buf bytes.Buffer
+	if err := app.runSandbox(&buf, runCLIFlags{dryRun: true, profile: "fix-none"}, nil); err != nil {
+		t.Fatalf("runSandbox: %v", err)
+	}
+	if strings.Contains(buf.String(), "PROMPT_COMMAND") {
+		t.Errorf("unexpected PROMPT_COMMAND in dry-run output when cursor_fix is unset")
+	}
+}
+
+func TestRunSandbox_cursorFixNewlines_noPromptCommand(t *testing.T) {
+	// cursor_fix="newlines" prints \r\n on exit but does NOT inject PROMPT_COMMAND.
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "fix-newlines", `
+[entrypoint]
+cmd        = "/bin/bash"
+interactive = true
+cursor_fix = "newlines"
+`)
+	var buf bytes.Buffer
+	if err := app.runSandbox(&buf, runCLIFlags{dryRun: true, profile: "fix-newlines"}, nil); err != nil {
+		t.Fatalf("runSandbox: %v", err)
+	}
+	if strings.Contains(buf.String(), "PROMPT_COMMAND") {
+		t.Errorf("unexpected PROMPT_COMMAND in dry-run output for cursor_fix=newlines")
+	}
+}

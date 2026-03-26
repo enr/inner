@@ -29,6 +29,10 @@ type RunOptions struct {
 	// For plain shells (bash, sh, zsh) this must be false: bash configures the
 	// terminal itself via readline, and pre-raw mode breaks paste echo.
 	ForceRawMode bool
+	// CursorFix selects a cursor-repair strategy ("", "newlines", "shell").
+	// Any non-empty value causes \r\n to be printed after the child exits.
+	// Implied when ForceRawMode is true.
+	CursorFix string
 	// PostStart, if non-nil, is called in a goroutine immediately after the
 	// process is started. It runs concurrently with the process and must not
 	// block indefinitely. Errors are logged but do not abort the run.
@@ -91,7 +95,7 @@ func (l *Launcher) Run(cmd *exec.Cmd, opts RunOptions) (RunResult, error) {
 	var exitCode int
 	var err error
 	if opts.Interactive {
-		exitCode, err = l.runInteractive(cmd, opts.Timeout, opts.ForceRawMode, opts.PostStart, logFile)
+		exitCode, err = l.runInteractive(cmd, opts.Timeout, opts.ForceRawMode, opts.ForceRawMode || opts.CursorFix != "", opts.PostStart, logFile)
 	} else {
 		exitCode, err = l.runNonInteractive(cmd, opts.Timeout, opts.PostStart, logFile)
 	}
@@ -150,7 +154,7 @@ func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, postStart fu
 // Consequence: output cannot be tee'd to a log file during an interactive
 // session (piping stdout would turn it into a non-TTY from the app's
 // perspective and break TUI rendering). The log parameter is ignored.
-func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bool, postStart func() error, _ *os.File) (int, error) {
+func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bool, cursorFix bool, postStart func() error, _ *os.File) (int, error) {
 	// forceRawMode: put the terminal in raw mode before the child starts so
 	// that terminal capability responses (DA, XTVERSION, etc.) are available
 	// immediately, without cooked-mode line-discipline buffering.
@@ -202,7 +206,16 @@ func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bo
 	forwardSignals(cmd, done)
 	applyTimeout(cmd, timeoutSec, done)
 
-	return waitExitCode(cmd)
+	code, err := waitExitCode(cmd)
+
+	// After a TUI child exits (e.g. on SIGINT) the cursor may be left anywhere
+	// inside the TUI area. Print \r\n so the host shell prompt always appears
+	// on a fresh line below whatever was drawn last.
+	if cursorFix {
+		_, _ = fmt.Fprint(l.Stdout, "\r\n\r\n\r\n")
+	}
+
+	return code, err
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

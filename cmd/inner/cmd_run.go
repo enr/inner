@@ -124,7 +124,23 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		rc.Env.Set["PS1"] = sandboxPS1()
 	}
 
-	// 5d. For TUI sessions, inject COLUMNS and LINES from the actual host
+	// 5d. For shell sessions with cursor_fix = "shell", inject PROMPT_COMMAND
+	//     so that bash resets the cursor and clears stale TUI content (left by
+	//     e.g. claude after CTRL+C) before showing each prompt. Prepended to
+	//     any existing PROMPT_COMMAND so user customisation is preserved.
+	if rc.Entrypoint.CursorFix == "shell" {
+		const fix = `printf '\r\n\033[J'`
+		if rc.Env.Set == nil {
+			rc.Env.Set = make(map[string]string)
+		}
+		if existing, ok := rc.Env.Set["PROMPT_COMMAND"]; ok && existing != "" {
+			rc.Env.Set["PROMPT_COMMAND"] = fix + "; " + existing
+		} else {
+			rc.Env.Set["PROMPT_COMMAND"] = fix
+		}
+	}
+
+	// 5f. For TUI sessions, inject COLUMNS and LINES from the actual host
 	//     terminal so that Node.js apps (cursor-agent, claude) get the correct
 	//     dimensions even when clearenv removes the parent-shell values and
 	//     TIOCGWINSZ is unavailable or returns 0 inside the sandbox.
@@ -242,6 +258,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	result, err := launcher.Run(cmd, executor.RunOptions{
 		Interactive:  rc.Entrypoint.Interactive,
 		ForceRawMode: rc.Entrypoint.TUI,
+		CursorFix:    rc.Entrypoint.CursorFix,
 		PostStart:    postStart,
 		Timeout:      rc.Timeout,
 		LogDir:       rc.LogDir,

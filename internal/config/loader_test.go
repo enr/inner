@@ -1234,3 +1234,103 @@ name           = "plain"
 		t.Errorf("Capabilities = %v, want empty for profile without capabilities", p.Capabilities)
 	}
 }
+
+// --- cursor_fix tests ---
+
+func TestLoadProfile_cursorFixParsed(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "shell.toml"), `
+schema_version = "1"
+name = "shell"
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = true
+cursor_fix  = "shell"
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("shell")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Entrypoint.CursorFix != "shell" {
+		t.Errorf("CursorFix = %q, want %q", p.Entrypoint.CursorFix, "shell")
+	}
+}
+
+func TestBuild_cursorFix_propagatedToRunConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "shell.toml"), `
+schema_version = "1"
+name = "shell"
+
+[entrypoint]
+cmd        = "/bin/bash"
+cursor_fix = "newlines"
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("shell")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if rc.Entrypoint.CursorFix != "newlines" {
+		t.Errorf("RunConfig.Entrypoint.CursorFix = %q, want %q", rc.Entrypoint.CursorFix, "newlines")
+	}
+}
+
+func TestLoadProfile_extends_cursorFixInherited(t *testing.T) {
+	// cursor_fix set in parent is inherited by child when child omits it.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+schema_version = "1"
+name = "base"
+
+[entrypoint]
+cmd        = "/bin/bash"
+cursor_fix = "shell"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+schema_version = "1"
+name    = "child"
+extends = "base"
+
+[env]
+set = { "FOO" = "bar" }
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Entrypoint.CursorFix != "shell" {
+		t.Errorf("CursorFix = %q, want inherited %q", p.Entrypoint.CursorFix, "shell")
+	}
+}
+
+func TestLoadProfile_extends_cursorFixOverridden(t *testing.T) {
+	// Child can override cursor_fix set by parent.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+schema_version = "1"
+name = "base"
+
+[entrypoint]
+cursor_fix = "shell"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+schema_version = "1"
+name    = "child"
+extends = "base"
+
+[entrypoint]
+cursor_fix = "newlines"
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Entrypoint.CursorFix != "newlines" {
+		t.Errorf("CursorFix = %q, want %q (child override)", p.Entrypoint.CursorFix, "newlines")
+	}
+}

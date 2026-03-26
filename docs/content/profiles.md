@@ -376,6 +376,7 @@ Defines what runs inside the sandbox.
 | `args` | list | `[]` | Arguments passed to `cmd` |
 | `interactive` | bool | `true` | Whether to allocate a PTY |
 | `tui` | bool | `false` | Mark as a TUI app that probes terminal capabilities at startup (see below) |
+| `cursor_fix` | string | `""` | Cursor-repair strategy after a TUI app exits (see below) |
 | `workdir` | string | `""` | Default working directory inside the sandbox. Supports `~` and `${workspaces_path}`. Overridable with `--workdir`/`-w` at runtime; falls back to the caller's cwd if unset. |
 | `history` | list | `[]` | Commands pre-loaded into the shell history. Recall them with the up-arrow key immediately after entering the sandbox. Currently supported for interactive bash sessions; silently ignored for other shells. |
 
@@ -412,6 +413,30 @@ Some applications (claude, gemini) are built on runtimes like Node.js/libuv that
 Setting `tui = true` tells the launcher to put the host terminal in raw mode **before** the child starts, so those early queries are answered immediately.
 
 Plain interactive shells (`bash`, `zsh`) must **not** set this: they configure the terminal themselves via readline, and pre-raw mode breaks bracketed-paste echo.
+
+### `cursor_fix` — cursor repair after TUI exit
+
+When a TUI application (e.g. claude) is interrupted with CTRL+C it may leave the cursor in the middle of its rendered area instead of moving it below. The `cursor_fix` field selects a repair strategy:
+
+| Value | Effect |
+|-------|--------|
+| `""` (default) | No repair — cursor position is unchanged after exit |
+| `"newlines"` | Prints `\r\n\r\n\r\n` after inner's child process exits. Suitable when the entrypoint **is** the TUI app but `tui = true` is not used (rare). |
+| `"shell"` | For bash/zsh entrypoints that **run** TUI children interactively. Does two things: injects a `PROMPT_COMMAND` into the sandbox so bash moves the cursor and clears stale TUI content before each prompt; and prints `\r\n` after the shell itself exits. |
+
+**Use `cursor_fix = "shell"` when the entrypoint is a shell (bash/zsh) and the user will launch TUI apps inside it.** This is the value used by the built-in `shell-with-claude` profile.
+
+```toml
+[entrypoint]
+cmd        = "/bin/bash"
+interactive = true
+tui        = false        # bash manages the terminal itself
+cursor_fix = "shell"      # fix cursor after claude (or any TUI child) exits
+```
+
+The `PROMPT_COMMAND` injection prepends `printf '\r\n\033[J'` to any existing `PROMPT_COMMAND` value — it resets the cursor to column 0, moves down one line, and clears any stale TUI content below. User-defined `PROMPT_COMMAND` entries set via `[env.set]` are preserved.
+
+**Note:** `cursor_fix` and `tui` address different problems and can coexist, but for plain shell entrypoints only `cursor_fix = "shell"` is needed — do **not** set `tui = true` for bash/zsh.
 
 ---
 
