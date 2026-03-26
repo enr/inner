@@ -186,6 +186,21 @@ func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bo
 				}
 			}
 		}
+	} else {
+		// For plain interactive shells (bash, zsh, …) the terminal may be in
+		// an enhanced keyboard mode (kitty keyboard protocol, CSI-u, XTerm
+		// modifyOtherKeys). In that mode the terminal emulator sends Ctrl+C
+		// as an escape sequence (e.g. \x1b[99;5u) instead of the legacy ETX
+		// byte (0x03). The shell's line editor does not understand these
+		// sequences and prints them as raw text rather than generating SIGINT.
+		// Push keyboard mode 0 (legacy) onto the terminal's mode stack before
+		// the child starts, and pop it when the child exits. Terminals that do
+		// not support the kitty keyboard protocol silently ignore these
+		// sequences, so it is safe to send them unconditionally.
+		if w, ok := l.Stdout.(*os.File); ok && term.IsTerminal(int(w.Fd())) {
+			_, _ = fmt.Fprint(w, "\x1b[>0u")
+			defer fmt.Fprint(w, "\x1b[<u") //nolint:errcheck
+		}
 	}
 
 	cmd.Stdin = l.Stdin
