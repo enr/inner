@@ -262,7 +262,7 @@ func TestPrepareClaude_doesNotExposeHistoryFromSrc(t *testing.T) {
 // ── sandboxPS1 ────────────────────────────────────────────────────────────────
 
 func TestSandboxPS1_containsInner(t *testing.T) {
-	ps1 := sandboxPS1()
+	ps1 := sandboxPS1("myprofile")
 	if ps1 == "" {
 		t.Fatal("sandboxPS1 returned empty string")
 	}
@@ -271,10 +271,10 @@ func TestSandboxPS1_containsInner(t *testing.T) {
 	}
 }
 
-func TestSandboxPS1_containsUserAndHost(t *testing.T) {
-	ps1 := sandboxPS1()
-	if !strings.Contains(ps1, `\u`) || !strings.Contains(ps1, `\h`) {
-		t.Errorf("PS1 should contain \\u and \\h, got: %q", ps1)
+func TestSandboxPS1_containsUserAndProfile(t *testing.T) {
+	ps1 := sandboxPS1("myprofile")
+	if !strings.Contains(ps1, `\u`) || !strings.Contains(ps1, "myprofile") {
+		t.Errorf("PS1 should contain \\u and profile name, got: %q", ps1)
 	}
 }
 

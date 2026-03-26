@@ -61,14 +61,14 @@ func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
 // sandboxPS1 returns a bash PS1 that makes it immediately visible that the
 // shell is running inside an inner sandbox.
 //
-// Example prompt:  (inner) enrico@mymachine:~/project $
+// Example prompt:  (inner) enrico@myprofile:~/project $
 //
 // Colour codes (bash \[…\] non-printing wrappers):
 //   - bold yellow  →  (inner)
-//   - bold green   →  user@host
+//   - bold green   →  user@profile
 //   - bold blue    →  working directory
-func sandboxPS1() string {
-	return `\[\033[1;33m\](inner)\[\033[0m\] \[\033[1;32m\]\u@\h\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ `
+func sandboxPS1(profileName string) string {
+	return `\[\033[1;33m\](inner)\[\033[0m\] \[\033[1;32m\]\u@` + profileName + `\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ `
 }
 
 // claudeTokenExpired reports whether the OAuth token in credPath appears to be
