@@ -222,6 +222,7 @@ hr { border: none; border-top: 1px solid #e8e8e8; margin: 2rem 0; }
 }
 
 .license-footer a { color: #1a6fc4; }
+.license-footer .footer-meta { margin-left: 0.75rem; opacity: 0.75; }
 
 /* ── Responsive ──────────────────────────────────────── */
 

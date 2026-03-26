@@ -23,6 +23,7 @@
     {{ block "main" . }}{{ end }}
     <footer class="license-footer">
       Licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License, Version 2.0</a>.
+      {{ with .Site.Params.currentAppVersion }}<span class="footer-meta">v{{ . }} &mdash; {{ now.Format "2006-01-02" }}</span>{{ end }}
     </footer>
   </main>
   <script>
