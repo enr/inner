@@ -25,7 +25,7 @@ func TestInit_installsDefaultProfiles(t *testing.T) {
 	if err := Init(dir); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	for _, name := range []string{"claude-interactive", "claude-one-shot", "shell", "claude-containers", "gemini-interactive", "gemini-one-shot", "shell-containers"} {
+	for _, name := range []string{"claude-interactive", "claude-one-shot", "shell", "shell-oneshot", "gemini-interactive", "gemini-one-shot", "cursor-interactive"} {
 		p := filepath.Join(dir, "profiles", name+".toml")
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("expected profile %s.toml to be installed: %v", name, err)
@@ -77,68 +77,6 @@ func TestDefaultProfilesFS_containsTomlFiles(t *testing.T) {
 		if !strings.HasSuffix(e.Name(), ".toml") {
 			t.Errorf("unexpected non-toml file in embedded profiles: %s", e.Name())
 		}
-	}
-}
-
-func TestAgentContainersProfile_uidExpansion(t *testing.T) {
-	dir := t.TempDir()
-	if err := Init(dir); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-
-	// Load the profile via config.Loader and verify ${UID} was expanded.
-	// We import config indirectly: just read the installed file and check that
-	// the raw TOML no longer contains the literal "${UID}" after Init, but
-	// the raw embedded file does (confirming the template uses it).
-	embeddedData, err := fs.ReadFile(DefaultProfilesFS(), "claude-containers.toml")
-	if err != nil {
-		t.Fatalf("reading embedded profile: %v", err)
-	}
-	if !strings.Contains(string(embeddedData), "${UID}") {
-		t.Error("embedded claude-containers.toml should contain ${UID} placeholder")
-	}
-
-	// The installed file is a byte-for-byte copy — expansion happens at load time
-	// via config.ExpandPath, not at install time.
-	installed, err := os.ReadFile(filepath.Join(dir, "profiles", "claude-containers.toml"))
-	if err != nil {
-		t.Fatalf("reading installed profile: %v", err)
-	}
-	if !strings.Contains(string(installed), "${UID}") {
-		t.Error("installed claude-containers.toml should still contain ${UID} (expanded at load time)")
-	}
-
-	// Verify the expected path template is present in the profile.
-	if !strings.Contains(string(embeddedData), "/run/user/${UID}/podman") {
-		t.Error("expected /run/user/${UID}/podman path template in embedded profile")
-	}
-}
-
-func TestAgentContainersProfile_hasVerifyCustomChecks(t *testing.T) {
-	data, err := fs.ReadFile(DefaultProfilesFS(), "claude-containers.toml")
-	if err != nil {
-		t.Fatalf("reading embedded profile: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, "[verify.custom]") {
-		t.Error("claude-containers.toml should have [verify.custom] section")
-	}
-	if !strings.Contains(content, "podman socket raggiungibile") {
-		t.Error("claude-containers.toml should have podman socket check")
-	}
-}
-
-func TestAgentContainersProfile_hasNoopBlock(t *testing.T) {
-	data, err := fs.ReadFile(DefaultProfilesFS(), "claude-containers.toml")
-	if err != nil {
-		t.Fatalf("reading embedded profile: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, "[noop]") {
-		t.Error("claude-containers.toml should have [noop] section")
-	}
-	if !strings.Contains(content, `"docker" = "podman"`) {
-		t.Error("claude-containers.toml should have docker→podman rewrite")
 	}
 }
 

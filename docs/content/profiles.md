@@ -27,22 +27,56 @@ To permanently install a remote profile, use [`inner profile install`](#inner-pr
 
 ## Built-in Profiles
 
+These profiles are embedded in the binary and installed automatically on first run (`inner init`):
+
 | Name | Description |
 |------|-------------|
 | `shell` | Interactive bash shell, no network — **default for new installations** |
 | `shell-oneshot` | Run a single shell command in sandbox (no network) |
-| `shell-with-claude` | Interactive bash shell with Claude Code available (network enabled) |
-| `shell-containers` | Interactive bash shell with Podman rootless container support |
-| `claude-interactive` | ⚠ experimental — Claude Code interactive session, network enabled |
+| `claude-interactive` | Claude Code interactive session, network enabled |
 | `claude-one-shot` | Claude Code non-interactive, `--dangerously-skip-permissions` |
-| `claude-containers` | Claude Code with Podman rootless container support |
 | `gemini-interactive` | Gemini CLI interactive session, network enabled |
 | `gemini-one-shot` | Gemini CLI non-interactive, `--yolo` |
+| `cursor-interactive` | Cursor Agent interactive session, network enabled |
 
 Inspect any built-in profile:
 
 ```bash
 inner profile show claude-interactive
+```
+
+## Contrib Profiles
+
+Additional profiles are available in the [`contrib/profiles/`](https://github.com/enr/inner/tree/main/contrib/profiles) folder of the repository. They cover more specific setups (container support, language toolchains) and can be installed on demand with `inner profile install`:
+
+| Name | Description | Requires |
+|------|-------------|----------|
+| `shell-containers` | Interactive bash shell with Podman rootless support | Podman |
+| `shell-with-claude` | Interactive bash shell with Claude Code available | — |
+| `claude-containers` | Claude Code agent with Podman rootless support | Podman |
+| `java-maven` | Interactive shell with Java + Maven + Podman | `shell-containers` |
+| `gradle-java` | Interactive shell with Java + Gradle + Podman | `shell-containers` |
+
+Install a contrib profile (name is derived from the URL automatically):
+
+```bash
+# Base URL for contrib profiles
+BASE=https://raw.githubusercontent.com/enr/inner/main/contrib/profiles
+
+inner profile install $BASE/shell-containers.toml
+inner profile install $BASE/shell-with-claude.toml
+inner profile install $BASE/claude-containers.toml
+
+# Java toolchains depend on shell-containers — install that first
+inner profile install $BASE/shell-containers.toml
+inner profile install $BASE/java-maven.toml
+inner profile install $BASE/gradle-java.toml
+```
+
+Or use a profile directly without installing it:
+
+```bash
+inner run -p $BASE/shell-containers.toml
 ```
 
 ---

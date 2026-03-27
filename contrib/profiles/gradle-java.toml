@@ -1,0 +1,17 @@
+schema_version = "1"
+name           = "gradle-java"
+description    = "Interactive shell with Java Gradle and Podman support"
+extends        = "shell-containers"
+
+[mounts]
+"~/.gradle" = { dest = "~/.gradle", mode = "rw" }
+
+[env]
+inherit = ["JAVA_HOME"]
+
+[entrypoint]
+history = [
+  "./gradlew build",
+  "./gradlew test",
+  "./gradlew clean build",
+]
