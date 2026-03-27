@@ -715,6 +715,7 @@ section "inner verify — default profiles"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROFILES_DIR="$SCRIPT_DIR/../internal/setup/profiles"
+CONTRIB_DIR="$SCRIPT_DIR/../contrib/profiles"
 PODMAN_SOCK="/run/user/$(id -u)/podman/podman.sock"
 
 run_verify() {
@@ -732,7 +733,7 @@ run_verify "shell-oneshot" "$PROFILES_DIR/shell-oneshot.toml"
 if [[ -d "$HOME/.claude" ]]; then
     run_verify "claude-interactive" "$PROFILES_DIR/claude-interactive.toml"
     run_verify "claude-one-shot"    "$PROFILES_DIR/claude-one-shot.toml"
-    run_verify "shell-with-claude"  "$PROFILES_DIR/shell-with-claude.toml"
+    run_verify "shell-with-claude"  "$CONTRIB_DIR/shell-with-claude.toml"
 else
     printf "  [SKIP] ~/.claude not found, skipping claude profile verify\n"
 fi
@@ -745,9 +746,9 @@ else
 fi
 
 if [[ -S "$PODMAN_SOCK" ]]; then
-    run_verify "shell-containers" "$PROFILES_DIR/shell-containers.toml"
+    run_verify "shell-containers" "$CONTRIB_DIR/shell-containers.toml"
     if [[ -d "$HOME/.claude" ]]; then
-        run_verify "claude-containers" "$PROFILES_DIR/claude-containers.toml"
+        run_verify "claude-containers" "$CONTRIB_DIR/claude-containers.toml"
     else
         printf "  [SKIP] ~/.claude not found, skipping claude-containers verify\n"
     fi
