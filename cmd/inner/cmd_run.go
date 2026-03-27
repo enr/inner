@@ -65,6 +65,24 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	if profileName == "" {
 		profileName = a.loader.DefaultProfileName()
 	}
+	// If the profile is a URL, download it to a temp file and use that path.
+	if config.IsURL(profileName) {
+		data, fetchErr := config.FetchURL(profileName)
+		if fetchErr != nil {
+			return fmt.Errorf("downloading profile: %w", fetchErr)
+		}
+		tmp, tmpErr := os.CreateTemp("", "inner-profile-*.toml")
+		if tmpErr != nil {
+			return fmt.Errorf("creating temp profile file: %w", tmpErr)
+		}
+		defer os.Remove(tmp.Name())
+		if _, writeErr := tmp.Write(data); writeErr != nil {
+			tmp.Close()
+			return fmt.Errorf("writing temp profile file: %w", writeErr)
+		}
+		tmp.Close()
+		profileName = tmp.Name()
+	}
 	rc, err := a.loader.Build(profileName)
 	if err != nil {
 		return err

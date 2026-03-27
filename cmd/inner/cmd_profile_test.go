@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -753,5 +755,161 @@ func TestProfileList_wideMode(t *testing.T) {
 	}
 	if !strings.Contains(out, "beta") {
 		t.Errorf("expected 'beta' in wide output, got:\n%s", out)
+	}
+}
+
+// ── profileInstallFromURL ─────────────────────────────────────────────────────
+
+const minimalProfileTOML = `schema_version = "1"
+name = "remote-test"
+description = "downloaded profile"
+`
+
+func TestProfileInstallFromURL_basic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(minimalProfileTOML))
+	}))
+	defer srv.Close()
+
+	app, dir := newTestApp(t)
+	var buf bytes.Buffer
+	url := srv.URL + "/remote-test.toml"
+	if err := app.profileInstallFromURL(&buf, url, "", false); err != nil {
+		t.Fatalf("profileInstallFromURL: %v", err)
+	}
+
+	dest := filepath.Join(dir, "profiles", "remote-test.toml")
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("reading installed profile: %v", err)
+	}
+	if string(data) != minimalProfileTOML {
+		t.Errorf("unexpected content: %q", data)
+	}
+	if !strings.Contains(buf.String(), "remote-test") {
+		t.Errorf("expected confirmation in output, got: %q", buf.String())
+	}
+}
+
+func TestProfileInstallFromURL_customName(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(minimalProfileTOML))
+	}))
+	defer srv.Close()
+
+	app, dir := newTestApp(t)
+	if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/some.toml", "custom", false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dest := filepath.Join(dir, "profiles", "custom.toml")
+	if _, err := os.Stat(dest); err != nil {
+		t.Errorf("expected file at %s: %v", dest, err)
+	}
+}
+
+func TestProfileInstallFromURL_conflictNoForce(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(minimalProfileTOML))
+	}))
+	defer srv.Close()
+
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "remote-test.toml"), `name = "existing"`)
+
+	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/remote-test.toml", "", false)
+	if err == nil {
+		t.Fatal("expected conflict error, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestProfileInstallFromURL_forceOverwrite(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(minimalProfileTOML))
+	}))
+	defer srv.Close()
+
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "remote-test.toml"), `name = "old"`)
+
+	if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/remote-test.toml", "", true); err != nil {
+		t.Fatalf("unexpected error with --force: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "profiles", "remote-test.toml"))
+	if string(data) != minimalProfileTOML {
+		t.Errorf("expected overwritten content, got: %q", data)
+	}
+}
+
+func TestProfileInstallFromURL_invalidTOML(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not = [valid toml"))
+	}))
+	defer srv.Close()
+
+	app, _ := newTestApp(t)
+	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/bad.toml", "", false)
+	if err == nil {
+		t.Fatal("expected TOML parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid TOML") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestProfileInstallFromURL_http404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	app, _ := newTestApp(t)
+	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/missing.toml", "", false)
+	if err == nil {
+		t.Fatal("expected HTTP error, got nil")
+	}
+}
+
+func TestProfileInstallFromURL_notURL(t *testing.T) {
+	app, _ := newTestApp(t)
+	err := app.profileInstallFromURL(&bytes.Buffer{}, "not-a-url", "", false)
+	if err == nil {
+		t.Fatal("expected error for non-URL, got nil")
+	}
+}
+
+func TestProfileInstallFromURL_nameFromURLSegment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(minimalProfileTOML))
+	}))
+	defer srv.Close()
+
+	tests := []struct {
+		urlPath  string
+		wantName string
+	}{
+		{"/my-profile.toml", "my-profile"},
+		{"/claude-one-shot.toml", "claude-one-shot"},
+		{"/foo", "foo"},
+	}
+	for _, tt := range tests {
+		app, dir := newTestApp(t)
+		if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+tt.urlPath, "", false); err != nil {
+			t.Errorf("URL %s: unexpected error: %v", tt.urlPath, err)
+			continue
+		}
+		dest := filepath.Join(dir, "profiles", tt.wantName+".toml")
+		if _, err := os.Stat(dest); err != nil {
+			t.Errorf("URL %s: expected file at %s: %v", tt.urlPath, dest, err)
+		}
 	}
 }

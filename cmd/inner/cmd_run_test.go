@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -601,5 +603,45 @@ cursor_fix = "newlines"
 	}
 	if strings.Contains(buf.String(), "PROMPT_COMMAND") {
 		t.Errorf("unexpected PROMPT_COMMAND in dry-run output for cursor_fix=newlines")
+	}
+}
+
+// ── URL profile in runSandbox ─────────────────────────────────────────────────
+
+const urlProfileTOML = `schema_version = "1"
+name = "url-profile"
+
+[entrypoint]
+cmd = "/bin/sh"
+interactive = false
+`
+
+func TestRunSandbox_URLProfile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(urlProfileTOML))
+	}))
+	defer srv.Close()
+
+	app, _ := newRunTestApp(t)
+	var buf bytes.Buffer
+	if err := app.runSandbox(&buf, runCLIFlags{dryRun: true, profile: srv.URL + "/url-profile.toml"}, nil); err != nil {
+		t.Fatalf("runSandbox with URL profile: %v", err)
+	}
+}
+
+func TestRunSandbox_URLProfile_fetchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	app, _ := newRunTestApp(t)
+	err := app.runSandbox(&bytes.Buffer{}, runCLIFlags{profile: srv.URL + "/missing.toml"}, nil)
+	if err == nil {
+		t.Fatal("expected error for 404 URL profile, got nil")
+	}
+	if !strings.Contains(err.Error(), "downloading profile") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

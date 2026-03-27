@@ -101,6 +101,9 @@ inner run -p shell-oneshot --arg "ls -la ~/project"
 
 # Preview the resolved config and bwrap command without running
 inner run -p claude-interactive --dry-run
+
+# Use a profile from a URL (downloaded for this run only, not saved)
+inner run -p https://raw.githubusercontent.com/acme/profiles/main/claude-restricted.toml
 ```
 
 `--dry-run` prints the resolved profile, config file paths, effective sandbox settings, and the
@@ -222,6 +225,32 @@ Clone a profile under a new name:
 ```bash
 inner profile clone claude-interactive my-agent
 ```
+
+### `inner profile install`
+
+Download and install a profile from an HTTP/HTTPS URL into `~/.inner/profiles/`:
+
+```bash
+inner profile install URL [--name NAME] [--force]
+```
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--name` | string | Override the profile name (default: last URL path segment, `.toml` stripped) |
+| `--force` | bool | Overwrite an existing profile with the same name |
+
+```bash
+# Install under the name derived from the URL
+inner profile install https://example.com/my-profile.toml
+
+# Install under a custom name
+inner profile install https://example.com/my-profile.toml --name restricted
+
+# Overwrite an existing local profile
+inner profile install https://example.com/my-profile.toml --force
+```
+
+The TOML is validated before being written to disk. Use `inner run -p URL` to try a remote profile without installing it first.
 
 ---
 

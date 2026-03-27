@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/BurntSushi/toml"
+	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/profile"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +28,7 @@ func (a *App) newProfileCmd() *cobra.Command {
 		a.profileNewCmd(),
 		a.profileEditCmd(),
 		a.profileCloneCmd(),
+		a.profileInstallCmd(),
 	)
 	return cmd
 }
@@ -380,6 +383,57 @@ func (a *App) profileClone(w io.Writer, src, dst string) error {
 	return nil
 }
 
+// profileInstallFromURL downloads a profile TOML from rawURL and installs it
+// in the global profiles directory (~/.inner/profiles/).
+// name overrides the filename derived from the URL; if empty, the last path
+// segment (without .toml extension) is used.
+// If force is false and the destination file already exists, an error is returned.
+func (a *App) profileInstallFromURL(w io.Writer, rawURL, name string, force bool) error {
+	if !config.IsURL(rawURL) {
+		return fmt.Errorf("not a URL: %s", rawURL)
+	}
+
+	// Derive the profile name from the URL path if not provided.
+	if name == "" {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return fmt.Errorf("invalid URL: %w", err)
+		}
+		segment := filepath.Base(u.Path)
+		if segment == "." || segment == "/" || segment == "" {
+			return fmt.Errorf("cannot derive profile name from URL %q — use --name", rawURL)
+		}
+		name = strings.TrimSuffix(segment, ".toml")
+		if name == "" {
+			return fmt.Errorf("cannot derive profile name from URL %q — use --name", rawURL)
+		}
+	}
+
+	data, err := config.FetchURL(rawURL)
+	if err != nil {
+		return fmt.Errorf("downloading profile: %w", err)
+	}
+
+	// Validate the TOML before writing.
+	var p config.Profile
+	if err := toml.Unmarshal(data, &p); err != nil {
+		return fmt.Errorf("invalid TOML from %s: %w", rawURL, err)
+	}
+
+	destPath := a.loader.ProfilePath(name)
+	if _, err := os.Stat(destPath); err == nil && !force {
+		return fmt.Errorf("profile %q already exists at %s (use --force to overwrite)", name, destPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("creating profiles directory: %w", err)
+	}
+	if err := os.WriteFile(destPath, data, 0o644); err != nil { //nolint:gosec
+		return fmt.Errorf("writing profile: %w", err)
+	}
+	fmt.Fprintf(w, "installed profile %q to %s\n", name, destPath)
+	return nil
+}
+
 // profileTemplate returns a starter TOML template for a new profile.
 func profileTemplate(name string) string {
 	return fmt.Sprintf(`schema_version = "1"
@@ -530,5 +584,21 @@ func (a *App) profileCloneCmd() *cobra.Command {
 		}
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+	return cmd
+}
+
+func (a *App) profileInstallCmd() *cobra.Command {
+	var name string
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "install URL",
+		Short: "Download and install a profile from a URL",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.profileInstallFromURL(cmd.OutOrStdout(), args[0], name, force)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "Override the profile name (default: derived from URL)")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing profile")
 	return cmd
 }

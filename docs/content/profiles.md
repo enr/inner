@@ -17,6 +17,14 @@ inner run -p profiles/inner-dev.toml
 inner run -p /tmp/my-test-profile.toml
 ```
 
+You can also pass an **HTTP/HTTPS URL**. `inner` downloads the TOML, validates it, and uses it for that single run — nothing is written to disk:
+
+```bash
+inner run -p https://raw.githubusercontent.com/acme/profiles/main/claude-restricted.toml
+```
+
+To permanently install a remote profile, use [`inner profile install`](#inner-profile-install).
+
 ## Built-in Profiles
 
 | Name | Description |
@@ -686,7 +694,31 @@ inner profile clone claude-interactive my-agent
 
 # Validate all profiles
 inner profile validate --all
+
+# Download and install a profile from a URL
+inner profile install https://example.com/my-profile.toml
+
+# Install with a custom local name
+inner profile install https://example.com/my-profile.toml --name my-custom-name
+
+# Overwrite an existing profile
+inner profile install https://example.com/my-profile.toml --force
 ```
+
+### `inner profile install` {#inner-profile-install}
+
+Downloads a profile TOML from an HTTP/HTTPS URL and installs it in `~/.inner/profiles/`.
+
+```
+inner profile install URL [--name NAME] [--force]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--name NAME` | Override the profile name (default: derived from the last URL path segment, `.toml` stripped) |
+| `--force` | Overwrite an existing profile with the same name |
+
+The TOML is validated before writing to disk. The downloaded profile is subject to the same constraints as any local profile — review it before running with `inner run -p <url>` or `inner profile show` after installing.
 
 ---
 
