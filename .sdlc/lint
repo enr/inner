@@ -24,10 +24,15 @@ echo "    ok"
 
 echo "==> staticcheck"
 if command -v staticcheck &>/dev/null; then
-    if staticcheck ./... 2>&1; then
+    sc_exit=0
+    sc_out=$(staticcheck ./... 2>&1) || sc_exit=$?
+    if [ "$sc_exit" -eq 0 ]; then
         echo "    ok"
+    elif echo "$sc_out" | grep -q "module requires at least\|built with go"; then
+        echo "    skipped (Go version mismatch)"
     else
-        echo "    warning: staticcheck failed (possibly version mismatch), skipped"
+        echo "$sc_out"
+        exit "$sc_exit"
     fi
 else
     echo "    skipped (staticcheck not installed)"
