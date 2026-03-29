@@ -547,7 +547,7 @@ capabilities = ["claude"]
 
 | Name | What it injects |
 |------|----------------|
-| `claude` | `~/.claude` (sanitized clone) and `~/.claude.json` (copy, if present). Also refreshes the OAuth token if expired before copying credentials. |
+| `claude` | `~/.claude` (sanitized clone) and `~/.claude.json` (copy, if present). Runs `claude auth status` on the host before copying credentials to unlock the OS credential store and refresh any expired OAuth token. |
 | `gemini` | `~/.gemini` (sanitized clone with `settings.json` only) |
 | `cursor` | `~/.cursor` (sanitized clone) and `~/.config/cursor` (sanitized clone) |
 
@@ -591,34 +591,38 @@ At runtime, `inner` **creates a sanitized temporary clone** of `~/.claude` and b
 The files are **copied** from the originals before the sandbox starts, so the originals
 remain untouched even if the agent writes to its own copies.
 
-### OAuth token expiry
+### Credential store unlock and token refresh
 
-`inner` checks whether the OAuth token in `.credentials.json` is expired **before** copying it into the sandbox. If the token looks expired, `inner` runs `claude --version` on the host to trigger Claude's automatic token refresh, then re-checks. This happens transparently:
+Before copying `.credentials.json` into the sandbox, `inner` always runs `claude auth status` on the host. This step serves two purposes:
 
-```
-inner: OAuth token expired — refreshing via host claude...
-```
+1. **OS credential store unlock.** On Linux and macOS, Claude stores its OAuth token in the OS native credential store (libsecret/gnome-keyring on Linux, Keychain on macOS). If the store is locked when the sandbox process starts, Claude cannot read its credentials even though `.credentials.json` is present. Running `claude auth status` on the host — before the sandbox is created — prompts the OS to unlock the store so the token is accessible.
 
-If the token is still expired after the refresh attempt, `inner` aborts with an actionable error instead of launching a sandbox that would immediately receive a 401:
+2. **Token refresh.** If the stored OAuth token is expired, Claude's startup sequence refreshes it silently during the `auth status` call, ensuring the freshest token is captured in the sandbox copy.
+
+`inner` then checks whether the token in `.credentials.json` is still expired after the unlock attempt. If so, it aborts with an actionable error instead of launching a sandbox that would immediately receive a 401:
 
 ```
 Claude OAuth token is expired and could not be refreshed automatically.
 Run 'claude' on the host machine to renew it, then relaunch inner.
 ```
 
-To manually renew the token, run `claude auth login` on the host. If the OAuth **refresh token** is still valid, Claude will refresh silently without opening a browser; otherwise the full browser-based login flow runs. Running `claude --version` alone may not be sufficient — it does not always write an updated token back to `.credentials.json`.
+To manually renew the token, run `claude auth login` on the host. If the OAuth **refresh token** is still valid, Claude will refresh silently without opening a browser; otherwise the full browser-based login flow runs.
 
 ### Lifecycle
 
 ```
 inner run -p claude-interactive
-  └─ prepareClaude()
-       ├─ create /tmp/inner-claude-XXXXXX/
-       ├─ copy .credentials.json  (from ~/.claude)
-       ├─ copy settings.json      (from ~/.claude, if present)
-       ├─ copy skills/            (from ~/.claude, if present)
-       └─ mkdir sessions/ cache/ projects/ tasks/ …  (empty)
-  └─ mount /tmp/inner-claude-XXXXXX -> ~/.claude inside sandbox
+  └─ applyClaude()
+       ├─ claude auth status   (host; unlocks OS credential store, refreshes token)
+       ├─ prepareClaude()
+       │    ├─ create /tmp/inner-claude-XXXXXX/
+       │    ├─ copy .credentials.json  (from ~/.claude)
+       │    ├─ copy settings.json      (from ~/.claude, if present)
+       │    ├─ copy skills/            (from ~/.claude, if present)
+       │    └─ mkdir sessions/ cache/ projects/ tasks/ …  (empty)
+       └─ copy ~/.claude.json -> /tmp/inner-claudejson-XXXXXX  (if present)
+  └─ mount /tmp/inner-claude-XXXXXX    -> ~/.claude      inside sandbox
+  └─ mount /tmp/inner-claudejson-XXXXXX -> ~/.claude.json inside sandbox
   └─ [agent runs, writes sessions/tasks/cache to the clone]
   └─ sandbox exits -> rm -rf /tmp/inner-claude-XXXXXX
      ~/.claude on the host is untouched

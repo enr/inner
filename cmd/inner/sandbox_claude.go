@@ -14,6 +14,12 @@ import (
 	"github.com/enr/inner/internal/config"
 )
 
+// hostHome captures the real user home directory at process start, before any
+// test or runtime code can alter the HOME environment variable. It is used by
+// unlockClaudeCredentials so the subprocess always targets the host credential
+// store and never a test-injected fake home.
+var hostHome = os.Getenv("HOME")
+
 // ── Interactive bash: PS1 override via --init-file ────────────────────────────
 
 // prepareInteractiveShell injects `--init-file` into bash entrypoints so our
@@ -135,24 +141,33 @@ func normaliseTimestamp(ts int64) int64 {
 	return ts
 }
 
-// ensureClaudeTokenFresh runs "claude --version" on the host with a short
-// timeout so that Claude's startup sequence can silently refresh an expired
-// OAuth token before the sandbox copies .credentials.json. This is a
-// best-effort operation: errors are reported as warnings, not failures.
-func ensureClaudeTokenFresh(w io.Writer) {
+// unlockClaudeCredentials runs "claude auth status" on the host with a short
+// timeout. This serves two purposes:
+//  1. It forces the OS native credential storage (keyring/Keychain/libsecret)
+//     to unlock before the sandbox copies .credentials.json — without this the
+//     sandbox process may start without valid credentials even when the token
+//     is not expired.
+//  2. It gives Claude's startup sequence a chance to silently refresh an
+//     expired OAuth token.
+//
+// This is a best-effort operation: errors are reported as warnings, not failures.
+func unlockClaudeCredentials(w io.Writer) {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
-		fmt.Fprintln(w, "inner: warning: claude not found in PATH; cannot pre-refresh token")
+		fmt.Fprintln(w, "inner: warning: claude not found in PATH; cannot unlock credentials")
 		return
 	}
-	fmt.Fprintln(w, "inner: OAuth token expired — refreshing via host claude...")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, claudePath, "--version")
+	cmd := exec.CommandContext(ctx, claudePath, "auth", "status")
+	// Explicitly pin HOME to the host home captured at process start so that
+	// test code (which overrides HOME with a temp dir) cannot redirect the
+	// credential unlock to a fake environment.
+	cmd.Env = append(append([]string{}, os.Environ()...), "HOME="+hostHome)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(w, "inner: warning: host claude exited with error: %v\n", err)
+		fmt.Fprintf(w, "inner: warning: host claude auth status exited with error: %v\n", err)
 	}
 }
 
@@ -230,25 +245,25 @@ func prepareClaude(src string) (string, func(), error) {
 // exists on the host — a temporary copy of that file, then appends both mounts
 // to rc.Mounts.
 //
-// Token refresh: if the OAuth token is detectably expired, "claude --version"
-// is run on the host before copying .credentials.json so the freshest token is
-// always captured in the sandbox. Warnings are written to os.Stderr.
+// Credential unlock: "claude auth status" is always run on the host before
+// copying .credentials.json. This ensures the OS native credential storage
+// (keyring/Keychain/libsecret) is unlocked and any expired OAuth token is
+// refreshed before the sandbox starts. Warnings are written to os.Stderr.
 func applyClaude(rc *config.RunConfig) (func(), error) {
 	claudeDir := claudeHomeDir()
 
-	// Pre-flight: attempt a token refresh if the stored token is expired.
+	// Pre-flight: always unlock the OS credential storage and refresh any
+	// expired token before copying .credentials.json into the sandbox.
+	unlockClaudeCredentials(os.Stderr)
+
 	credPath := filepath.Join(claudeDir, ".credentials.json")
-	if expired, _ := claudeTokenExpired(credPath); expired {
-		ensureClaudeTokenFresh(os.Stderr)
-		// Re-read the file: if the token is still expired after the refresh
-		// attempt, fail fast with an actionable message rather than letting
-		// the sandbox start and receive a 401.
-		if stillExpired, _ := claudeTokenExpired(credPath); stillExpired {
-			return nil, fmt.Errorf(
-				"Claude OAuth token is expired and could not be refreshed automatically.\n" +
-					"Run 'claude' on the host machine to renew it, then relaunch inner.",
-			)
-		}
+	// After the unlock attempt, fail fast if the token is still expired so the
+	// sandbox does not start and receive a 401.
+	if stillExpired, _ := claudeTokenExpired(credPath); stillExpired {
+		return nil, fmt.Errorf(
+			"Claude OAuth token is expired and could not be refreshed automatically.\n" +
+				"Run 'claude' on the host machine to renew it, then relaunch inner.",
+		)
 	}
 
 	var cleanups []func()
