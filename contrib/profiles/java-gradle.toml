@@ -1,5 +1,5 @@
 schema_version = "1"
-name           = "gradle-java"
+name           = "java-gradle"
 description    = "Interactive shell with Java Gradle and Podman support"
 extends        = "shell-containers"
 
