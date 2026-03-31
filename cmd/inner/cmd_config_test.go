@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/enr/inner/internal/config"
 )
 
 // ── configShow ────────────────────────────────────────────────────────────────
@@ -66,6 +68,37 @@ func TestConfigShow_localFileShown(t *testing.T) {
 	}
 	if !strings.Contains(out, "local-prof") {
 		t.Errorf("expected local config content in output, got: %s", out)
+	}
+}
+
+func TestConfigShow_noLocalSection_whenWorkDirIsConfigParent(t *testing.T) {
+	// Simulates the user running "config show" from ~:
+	//   loader.Dir     = <base>/.inner   (mirrors ~/.inner)
+	//   loader.WorkDir = <base>          (mirrors ~)
+	// → LocalConfigPath()  = <base>/.inner/config.toml
+	// → GlobalConfigPath() = <base>/.inner/config.toml
+	// Both paths coincide → the file must be shown exactly once.
+	base := t.TempDir()
+	innerDir := filepath.Join(base, ".inner")
+	if err := os.MkdirAll(innerDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	app := &App{
+		loader:   config.NewLoaderWithWorkDir(innerDir, base),
+		editorFn: func(string) error { return nil },
+	}
+	writeTestFile(t, filepath.Join(innerDir, "config.toml"), `log_dir = "/logs"`)
+
+	var buf bytes.Buffer
+	if err := app.configShow(&buf); err != nil {
+		t.Fatalf("configShow: %v", err)
+	}
+	out := buf.String()
+	if count := strings.Count(out, "# Global:"); count != 1 {
+		t.Errorf("expected exactly one '# Global:' header, got %d: %s", count, out)
+	}
+	if strings.Contains(out, "# Local:") {
+		t.Errorf("expected no '# Local:' section when paths coincide, got: %s", out)
 	}
 }
 

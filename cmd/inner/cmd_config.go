@@ -25,11 +25,12 @@ func (a *App) newConfigCmd() *cobra.Command {
 
 // configShow writes global and local config sections to w.
 func (a *App) configShow(w io.Writer) error {
-	if err := showConfigSection(w, "Global", a.loader.GlobalConfigPath()); err != nil {
+	globalPath := a.loader.GlobalConfigPath()
+	if err := showConfigSection(w, "Global", globalPath); err != nil {
 		return err
 	}
 	localPath := a.loader.LocalConfigPath()
-	if localPath == "" {
+	if localPath == "" || localPath == globalPath {
 		return nil
 	}
 	fmt.Fprintln(w)
