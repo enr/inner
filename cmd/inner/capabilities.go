@@ -65,7 +65,7 @@ func claudeExplain() CapabilityExplain {
 			},
 		},
 		PreRun: []string{
-			"OAuth token refresh: runs 'claude --version' on the host if token is expired",
+			"Credential unlock: always runs 'claude auth status' on the host to unlock the OS keyring and refresh any expired OAuth token",
 		},
 	}
 }
