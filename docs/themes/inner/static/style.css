@@ -20,12 +20,14 @@ body {
   position: sticky;
   top: 0;
   height: 100vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar-logo {
   padding: 1.5rem;
   border-bottom: 1px solid #1f2d50;
+  flex-shrink: 0;
 }
 
 .sidebar-logo a {
@@ -45,6 +47,8 @@ body {
 
 .sidebar-nav {
   padding: 0.75rem 0;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .sidebar-nav a {
@@ -67,6 +71,27 @@ body {
   font-weight: 600;
   border-left: 3px solid #7ec8f8;
   padding-left: calc(1.5rem - 3px);
+}
+
+.sidebar-footer {
+  padding: 1.25rem 1.5rem;
+  border-top: 1px solid #1f2d50;
+  font-size: 0.75rem;
+  color: #7888aa;
+  flex-shrink: 0;
+}
+
+.sidebar-footer a {
+  color: #aab4cc;
+}
+
+.sidebar-footer a:hover {
+  text-decoration: underline;
+}
+
+.sidebar-footer .version {
+  margin-top: 0.5rem;
+  color: #556688;
 }
 
 /* ── Main content ────────────────────────────────────── */
@@ -210,19 +235,6 @@ hr { border: none; border-top: 1px solid #e8e8e8; margin: 2rem 0; }
 }
 
 .download-btn:hover { background: #145ca0; }
-
-/* ── License footer ──────────────────────────────────── */
-
-.license-footer {
-  margin-top: 3rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid #e8e8e8;
-  font-size: 0.8rem;
-  color: #888;
-}
-
-.license-footer a { color: #1a6fc4; }
-.license-footer .footer-meta { margin-left: 0.75rem; opacity: 0.75; }
 
 /* ── Responsive ──────────────────────────────────────── */
 

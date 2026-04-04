@@ -46,8 +46,8 @@ CLI overrides (`applyOverrides` in `cmd_run.go`) are applied on top of the loade
 --dev /dev             minimal devtmpfs
 --bind /dev/pts /dev/pts       (always, see below)
 --dev-bind /dev/ptmx /dev/ptmx (if present, see below)
+```
 
-...
 
 `/dev/pts` is always bound read-write from the host, unconditionally. The reason: `bwrap --dev` creates a minimal devtmpfs that does not include the host's pseudo-terminal nodes. Interactive TUI apps (Node.js/claude, gemini) call `ttyname_r()` internally to resolve their controlling terminal path (e.g. `/dev/pts/3`). Without this bind the syscall returns `ENOENT` and the app cannot initialise its terminal handling. The bind is harmless for non-interactive runs.
 

@@ -11,20 +11,21 @@
     <div class="sidebar-logo">
       <a href="{{ "/inner" | absURL }}">{{ .Site.Title }}</a>
       <span class="tagline">{{ .Site.Params.tagline }}</span>
-      {{ with .Site.Params.currentAppVersion }}<span class="version">v{{ . }}</span>{{ end }}
     </div>
     <nav class="sidebar-nav">
       {{- range .Site.RegularPages.ByWeight }}
         <a href="{{ .Permalink }}"{{ if eq .Permalink $.Permalink }} class="active"{{ end }}>{{ .Title }}</a>
       {{- end }}
     </nav>
+    <div class="sidebar-footer">
+      Licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License, Version 2.0</a>.
+      {{ with .Site.Params.currentAppVersion }}
+        <div class="version">v{{ . }} &mdash; {{ now.Format "2006-01-02" }}</div>
+      {{ end }}
+    </div>
   </aside>
   <main class="main">
     {{ block "main" . }}{{ end }}
-    <footer class="license-footer">
-      Licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License, Version 2.0</a>.
-      {{ with .Site.Params.currentAppVersion }}<span class="footer-meta">v{{ . }} &mdash; {{ now.Format "2006-01-02" }}</span>{{ end }}
-    </footer>
   </main>
   <script>
     document.querySelectorAll('pre').forEach(function(pre) {
