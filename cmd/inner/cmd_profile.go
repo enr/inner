@@ -509,7 +509,7 @@ func (a *App) profileShowCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&explain, "explain", false, "Append human-readable capability details after the raw TOML")
 	cmd.Flags().BoolVar(&resolved, "resolved", false, "Show the effective profile after resolving extends and capabilities")
 	cmd.ValidArgsFunction = func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-		return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+		return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault
 	}
 	return cmd
 }
@@ -535,7 +535,7 @@ func (a *App) profileValidateCmd() *cobra.Command {
 			return nil
 		},
 		ValidArgsFunction: func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-			return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+			return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Validate all profiles")
@@ -563,7 +563,7 @@ func (a *App) profileEditCmd() *cobra.Command {
 		},
 	}
 	cmd.ValidArgsFunction = func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-		return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+		return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault
 	}
 	return cmd
 }
@@ -580,9 +580,9 @@ func (a *App) profileCloneCmd() *cobra.Command {
 	// Complete the first arg (SRC) with existing profile names; DST is a new name, no completion.
 	cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
-			return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+			return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault
 		}
-		return nil, cobra.ShellCompDirectiveNoFileComp
+		return nil, cobra.ShellCompDirectiveDefault
 	}
 	return cmd
 }

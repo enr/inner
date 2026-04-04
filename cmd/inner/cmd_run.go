@@ -726,7 +726,7 @@ to the entrypoint command.`,
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Print the sandbox command without executing it")
 
 	_ = cmd.RegisterFlagCompletionFunc("profile", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-		return a.loader.ProfileNames(), cobra.ShellCompDirectiveNoFileComp
+		return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault
 	})
 
 	return cmd

@@ -155,5 +155,9 @@ directly into your profile.`,
 	cmd.Flags().BoolVar(&flags.inside, "inside", false, "Run checks directly (internal flag, set automatically inside the sandbox)")
 	_ = cmd.Flags().MarkHidden("inside")
 
+	_ = cmd.RegisterFlagCompletionFunc("profile", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault
+	})
+
 	return cmd
 }
