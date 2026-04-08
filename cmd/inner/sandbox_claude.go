@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -141,34 +142,58 @@ func normaliseTimestamp(ts int64) int64 {
 	return ts
 }
 
-// unlockClaudeCredentials runs "claude auth status" on the host with a short
-// timeout. This serves two purposes:
-//  1. It forces the OS native credential storage (keyring/Keychain/libsecret)
-//     to unlock before the sandbox copies .credentials.json — without this the
-//     sandbox process may start without valid credentials even when the token
-//     is not expired.
-//  2. It gives Claude's startup sequence a chance to silently refresh an
-//     expired OAuth token.
+// unlockClaudeCredentials runs "claude -p '/try-login'" in the background on
+// the host. The process output is hidden; its purpose is solely to trigger the
+// OS native credential storage (keyring/Keychain/libsecret) graphical unlock
+// dialog before inner copies .credentials.json into the sandbox.
 //
-// This is a best-effort operation: errors are reported as warnings, not failures.
-func unlockClaudeCredentials(w io.Writer) {
+// After launching:
+//   - normal mode: inner prints a message and waits for the user to press Enter
+//     (or up to 800 seconds as a safety timeout), then kills the process.
+//   - autoConfirm mode (--yes): inner waits 1 second for the keyring dialog to
+//     be triggered, then kills the process and proceeds without user input.
+//
+// Errors are reported as warnings, not failures.
+func unlockClaudeCredentials(w io.Writer, autoConfirm bool) {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		fmt.Fprintln(w, "inner: warning: claude not found in PATH; cannot unlock credentials")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, claudePath, "auth", "status")
+	cmd := exec.CommandContext(ctx, claudePath, "-p", "/try-login")
 	// Explicitly pin HOME to the host home captured at process start so that
 	// test code (which overrides HOME with a temp dir) cannot redirect the
 	// credential unlock to a fake environment.
 	cmd.Env = append(append([]string{}, os.Environ()...), "HOME="+hostHome)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(w, "inner: warning: host claude auth status exited with error: %v\n", err)
+
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(w, "inner: warning: could not start claude for credential unlock: %v\n", err)
+		return
 	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait() // reap to avoid leaving a zombie process
+	}()
+
+	if autoConfirm {
+		// Allow enough time for the OS keyring dialog to be triggered before
+		// killing the process and proceeding.
+		time.Sleep(1 * time.Second)
+		return
+	}
+
+	fmt.Fprintln(w, "inner: enter your password in the system dialog if prompted, then press Enter to continue")
+
+	// Block until Enter. bufio.ReadString drains the full line so no stray
+	// bytes leak into the subsequent sandbox stdin. The subprocess is killed
+	// by the 800-second context timeout if still running, but we keep waiting
+	// here regardless — use --yes to skip this prompt entirely.
+	bufio.NewReader(os.Stdin).ReadString('\n') //nolint:errcheck
 }
 
 // claudeHomeDir returns the canonical (expanded) path to ~/.claude.
@@ -254,7 +279,7 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 
 	// Pre-flight: always unlock the OS credential storage and refresh any
 	// expired token before copying .credentials.json into the sandbox.
-	unlockClaudeCredentials(os.Stderr)
+	unlockClaudeCredentials(os.Stderr, rc.AutoConfirm)
 
 	credPath := filepath.Join(claudeDir, ".credentials.json")
 	// After the unlock attempt, fail fast if the token is still expired so the

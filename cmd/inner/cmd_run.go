@@ -48,6 +48,7 @@ type runCLIFlags struct {
 	prompt        string   // deprecated: use --arg
 	timeout       int
 	dryRun        bool
+	yes           bool
 }
 
 // ── Business logic ────────────────────────────────────────────────────────────
@@ -365,6 +366,11 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 	// Timeout.
 	if flags.timeout > 0 {
 		rc.Timeout = flags.timeout
+	}
+
+	// --yes: skip interactive confirmation prompts.
+	if flags.yes {
+		rc.AutoConfirm = true
 	}
 
 	// Workdir (-w PATH) → mount at the same path rw.
@@ -724,6 +730,7 @@ to the entrypoint command.`,
 	_ = cmd.Flags().MarkDeprecated("prompt", "use --arg instead")
 	cmd.Flags().IntVar(&flags.timeout, "timeout", 0, "Timeout in seconds (0 = none)")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Print the sandbox command without executing it")
+	cmd.Flags().BoolVarP(&flags.yes, "yes", "y", false, "Skip interactive confirmation prompts (e.g. keyring unlock)")
 
 	_ = cmd.RegisterFlagCompletionFunc("profile", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault

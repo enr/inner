@@ -44,6 +44,10 @@ type RunConfig struct {
 	// expanding the ${workspaces_path} token. The workspace manager creates
 	// these directories on the host before bwrap starts and removes them after.
 	WorkspaceDests []string
+	// AutoConfirm skips interactive "press Enter to continue" prompts that
+	// inner shows before starting the sandbox (e.g. the OS keyring unlock
+	// message for the claude capability). Set by --yes on the CLI.
+	AutoConfirm bool
 }
 
 // Mount describes a single filesystem bind mount.

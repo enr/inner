@@ -65,7 +65,7 @@ func claudeExplain() CapabilityExplain {
 			},
 		},
 		PreRun: []string{
-			"Credential unlock: always runs 'claude auth status' on the host to unlock the OS keyring and refresh any expired OAuth token",
+			"Credential unlock: runs 'claude -p /try-login' in background (output hidden) to trigger the OS keyring graphical unlock dialog; inner then waits for Enter before continuing (skip with --yes)",
 		},
 	}
 }
