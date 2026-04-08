@@ -21,6 +21,16 @@ import (
 // store and never a test-injected fake home.
 var hostHome = os.Getenv("HOME")
 
+// claudeWarningWriter is the destination for applyClaude warnings (e.g. "claude
+// not found in PATH"). It defaults to os.Stderr; integration tests redirect it
+// to io.Discard so that expected warnings do not pollute test output.
+var claudeWarningWriter io.Writer = os.Stderr
+
+// claudeAutoConfirmDelay is the time unlockClaudeCredentials waits in
+// autoConfirm mode before killing the subprocess. Override in tests to avoid
+// the 1-second sleep.
+var claudeAutoConfirmDelay = 1 * time.Second
+
 // ── Interactive bash: PS1 override via --init-file ────────────────────────────
 
 // prepareInteractiveShell injects `--init-file` into bash entrypoints so our
@@ -183,7 +193,7 @@ func unlockClaudeCredentials(w io.Writer, autoConfirm bool) {
 	if autoConfirm {
 		// Allow enough time for the OS keyring dialog to be triggered before
 		// killing the process and proceeding.
-		time.Sleep(1 * time.Second)
+		time.Sleep(claudeAutoConfirmDelay)
 		return
 	}
 
@@ -279,7 +289,7 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 
 	// Pre-flight: always unlock the OS credential storage and refresh any
 	// expired token before copying .credentials.json into the sandbox.
-	unlockClaudeCredentials(os.Stderr, rc.AutoConfirm)
+	unlockClaudeCredentials(claudeWarningWriter, rc.AutoConfirm)
 
 	credPath := filepath.Join(claudeDir, ".credentials.json")
 	// After the unlock attempt, fail fast if the token is still expired so the

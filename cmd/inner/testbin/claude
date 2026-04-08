@@ -1,0 +1,6 @@
+#!/bin/sh
+# Shim for testing unlockClaudeCredentials.
+# CLAUDE_SHIM_EXIT  – exit code to return (default: 0)
+# CLAUDE_SHIM_SLEEP – seconds to sleep before exiting (default: 0)
+sleep "${CLAUDE_SHIM_SLEEP:-0}"
+exit "${CLAUDE_SHIM_EXIT:-0}"

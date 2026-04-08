@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,34 @@ import (
 
 	"github.com/enr/inner/internal/config"
 )
+
+// TestMain redirects applyClaude warnings (e.g. "claude not found in PATH") to
+// io.Discard so expected warnings do not pollute test output, and zeroes the
+// autoConfirm delay so tests that exercise that path don't sleep for 1 second.
+func TestMain(m *testing.M) {
+	claudeWarningWriter = io.Discard
+	claudeAutoConfirmDelay = 0
+	os.Exit(m.Run())
+}
+
+// testbinDir returns the absolute path to cmd/inner/testbin, which contains
+// shim scripts for testing subprocess-dependent functions.
+func testbinDir(t *testing.T) string {
+	t.Helper()
+	// The test binary runs from the package directory, so testbin/ is a sibling.
+	abs, err := filepath.Abs("testbin")
+	if err != nil {
+		t.Fatalf("testbinDir: %v", err)
+	}
+	return abs
+}
+
+// withTestbin prepends testbin/ to PATH for the duration of the test so that
+// exec.LookPath("claude") resolves to the shim script.
+func withTestbin(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", testbinDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
 
 // makeClaudeHome builds a fake ~/.claude directory in dir with the given files.
 func makeClaudeHome(t *testing.T, dir string, files map[string]string) {
@@ -430,5 +459,49 @@ func TestApplyClaude_claudeJsonMountedAsCopy(t *testing.T) {
 	}
 	if _, err := os.Stat(claudeJsonPath); err != nil {
 		t.Error("original .claude.json should still exist after cleanup")
+	}
+}
+
+// ── unlockClaudeCredentials ───────────────────────────────────────────────────
+
+// TestUnlockClaudeCredentials_notInPath verifies that when claude is not
+// in PATH, a warning is written to w and the function returns immediately.
+func TestUnlockClaudeCredentials_notInPath(t *testing.T) {
+	t.Setenv("PATH", "") // ensure LookPath finds nothing
+
+	var buf strings.Builder
+	unlockClaudeCredentials(&buf, true)
+
+	if !strings.Contains(buf.String(), "claude not found in PATH") {
+		t.Errorf("expected 'claude not found in PATH' warning, got: %q", buf.String())
+	}
+}
+
+// TestUnlockClaudeCredentials_autoConfirm_noWarning verifies that when claude
+// is in PATH and autoConfirm=true, the function starts the shim and returns
+// without writing any warning.
+func TestUnlockClaudeCredentials_autoConfirm_noWarning(t *testing.T) {
+	withTestbin(t) // prepend testbin/ — shim exits 0
+
+	var buf strings.Builder
+	unlockClaudeCredentials(&buf, true)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no output in autoConfirm mode, got: %q", buf.String())
+	}
+}
+
+// TestUnlockClaudeCredentials_autoConfirm_shimFails verifies that a non-zero
+// exit from the shim is irrelevant — the function kills the process before it
+// exits and must not write any warning (exit code is never observed).
+func TestUnlockClaudeCredentials_autoConfirm_shimFails(t *testing.T) {
+	withTestbin(t)
+	t.Setenv("CLAUDE_SHIM_EXIT", "1")
+
+	var buf strings.Builder
+	unlockClaudeCredentials(&buf, true)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no output even when shim exits non-zero, got: %q", buf.String())
 	}
 }
