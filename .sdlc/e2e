@@ -437,7 +437,7 @@ else
     mkdir -p "$CLAUDE_DIR/sessions"
     echo "host-only" > "$SENTINEL_PATH"
 
-    RESULT=$(run_sandbox "$CLAUDE" -- \
+    RESULT=$(run_sandbox "$CLAUDE" -y -- \
         -c "ls ~/.claude/sessions/ 2>/dev/null | wc -l | tr -d '[:space:]'" 2>/dev/null || echo "-1")
     RESULT=$(echo "$RESULT" | tr -d '[:space:]')
     if [[ "$RESULT" == "0" ]]; then
@@ -446,7 +446,7 @@ else
         fail "~/.claude/sessions: expected 0 entries inside sandbox, got '$RESULT'"
     fi
 
-    run_sandbox "$CLAUDE" -- \
+    run_sandbox "$CLAUDE" -y -- \
         -c "touch ~/.claude/sessions/sandbox-created-$$.txt" 2>/dev/null || true
     if [[ -f "$CLAUDE_DIR/sessions/sandbox-created-$$.txt" ]]; then
         fail "~/.claude/sessions: file created inside sandbox appeared on host"
@@ -455,7 +455,7 @@ else
     fi
 
     if [[ -f "$CLAUDE_DIR/.credentials.json" ]]; then
-        RESULT=$(run_sandbox "$CLAUDE" -- \
+        RESULT=$(run_sandbox "$CLAUDE" -y -- \
             -c "test -f ~/.claude/.credentials.json && echo found || echo missing" \
             2>/dev/null || echo "missing")
         RESULT=$(echo "$RESULT" | tr -d '[:space:]')
@@ -658,7 +658,7 @@ done
 section "Dry-run: capabilities"
 
 if [[ -d "$HOME/.claude" ]]; then
-    LINE=$(bwrap_line "$CLAUDE")
+    LINE=$(bwrap_line "$CLAUDE" -y)
     if echo "$LINE" | grep -qF ".claude"; then
         pass "claude capability: ~/.claude referenced in bwrap command"
     else
