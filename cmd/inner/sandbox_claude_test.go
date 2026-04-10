@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -470,7 +471,7 @@ func TestUnlockClaudeCredentials_notInPath(t *testing.T) {
 	t.Setenv("PATH", "") // ensure LookPath finds nothing
 
 	var buf strings.Builder
-	unlockClaudeCredentials(&buf, true)
+	unlockClaudeCredentials(&buf, true, "")
 
 	if !strings.Contains(buf.String(), "claude not found in PATH") {
 		t.Errorf("expected 'claude not found in PATH' warning, got: %q", buf.String())
@@ -484,7 +485,7 @@ func TestUnlockClaudeCredentials_autoConfirm_noWarning(t *testing.T) {
 	withTestbin(t) // prepend testbin/ — shim exits 0
 
 	var buf strings.Builder
-	unlockClaudeCredentials(&buf, true)
+	unlockClaudeCredentials(&buf, true, "")
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no output in autoConfirm mode, got: %q", buf.String())
@@ -499,9 +500,67 @@ func TestUnlockClaudeCredentials_autoConfirm_shimFails(t *testing.T) {
 	t.Setenv("CLAUDE_SHIM_EXIT", "1")
 
 	var buf strings.Builder
-	unlockClaudeCredentials(&buf, true)
+	unlockClaudeCredentials(&buf, true, "")
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no output even when shim exits non-zero, got: %q", buf.String())
+	}
+}
+
+// ── formatTokenExpiry ─────────────────────────────────────────────────────────
+
+func TestFormatTokenExpiry_claudeAiOauth(t *testing.T) {
+	f, err := os.CreateTemp("", "creds-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	// Real-world format: expiresAt in ms under "claudeAiOauth" key.
+	expMs := int64(1775866433090) // 2026-04-11 02:13:53 UTC
+	fmt.Fprintf(f, `{"claudeAiOauth":{"accessToken":"sk-xxx","expiresAt":%d}}`, expMs)
+	f.Close()
+
+	got := formatTokenExpiry(f.Name())
+	if got == "" {
+		t.Fatal("expected non-empty expiry string, got empty")
+	}
+	if !strings.Contains(got, "2026-04-11") {
+		t.Errorf("expected expiry to contain '2026-04-11', got: %q", got)
+	}
+}
+
+func TestFormatTokenExpiry_missingFile(t *testing.T) {
+	got := formatTokenExpiry("/nonexistent/path/.credentials.json")
+	if got != "" {
+		t.Errorf("expected empty string for missing file, got: %q", got)
+	}
+}
+
+func TestFormatTokenExpiry_noExpiryField(t *testing.T) {
+	f, err := os.CreateTemp("", "creds-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	fmt.Fprint(f, `{"accessToken":"abc"}`)
+	f.Close()
+
+	got := formatTokenExpiry(f.Name())
+	if got != "" {
+		t.Errorf("expected empty string when no expiry field, got: %q", got)
+	}
+}
+
+// ── extractExpiresAt: claudeAiOauth format ───────────────────────────────────
+
+func TestExtractExpiresAt_claudeAiOauthNested(t *testing.T) {
+	expMs := int64(1775866433090)
+	raw := map[string]json.RawMessage{
+		"claudeAiOauth": json.RawMessage(fmt.Sprintf(`{"accessToken":"x","expiresAt":%d}`, expMs)),
+	}
+	got := extractExpiresAt(raw)
+	want := expMs / 1000 // normalised to seconds
+	if got != want {
+		t.Errorf("extractExpiresAt = %d, want %d", got, want)
 	}
 }

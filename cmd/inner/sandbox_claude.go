@@ -111,9 +111,11 @@ func claudeTokenExpired(credPath string) (bool, error) {
 
 // extractExpiresAt looks for an expiry timestamp in the decoded credential
 // object and returns it as Unix seconds. It recognises:
-//   - "expiresAt"         top-level, milliseconds  (Claude Code current format)
-//   - "expires_at"        top-level, seconds        (older / alternative format)
-//   - "oauth_token.expires_at"  nested, seconds
+//   - "expiresAt"                  top-level, milliseconds  (Claude Code current format)
+//   - "expires_at"                 top-level, seconds        (older / alternative format)
+//   - "oauth_token.expires_at"     nested under "oauth_token", seconds
+//   - "<any-key>.expiresAt"        nested under any top-level object (e.g. "claudeAiOauth")
+//   - "<any-key>.expires_at"       nested under any top-level object
 //
 // Values > 1e10 are treated as milliseconds and divided by 1000.
 func extractExpiresAt(raw map[string]json.RawMessage) int64 {
@@ -129,10 +131,15 @@ func extractExpiresAt(raw map[string]json.RawMessage) int64 {
 			return normaliseTimestamp(ts)
 		}
 	}
-	if nested, ok := raw["oauth_token"]; ok {
+	// Scan all top-level keys that decode to objects — handles both the legacy
+	// "oauth_token" shape and the current "claudeAiOauth" shape.
+	for _, val := range raw {
 		var obj map[string]json.RawMessage
-		if json.Unmarshal(nested, &obj) == nil {
-			if v, ok := obj["expires_at"]; ok {
+		if json.Unmarshal(val, &obj) != nil {
+			continue
+		}
+		for _, field := range []string{"expiresAt", "expires_at"} {
+			if v, ok := obj[field]; ok {
 				var ts int64
 				if json.Unmarshal(v, &ts) == nil && ts > 0 {
 					return normaliseTimestamp(ts)
@@ -152,10 +159,32 @@ func normaliseTimestamp(ts int64) int64 {
 	return ts
 }
 
+// formatTokenExpiry returns a human-readable expiry string from a credentials
+// file, e.g. "2026-04-11 02:13 UTC". Returns "" if the file cannot be read or
+// contains no recognisable expiry field.
+func formatTokenExpiry(credPath string) string {
+	data, err := os.ReadFile(credPath)
+	if err != nil {
+		return ""
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return ""
+	}
+	ts := extractExpiresAt(raw)
+	if ts == 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).UTC().Format("2006-01-02 15:04 UTC")
+}
+
 // unlockClaudeCredentials runs "claude -p '/try-login'" in the background on
 // the host. The process output is hidden; its purpose is solely to trigger the
 // OS native credential storage (keyring/Keychain/libsecret) graphical unlock
 // dialog before inner copies .credentials.json into the sandbox.
+//
+// credPath is the path to ~/.claude/.credentials.json used to display the
+// token expiry in the interactive prompt.
 //
 // After launching:
 //   - normal mode: inner prints a message and waits for the user to press Enter
@@ -164,7 +193,7 @@ func normaliseTimestamp(ts int64) int64 {
 //     be triggered, then kills the process and proceeds without user input.
 //
 // Errors are reported as warnings, not failures.
-func unlockClaudeCredentials(w io.Writer, autoConfirm bool) {
+func unlockClaudeCredentials(w io.Writer, autoConfirm bool, credPath string) {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		fmt.Fprintln(w, "inner: warning: claude not found in PATH; cannot unlock credentials")
@@ -197,7 +226,11 @@ func unlockClaudeCredentials(w io.Writer, autoConfirm bool) {
 		return
 	}
 
-	fmt.Fprintln(w, "inner: enter your password in the system dialog if prompted, then press Enter to continue")
+	msg := "inner: enter your password in the system dialog if prompted, then press Enter to continue"
+	if expiry := formatTokenExpiry(credPath); expiry != "" {
+		msg = "inner: Claude token expires " + expiry + " — enter your password in the system dialog if prompted, then press Enter to continue"
+	}
+	fmt.Fprintln(w, msg)
 
 	// Block until Enter. bufio.ReadString drains the full line so no stray
 	// bytes leak into the subsequent sandbox stdin. The subprocess is killed
@@ -280,33 +313,53 @@ func prepareClaude(src string) (string, func(), error) {
 // exists on the host — a temporary copy of that file, then appends both mounts
 // to rc.Mounts.
 //
-// Credential unlock: "claude auth status" is always run on the host before
-// copying .credentials.json. This ensures the OS native credential storage
-// (keyring/Keychain/libsecret) is unlocked and any expired OAuth token is
-// refreshed before the sandbox starts. Warnings are written to os.Stderr.
+// Credential unlock: only triggered when the OAuth token is expired or its
+// expiry cannot be determined. When the token is fresh the unlock step is
+// skipped and a diagnostic message is printed. Warnings are written to os.Stderr.
 func applyClaude(rc *config.RunConfig) (func(), error) {
 	claudeDir := claudeHomeDir()
-
-	// Pre-flight: always unlock the OS credential storage and refresh any
-	// expired token before copying .credentials.json into the sandbox.
-	unlockClaudeCredentials(claudeWarningWriter, rc.AutoConfirm)
+	w := claudeWarningWriter
 
 	credPath := filepath.Join(claudeDir, ".credentials.json")
-	// After the unlock attempt, fail fast if the token is still expired so the
-	// sandbox does not start and receive a 401.
-	if stillExpired, _ := claudeTokenExpired(credPath); stillExpired {
-		return nil, fmt.Errorf(
-			"Claude OAuth token is expired and could not be refreshed automatically.\n" +
-				"Run 'claude' on the host machine to renew it, then relaunch inner.",
-		)
+
+	// ── Diagnose token state before doing anything ────────────────────────────
+	expired, expiryErr := claudeTokenExpired(credPath)
+	expiry := formatTokenExpiry(credPath)
+
+	switch {
+	case expiryErr != nil:
+		// File missing or unreadable — cannot determine state.
+		fmt.Fprintf(w, "inner: claude: cannot read credentials (%v); attempting unlock\n", expiryErr)
+		unlockClaudeCredentials(w, rc.AutoConfirm, credPath)
+	case expiry == "":
+		// File exists but has no recognisable expiry field — be optimistic but
+		// log it so we can understand what format we're seeing.
+		fmt.Fprintln(w, "inner: claude: credentials present but expiry field not found — skipping unlock (optimistic)")
+	case expired:
+		// Token is detectably expired — run the unlock/refresh flow.
+		fmt.Fprintf(w, "inner: claude: token expired at %s — attempting unlock/refresh\n", expiry)
+		unlockClaudeCredentials(w, rc.AutoConfirm, credPath)
+		// After the unlock attempt, fail fast if the token is still expired so
+		// the sandbox does not start and receive a 401.
+		if stillExpired, _ := claudeTokenExpired(credPath); stillExpired {
+			return nil, fmt.Errorf(
+				"Claude OAuth token is expired and could not be refreshed automatically.\n"+
+					"Run 'claude' on the host machine to renew it, then relaunch inner.",
+			)
+		}
+	default:
+		// Token is fresh — skip unlock entirely.
+		fmt.Fprintf(w, "inner: claude: token valid (expires %s) — skipping unlock\n", expiry)
 	}
 
 	var cleanups []func()
 
+	fmt.Fprintf(w, "inner: claude: preparing sandbox clone of %s\n", claudeDir)
 	sandboxed, cleanup, err := prepareClaude(claudeDir)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Fprintf(w, "inner: claude: sandbox dir: %s\n", sandboxed)
 	cleanups = append(cleanups, cleanup)
 	rc.Mounts = append(rc.Mounts, config.Mount{
 		Src:  sandboxed,
@@ -342,8 +395,12 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 			Dest: claudeJsonPath,
 			Mode: "rw",
 		})
+		fmt.Fprintf(w, "inner: claude: mounted .claude.json (temp copy: %s)\n", tmpJsonPath)
+	} else {
+		fmt.Fprintln(w, "inner: claude: .claude.json not found on host — skipping mount")
 	}
 
+	fmt.Fprintln(w, "inner: claude: sandbox ready — launching")
 	return func() {
 		for _, fn := range cleanups {
 			fn()
