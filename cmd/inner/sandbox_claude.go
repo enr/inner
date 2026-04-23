@@ -343,7 +343,7 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		// the sandbox does not start and receive a 401.
 		if stillExpired, _ := claudeTokenExpired(credPath); stillExpired {
 			return nil, fmt.Errorf(
-				"Claude OAuth token is expired and could not be refreshed automatically.\n"+
+				"Claude OAuth token is expired and could not be refreshed automatically.\n" +
 					"Run 'claude' on the host machine to renew it, then relaunch inner.",
 			)
 		}
