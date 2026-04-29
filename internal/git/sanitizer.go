@@ -175,7 +175,10 @@ func applyOverride(sections []rawSection, overrideKey, value string) []rawSectio
 		return sections // malformed key — skip silently
 	}
 	sectionName, keyName := parts[0], parts[1]
-	newLine := fmt.Sprintf("\t%s = %s", keyName, value)
+	if !isSafeOverrideNamePart(sectionName) || !isSafeOverrideNamePart(keyName) {
+		return sections
+	}
+	newLine := fmt.Sprintf("\t%s = %s", keyName, quoteGitConfigValue(value))
 
 	for i, s := range sections {
 		if s.name != sectionName {
@@ -198,6 +201,45 @@ func applyOverride(sections []rawSection, overrideKey, value string) []rawSectio
 		name:   sectionName,
 		lines:  []string{newLine},
 	})
+}
+
+func isSafeOverrideNamePart(part string) bool {
+	return part != "" &&
+		strings.TrimSpace(part) == part &&
+		!strings.ContainsAny(part, "\n\r[]=")
+}
+
+func quoteGitConfigValue(value string) string {
+	if !needsGitConfigQuoting(value) {
+		return value
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(value) + 2)
+	sb.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\\', '"':
+			sb.WriteByte('\\')
+			sb.WriteRune(r)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\n`)
+		case '\t':
+			sb.WriteString(`\t`)
+		case '\b':
+			sb.WriteString(`\b`)
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String()
+}
+
+func needsGitConfigQuoting(value string) bool {
+	return strings.ContainsAny(value, "\\\"\n\r\t\b[]")
 }
 
 // serialize converts sections back to a gitconfig string.

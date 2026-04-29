@@ -141,6 +141,32 @@ func TestProcess_override_caseInsensitiveSection(t *testing.T) {
 	}
 }
 
+func TestProcess_overrideEscapesValueInjection(t *testing.T) {
+	out := Process("", nil, map[string]string{
+		"user.name": "alice\n[core]\n\thooksPath = /tmp/evil",
+	})
+
+	if strings.Contains(out, "\n[core]\n") {
+		t.Fatalf("override value injected a core section:\n%s", out)
+	}
+	if strings.Contains(out, "\thooksPath = /tmp/evil") {
+		t.Fatalf("override value injected hooksPath:\n%s", out)
+	}
+	if !strings.Contains(out, `name = "alice\n[core]\n\thooksPath = /tmp/evil"`) {
+		t.Fatalf("override value was not gitconfig-quoted safely:\n%s", out)
+	}
+}
+
+func TestProcess_overrideSkipsUnsafeKey(t *testing.T) {
+	out := Process("", nil, map[string]string{
+		"user.name\n[core]\n\thooksPath": "/tmp/evil",
+	})
+
+	if out != "" {
+		t.Fatalf("unsafe override key should be skipped, got:\n%s", out)
+	}
+}
+
 // ── Process: combined operations ──────────────────────────────────────────────
 
 func TestProcess_stripAndOverride(t *testing.T) {
