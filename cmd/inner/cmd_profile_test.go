@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,6 +43,29 @@ func writeTestFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func newProfileTLSServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(handler)
+	oldFetchProfileURL := fetchProfileURL
+	client := srv.Client()
+	fetchProfileURL = func(rawURL string) ([]byte, error) {
+		resp, err := client.Get(rawURL) //nolint:noctx
+		if err != nil {
+			return nil, fmt.Errorf("fetching %s: %w", rawURL, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("fetching %s: HTTP %d", rawURL, resp.StatusCode)
+		}
+		return io.ReadAll(resp.Body)
+	}
+	t.Cleanup(func() {
+		fetchProfileURL = oldFetchProfileURL
+		srv.Close()
+	})
+	return srv
 }
 
 // ── profileList ───────────────────────────────────────────────────────────────
@@ -766,11 +791,10 @@ description = "downloaded profile"
 `
 
 func TestProfileInstallFromURL_basic(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(minimalProfileTOML))
 	}))
-	defer srv.Close()
 
 	app, dir := newTestApp(t)
 	var buf bytes.Buffer
@@ -793,11 +817,10 @@ func TestProfileInstallFromURL_basic(t *testing.T) {
 }
 
 func TestProfileInstallFromURL_customName(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(minimalProfileTOML))
 	}))
-	defer srv.Close()
 
 	app, dir := newTestApp(t)
 	if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/some.toml", "custom", false); err != nil {
@@ -811,11 +834,10 @@ func TestProfileInstallFromURL_customName(t *testing.T) {
 }
 
 func TestProfileInstallFromURL_conflictNoForce(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(minimalProfileTOML))
 	}))
-	defer srv.Close()
 
 	app, dir := newTestApp(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "remote-test.toml"), `name = "existing"`)
@@ -830,11 +852,10 @@ func TestProfileInstallFromURL_conflictNoForce(t *testing.T) {
 }
 
 func TestProfileInstallFromURL_forceOverwrite(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(minimalProfileTOML))
 	}))
-	defer srv.Close()
 
 	app, dir := newTestApp(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "remote-test.toml"), `name = "old"`)
@@ -849,11 +870,10 @@ func TestProfileInstallFromURL_forceOverwrite(t *testing.T) {
 }
 
 func TestProfileInstallFromURL_invalidTOML(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("not = [valid toml"))
 	}))
-	defer srv.Close()
 
 	app, _ := newTestApp(t)
 	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/bad.toml", "", false)
@@ -866,10 +886,9 @@ func TestProfileInstallFromURL_invalidTOML(t *testing.T) {
 }
 
 func TestProfileInstallFromURL_http404(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer srv.Close()
 
 	app, _ := newTestApp(t)
 	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/missing.toml", "", false)
@@ -887,11 +906,10 @@ func TestProfileInstallFromURL_notURL(t *testing.T) {
 }
 
 func TestProfileInstallFromURL_nameFromURLSegment(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(minimalProfileTOML))
 	}))
-	defer srv.Close()
 
 	tests := []struct {
 		urlPath  string

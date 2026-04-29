@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,6 +36,29 @@ func (f *failingIsolator) Build(config.RunConfig) (*exec.Cmd, error) {
 	return exec.Command("sh", "-c", fmt.Sprintf("exit %d", f.code)), nil
 }
 func (f *failingIsolator) Available() (bool, string) { return true, "fake" }
+
+func newRunProfileTLSServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(handler)
+	oldFetchRunProfileURL := fetchRunProfileURL
+	client := srv.Client()
+	fetchRunProfileURL = func(rawURL string) ([]byte, error) {
+		resp, err := client.Get(rawURL) //nolint:noctx
+		if err != nil {
+			return nil, fmt.Errorf("fetching %s: %w", rawURL, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("fetching %s: HTTP %d", rawURL, resp.StatusCode)
+		}
+		return io.ReadAll(resp.Body)
+	}
+	t.Cleanup(func() {
+		fetchRunProfileURL = oldFetchRunProfileURL
+		srv.Close()
+	})
+	return srv
+}
 
 // newRunTestApp returns an App with a fake isolator and a profile in tempdir.
 func newRunTestApp(t *testing.T) (*App, string) {
@@ -671,11 +695,10 @@ interactive = false
 `
 
 func TestRunSandbox_URLProfile(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newRunProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(urlProfileTOML))
 	}))
-	defer srv.Close()
 
 	app, _ := newRunTestApp(t)
 	var buf bytes.Buffer
@@ -685,10 +708,9 @@ func TestRunSandbox_URLProfile(t *testing.T) {
 }
 
 func TestRunSandbox_URLProfile_fetchError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newRunProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer srv.Close()
 
 	app, _ := newRunTestApp(t)
 	err := app.runSandbox(&bytes.Buffer{}, runCLIFlags{profile: srv.URL + "/missing.toml"}, nil)

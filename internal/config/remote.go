@@ -4,23 +4,44 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 )
 
-// IsURL returns true if s has an http:// or https:// scheme.
+// IsURL returns true if s has an https:// scheme.
 func IsURL(s string) bool {
-	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme == "https" && u.Host != ""
 }
 
-// FetchURL downloads content from a http or https URL and returns the body.
-// Returns an error if the scheme is not http/https, the response status is
+// FetchURL downloads content from an https URL and returns the body.
+// Returns an error if the scheme is not https, the response status is
 // not 200 OK, or the body exceeds 1 MiB.
 func FetchURL(rawURL string) ([]byte, error) {
-	if !IsURL(rawURL) {
-		return nil, fmt.Errorf("unsupported URL scheme (only http/https allowed): %s", rawURL)
+	return fetchURL(rawURL, newHTTPSClient())
+}
+
+func newHTTPSClient() *http.Client {
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		CheckRedirect: rejectHTTPSDowngrade,
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+}
+
+func rejectHTTPSDowngrade(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme == "http" {
+		return fmt.Errorf("refusing redirect from https to http: %s", req.URL)
+	}
+	return nil
+}
+
+func fetchURL(rawURL string, client *http.Client) ([]byte, error) {
+	if !IsURL(rawURL) {
+		return nil, fmt.Errorf("unsupported URL scheme (only https allowed): %s", rawURL)
+	}
 	resp, err := client.Get(rawURL) //nolint:noctx
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", rawURL, err)

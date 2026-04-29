@@ -383,6 +383,8 @@ func (a *App) profileClone(w io.Writer, src, dst string) error {
 	return nil
 }
 
+var fetchProfileURL = config.FetchURL
+
 // profileInstallFromURL downloads a profile TOML from rawURL and installs it
 // in the global profiles directory (~/.inner/profiles/).
 // name overrides the filename derived from the URL; if empty, the last path
@@ -409,7 +411,7 @@ func (a *App) profileInstallFromURL(w io.Writer, rawURL, name string, force bool
 		}
 	}
 
-	data, err := config.FetchURL(rawURL)
+	data, err := fetchProfileURL(rawURL)
 	if err != nil {
 		return fmt.Errorf("downloading profile: %w", err)
 	}

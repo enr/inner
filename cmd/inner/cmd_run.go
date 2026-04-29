@@ -53,6 +53,8 @@ type runCLIFlags struct {
 
 // ── Business logic ────────────────────────────────────────────────────────────
 
+var fetchRunProfileURL = config.FetchURL
+
 // runSandbox is the full pipeline for `inner run`.
 // It is an App method so tests can inject a fake isolator via a.isolatorFn.
 func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) error {
@@ -68,7 +70,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 	// If the profile is a URL, download it to a temp file and use that path.
 	if config.IsURL(profileName) {
-		data, fetchErr := config.FetchURL(profileName)
+		data, fetchErr := fetchRunProfileURL(profileName)
 		if fetchErr != nil {
 			return fmt.Errorf("downloading profile: %w", fetchErr)
 		}
