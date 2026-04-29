@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -55,9 +56,36 @@ func execute() {
 	root := buildRootCmd(app)
 	expandAliases(root, app)
 	if err := root.Execute(); err != nil {
+		if code, ok := exitCodeFromError(err); ok {
+			os.Exit(code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+type exitCoder interface {
+	ExitCode() int
+}
+
+type exitCodeError struct {
+	code int
+}
+
+func (e exitCodeError) Error() string {
+	return fmt.Sprintf("exit code %d", e.code)
+}
+
+func (e exitCodeError) ExitCode() int {
+	return e.code
+}
+
+func exitCodeFromError(err error) (int, bool) {
+	var exitErr exitCoder
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), true
+	}
+	return 0, false
 }
 
 // expandAliases checks whether os.Args[1] matches a configured alias and, if

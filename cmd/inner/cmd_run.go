@@ -301,7 +301,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 	if result.ExitCode != 0 {
-		os.Exit(result.ExitCode)
+		return exitCodeError{code: result.ExitCode}
 	}
 	return nil
 }

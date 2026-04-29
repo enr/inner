@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,11 +27,21 @@ func (f *fakeIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 }
 func (f *fakeIsolator) Available() (bool, string) { return true, "fake" }
 
+type failingIsolator struct {
+	code int
+}
+
+func (f *failingIsolator) Build(config.RunConfig) (*exec.Cmd, error) {
+	return exec.Command("sh", "-c", fmt.Sprintf("exit %d", f.code)), nil
+}
+func (f *failingIsolator) Available() (bool, string) { return true, "fake" }
+
 // newRunTestApp returns an App with a fake isolator and a profile in tempdir.
 func newRunTestApp(t *testing.T) (*App, string) {
 	t.Helper()
 	app, dir := newTestApp(t)
 	app.isolatorFn = func() (isolator.Isolator, error) { return &fakeIsolator{}, nil }
+	app.launcherFn = executor.New
 	return app, dir
 }
 
@@ -419,6 +431,48 @@ interactive = false
 	app.runSandbox(&buf, runCLIFlags{dryRun: true}, nil) //nolint:errcheck
 	if launcherCalled {
 		t.Error("launcher should not be called with --dry-run")
+	}
+}
+
+func TestRunSandbox_nonZeroExitReleasesWorkspaceLock(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	app.isolatorFn = func() (isolator.Isolator, error) { return &failingIsolator{code: 7}, nil }
+
+	srcDir := t.TempDir()
+	workspacesPath := t.TempDir()
+	workspaceDest := filepath.Join(workspacesPath, "project")
+	minimalProfile(t, dir, "nonzero", fmt.Sprintf(`
+workspaces_path = %q
+
+[entrypoint]
+cmd = "sh"
+interactive = false
+
+[mounts]
+%q = { dest = "${workspaces_path}/project", mode = "rw" }
+`, workspacesPath, srcDir))
+
+	err := app.runSandbox(&bytes.Buffer{}, runCLIFlags{profile: "nonzero"}, nil)
+	if err == nil {
+		t.Fatal("expected non-zero sandbox exit error, got nil")
+	}
+	var exitErr exitCoder
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("error = %T %v, want exit code error", err, err)
+	}
+	if exitErr.ExitCode() != 7 {
+		t.Fatalf("ExitCode = %d, want 7", exitErr.ExitCode())
+	}
+
+	locks, globErr := filepath.Glob(filepath.Join(workspacesPath, ".inner-*.lock"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
+	if len(locks) != 0 {
+		t.Fatalf("workspace locks were not released: %v", locks)
+	}
+	if _, statErr := os.Stat(workspaceDest); !os.IsNotExist(statErr) {
+		t.Fatalf("workspace dest was not cleaned up, stat err = %v", statErr)
 	}
 }
 
