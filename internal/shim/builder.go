@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/enr/inner/internal/config"
 )
@@ -36,12 +37,18 @@ func (Builder) Build(noop config.NoopConfig) (string, error) {
 
 func writeShims(dir string, noop config.NoopConfig) error {
 	for _, cmd := range noop.Block {
+		if !isSafeShimName(cmd) {
+			return fmt.Errorf("noop.block %q: key must be a plain filename with no path separators", cmd)
+		}
 		content := fmt.Sprintf(blockScript, cmd, cmd)
 		if err := writeScript(dir, cmd, content); err != nil {
 			return err
 		}
 	}
 	for cmd, replacement := range noop.Rewrite {
+		if !isSafeShimName(cmd) {
+			return fmt.Errorf("noop.rewrite %q: key must be a plain filename with no path separators", cmd)
+		}
 		if !isSafeShimReplacement(replacement) {
 			return fmt.Errorf("noop.rewrite %q: replacement %q contains shell metacharacters", cmd, replacement)
 		}
@@ -51,6 +58,21 @@ func writeShims(dir string, noop config.NoopConfig) error {
 		}
 	}
 	return nil
+}
+
+// isSafeShimName reports whether name is a plain filename that cannot escape
+// the shim directory via path traversal. Rejects anything containing a path
+// separator or that does not round-trip through filepath.Base unchanged.
+func isSafeShimName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// filepath.Base catches '/' and '..' on all platforms; reject '\' explicitly
+	// since on Linux it is not a path separator but is still unsafe.
+	if strings.ContainsRune(name, '\\') {
+		return false
+	}
+	return filepath.Base(name) == name
 }
 
 // isSafeShimReplacement reports whether s is safe to interpolate into a sh
