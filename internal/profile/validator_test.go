@@ -418,6 +418,51 @@ func TestValidate_capabilityConflictsWithExplicitMount_returnsError(t *testing.T
 	}
 }
 
+// ── nested-user-ns capability warnings ───────────────────────────────────────
+
+func TestValidate_nestedUserNs_warnsAboutCaps(t *testing.T) {
+	p := &config.Profile{
+		Sandbox:    config.SandboxConfig{Allow: []string{"nested-user-ns"}},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if r.HasErrors() {
+		t.Errorf("nested-user-ns should produce warning, not error: %v", r.Issues)
+	}
+	found := false
+	for _, i := range r.Issues {
+		if i.Level == LevelWarning && strings.Contains(i.Message, "CAP_SETUID") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning mentioning CAP_SETUID for nested-user-ns, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_nestedUserNs_withNetwork_warnsAboutCombination(t *testing.T) {
+	p := &config.Profile{
+		Sandbox: config.SandboxConfig{
+			Allow:   []string{"nested-user-ns"},
+			Network: true,
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if r.HasErrors() {
+		t.Errorf("nested-user-ns + network should produce warning, not error: %v", r.Issues)
+	}
+	foundNetwork := false
+	for _, i := range r.Issues {
+		if i.Level == LevelWarning && strings.Contains(i.Message, "network") {
+			foundNetwork = true
+		}
+	}
+	if !foundNetwork {
+		t.Errorf("expected warning about nested-user-ns combined with network, got: %v", r.Issues)
+	}
+}
+
 func TestValidate_knownCapability_dirExists_noIssues(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -104,10 +104,16 @@ func Validate(p *config.Profile, workDir string) Result {
 		}
 	}
 
-	// 3. Warn on unknown sandbox.allow keys.
+	// 3. Warn on unknown sandbox.allow keys and dangerous known keys.
 	for _, key := range p.Sandbox.Allow {
 		if !slices.Contains(config.ValidAllowKeys, key) {
 			r.addWarning(fmt.Sprintf("unknown allow key %q (valid keys: %v)", key, config.ValidAllowKeys))
+		}
+	}
+	if slices.Contains(p.Sandbox.Allow, "nested-user-ns") {
+		r.addWarning("nested-user-ns grants CAP_SETUID/CAP_SETGID to the sandbox; do not enable for untrusted agents")
+		if p.Sandbox.Network {
+			r.addWarning("nested-user-ns combined with network access increases privilege-escalation risk; review carefully")
 		}
 	}
 
