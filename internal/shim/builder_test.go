@@ -128,6 +128,31 @@ func TestBuild_mixedBlockAndRewrite(t *testing.T) {
 	}
 }
 
+func TestBuild_rewrite_rejectsShellMetacharacters(t *testing.T) {
+	cases := []struct {
+		name        string
+		replacement string
+	}{
+		{"semicolon", "echo pwned > /tmp/x; true"},
+		{"pipe", "cat | sh"},
+		{"redirect", "cmd > /tmp/out"},
+		{"backtick", "cmd`id`"},
+		{"dollar", "cmd$(id)"},
+		{"ampersand", "cmd && evil"},
+		{"newline", "cmd\nevil"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Builder{}.Build(config.NoopConfig{
+				Rewrite: map[string]string{"docker": tc.replacement},
+			})
+			if err == nil {
+				t.Fatalf("expected error for replacement %q, got nil", tc.replacement)
+			}
+		})
+	}
+}
+
 func TestBuild_onlyBlockCreatesDir(t *testing.T) {
 	dir, err := Builder{}.Build(config.NoopConfig{
 		Block: []string{"curl"},

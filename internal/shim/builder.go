@@ -42,12 +42,32 @@ func writeShims(dir string, noop config.NoopConfig) error {
 		}
 	}
 	for cmd, replacement := range noop.Rewrite {
+		if !isSafeShimReplacement(replacement) {
+			return fmt.Errorf("noop.rewrite %q: replacement %q contains shell metacharacters", cmd, replacement)
+		}
 		content := fmt.Sprintf(rewriteScript, replacement)
 		if err := writeScript(dir, cmd, content); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// isSafeShimReplacement reports whether s is safe to interpolate into a sh
+// script's exec line. Rejects shell metacharacters that could break out of the
+// intended "exec <replacement> "$@"" pattern.
+func isSafeShimReplacement(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch r {
+		case ';', '|', '&', '>', '<', '`', '$', '!', '(', ')', '{', '}',
+			'*', '?', '~', '#', '\\', '\'', '"', '\n', '\r':
+			return false
+		}
+	}
+	return true
 }
 
 func writeScript(dir, name, content string) error {
