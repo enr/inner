@@ -4,7 +4,7 @@ description: Install inner and run your first sandboxed session
 weight: 1
 ---
 
-# Getting Started
+
 
 ## Prerequisites
 
@@ -121,4 +121,4 @@ Run a claude-one-shot agent task (non-interactive, returns when done):
 inner run -p claude-one-shot -w ~/my-project --arg "add docstrings to all exported functions"
 ```
 
-See [Examples](../examples/) for more patterns, and [Profiles](../profiles/) to understand or customize the sandbox configuration.
+See [Examples](/inner/examples/) for more patterns, and [Profiles](/inner/profiles/) to understand or customize the sandbox configuration.

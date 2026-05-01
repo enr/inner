@@ -1,3 +1,32 @@
 {{ define "main" }}
-{{ .Content }}
+<div class="doc-meta">
+  <span><span class="dot"></span> updated {{ .Lastmod.Format "2006-01-02" }}</span>
+  <span class="muted">v{{ .Site.Params.currentAppVersion }}</span>
+</div>
+<h1>{{ .Title }}</h1>
+{{ if .Description }}
+<p class="dim" style="font-size: 16px; max-width: 62ch; margin-bottom: 24px;">{{ .Description | markdownify }}</p>
+{{ end }}
+
+{{ if .TableOfContents }}
+<div class="toc-callout">
+  <div class="toc-h">CONTENTS</div>
+  {{ .TableOfContents }}
+</div>
+{{ end }}
+
+<div class="doc-content">
+  {{ .Content }}
+</div>
+
+<div style="display: flex; justify-content: space-between; margin-top: 28px;">
+  {{ with .PrevInSection }}
+    <a href="{{ .Permalink }}" class="btn">← {{ .Title }}</a>
+  {{ else }}
+    <span></span>
+  {{ end }}
+  {{ with .NextInSection }}
+    <a href="{{ .Permalink }}" class="btn">{{ .Title }} →</a>
+  {{ end }}
+</div>
 {{ end }}

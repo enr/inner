@@ -4,52 +4,83 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ if .IsHome }}{{ .Site.Title }} — {{ .Site.Params.tagline }}{{ else }}{{ .Title }} — {{ .Site.Title }}{{ end }}</title>
-  <link rel="stylesheet" href="{{ "style.css" | relURL }}">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="{{ "style.css" | absURL | relURL }}">
 </head>
 <body>
-  <aside class="sidebar">
-    <div class="sidebar-logo">
-      <a href="{{ "/inner" | absURL }}">{{ .Site.Title }}</a>
-      <span class="tagline">{{ .Site.Params.tagline }}</span>
-    </div>
-    <nav class="sidebar-nav">
-      {{- range .Site.RegularPages.ByWeight }}
-        <a href="{{ .Permalink }}"{{ if eq .Permalink $.Permalink }} class="active"{{ end }}>{{ .Title }}</a>
-      {{- end }}
-    </nav>
-    <div class="sidebar-footer">
-      Licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License, Version 2.0</a>.
-      {{ with .Site.Params.currentAppVersion }}
-        <div class="version">v{{ . }} &mdash; {{ now.Format "2006-01-02" }}</div>
-      {{ end }}
-    </div>
-  </aside>
-  <main class="main">
-    {{ block "main" . }}{{ end }}
-  </main>
-  <script>
-    document.querySelectorAll('pre').forEach(function(pre) {
-      var wrap = document.createElement('div');
-      wrap.className = 'code-block';
-      pre.replaceWith(wrap);
-      wrap.appendChild(pre);
+  <div class="app">
+    <aside class="sb">
+      <a class="sb-brand" href="{{ "/" | absURL | relURL }}" style="text-decoration: none">
+        <span class="glyph">▣</span>
+        <span class="name">{{ .Site.Title }}</span>
+        <span class="ver">v{{ .Site.Params.currentAppVersion }}</span>
+      </a>
+      <div class="sb-tag">{{ .Site.Params.tagline }}</div>
+      
+      <div class="sb-section">
+        <div class="sb-heading">GUIDE</div>
+        <nav class="sb-nav">
+          <a href="{{ "/inner/" | absURL }}" class="{{ if .IsHome }}is-active{{ end }}">
+            <span class="num">01</span>
+            <span>Overview</span>
+          </a>
+          <a href="{{ "/inner/getting-started/" | absURL | relURL }}" class="{{ if (in .RelPermalink "getting-started") }}is-active{{ end }}">
+            <span class="num">02</span>
+            <span>Getting Started</span>
+          </a>
+          <a href="{{ "/inner/examples/" | absURL | relURL }}" class="{{ if (in .RelPermalink "examples") }}is-active{{ end }}">
+            <span class="num">03</span>
+            <span>Examples</span>
+          </a>
+          <a href="{{ "/inner/cheatsheet/" | absURL | relURL }}" class="{{ if (in .RelPermalink "cheatsheet") }}is-active{{ end }}">
+            <span class="num">04</span>
+            <span>Cheat Sheet</span>
+          </a>
+        </nav>
+      </div>
 
-      var btn = document.createElement('button');
-      btn.className = 'copy-btn';
-      btn.textContent = 'Copy';
-      wrap.appendChild(btn);
+      <div class="sb-section">
+        <div class="sb-heading">REFERENCE</div>
+        <nav class="sb-nav">
+          <a href="{{ "/inner/profiles/" | absURL | relURL }}" class="{{ if (in .RelPermalink "profiles") }}is-active{{ end }}">
+            <span class="num">05</span>
+            <span>Profiles</span>
+          </a>
+          <a href="{{ "/inner/internals/" | absURL | relURL }}" class="{{ if (in .RelPermalink "internals") }}is-active{{ end }}">
+            <span class="num">06</span>
+            <span>Internals</span>
+          </a>
+        </nav>
+      </div>
 
-      btn.addEventListener('click', function() {
-        navigator.clipboard.writeText(pre.innerText).then(function() {
-          btn.textContent = 'Copied';
-          btn.classList.add('copied');
-          setTimeout(function() {
-            btn.textContent = 'Copy';
-            btn.classList.remove('copied');
-          }, 2000);
-        });
-      });
-    });
-  </script>
+      <div class="sb-foot">
+        <div class="row"><span class="dot"></span> github.com/enr/inner</div>
+        <div class="row muted">Apache-2.0 · linux/amd64</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="tb">
+        <div class="crumbs">
+          {{ if .IsHome }}
+            <span>~</span> <span class="sep">/</span> <span>inner</span> <span class="sep">/</span> <span class="leaf">overview</span>
+          {{ else }}
+            <span>docs</span> <span class="sep">/</span> 
+            {{ if (in .RelPermalink "profiles") }}<span>reference</span>{{ else }}<span>guide</span>{{ end }} 
+            <span class="sep">/</span> <span class="leaf">{{ .Title | lower | urlize }}</span>
+          {{ end }}
+        </div>
+        <div class="spacer"></div>
+        <div class="meta">
+          <span><span class="dot"></span> bwrap 0.9.0</span>
+          <span class="muted">kernel 6.8.0</span>
+          <span class="muted">user-ns ✓</span>
+        </div>
+      </div>
+      <div class="content">
+        {{ block "main" . }}{{ end }}
+      </div>
+    </main>
+  </div>
 </body>
 </html>

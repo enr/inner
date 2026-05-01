@@ -4,7 +4,7 @@ description: Profile TOML configuration reference for inner sandboxes
 weight: 3
 ---
 
-# Profiles
+
 
 A **profile** is a TOML file that fully describes a sandbox environment. Profiles are stored in `~/.inner/profiles/<name>.toml`.
 

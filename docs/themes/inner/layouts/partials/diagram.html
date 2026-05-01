@@ -1,0 +1,87 @@
+<div class="diagram-wrap">
+  <svg viewBox="0 0 880 460" class="diagram" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+        <circle cx="1" cy="1" r="0.6" fill="#0a3a47" />
+      </pattern>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#2aa198" />
+      </marker>
+      <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#268bd2" />
+      </marker>
+      <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#dc322f" opacity=".7" />
+      </marker>
+      <linearGradient id="rwGrad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%"  stop-color="#859900" stop-opacity=".15" />
+        <stop offset="100%" stop-color="#859900" stop-opacity=".55" />
+      </linearGradient>
+      <linearGradient id="roGrad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%"  stop-color="#268bd2" stop-opacity=".15" />
+        <stop offset="100%" stop-color="#268bd2" stop-opacity=".5" />
+      </linearGradient>
+    </defs>
+
+    <rect width="880" height="460" fill="url(#grid)" opacity=".5" />
+
+    <!-- HOST plane -->
+    <g>
+      <rect x="20" y="40" width="320" height="380" rx="6" fill="#001a22" stroke="#0d4757" stroke-width="1" />
+      <text x="36" y="64" font-family="JetBrains Mono, monospace" font-size="11" fill="#586e75" letter-spacing=".15em">HOST · LINUX</text>
+      <text x="36" y="80" font-family="JetBrains Mono, monospace" font-size="13" fill="#93a1a1" font-weight="600">/ (root)</text>
+      
+      <!-- Host files (simulated) -->
+      <g transform="translate(36, 104)"><rect x="-4" y="-13" width="270" height="20" rx="3" fill="rgba(7,54,66,.5)" /><text font-family="JetBrains Mono, monospace" font-size="11.5" fill="#93a1a1"><tspan fill="#859900">›</tspan> ~/projects/myapp</text></g>
+      <g transform="translate(36, 138)"><rect x="-4" y="-13" width="270" height="20" rx="3" fill="rgba(7,54,66,.5)" /><text font-family="JetBrains Mono, monospace" font-size="11.5" fill="#93a1a1"><tspan fill="#268bd2">›</tspan> ~/datasets</text></g>
+      <g transform="translate(36, 172)"><rect x="-4" y="-13" width="270" height="20" rx="3" fill="rgba(7,54,66,.5)" /><text font-family="JetBrains Mono, monospace" font-size="11.5" fill="#93a1a1"><tspan fill="#586e75">›</tspan> ~/.config/git</text></g>
+      <g transform="translate(36, 206)"><rect x="-4" y="-13" width="270" height="20" rx="3" fill="rgba(7,54,66,.5)" /><text font-family="JetBrains Mono, monospace" font-size="11.5" fill="#93a1a1"><tspan fill="#586e75">›</tspan> ~/.ssh/id_ed25519</text></g>
+
+      <text x="36" y="252" font-family="JetBrains Mono, monospace" font-size="11" fill="#586e75" letter-spacing=".1em">ENVIRONMENT</text>
+      <text x="36" y="272" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#93a1a1"><tspan font-weight="600">ANTHROPIC_API_KEY</tspan><tspan fill="#657b83">=sk-ant-…</tspan></text>
+      <g><text x="36" y="296" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#586e75"><tspan font-weight="600">GITHUB_TOKEN</tspan><tspan fill="#3d5460">=ghp_…</tspan></text><line x1="34" y1="293" x2="236" y2="293" stroke="#dc322f" stroke-width="1" opacity=".55" /></g>
+    </g>
+
+    <!-- BOUNDARY -->
+    <g>
+      <line x1="440" y1="20" x2="440" y2="440" stroke="#2aa198" stroke-width="1" stroke-dasharray="4 4" opacity=".55" />
+      <g transform="translate(440,20)">
+        <rect x="-78" y="0" width="156" height="22" rx="3" fill="#073642" stroke="#2aa198" stroke-width="1" />
+        <text x="0" y="15" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#2aa198" letter-spacing=".18em">BWRAP · NAMESPACE</text>
+      </g>
+    </g>
+
+    <!-- SANDBOX plane -->
+    <g>
+      <rect x="540" y="40" width="320" height="380" rx="6" fill="#001a22" stroke="#0d4757" stroke-width="1" />
+      <text x="556" y="64" font-family="JetBrains Mono, monospace" font-size="11" fill="#586e75" letter-spacing=".15em">SANDBOX · CLAUDE-INTERACTIVE</text>
+      <text x="556" y="80" font-family="JetBrains Mono, monospace" font-size="13" fill="#93a1a1" font-weight="600">/ (sandbox root)</text>
+      
+      <g transform="translate(556, 104)"><rect x="-4" y="-13" width="270" height="20" rx="3" fill="rgba(7,54,66,.5)" /><text font-family="JetBrains Mono, monospace" font-size="11.5" fill="#93a1a1"><tspan fill="#859900">›</tspan> /workspace</text><rect x="220" y="-11" width="28" height="15" rx="2" fill="none" stroke="#859900" opacity=".7" /><text x="234" y="0" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" fill="#859900" letter-spacing=".1em">RW</text></g>
+      <g transform="translate(556, 138)"><rect x="-4" y="-13" width="270" height="20" rx="3" fill="rgba(7,54,66,.5)" /><text font-family="JetBrains Mono, monospace" font-size="11.5" fill="#93a1a1"><tspan fill="#268bd2">›</tspan> /data</text><rect x="220" y="-11" width="28" height="15" rx="2" fill="none" stroke="#268bd2" opacity=".7" /><text x="234" y="0" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" fill="#268bd2" letter-spacing=".1em">RO</text></g>
+    </g>
+
+    <!-- Tunnels -->
+    <rect x="308" y="107" width="264" height="14" fill="url(#rwGrad)" opacity=".55" />
+    <line x1="308" y1="107" x2="572" y2="107" stroke="#859900" stroke-width=".8" opacity=".5" />
+    <line x1="308" y1="121" x2="572" y2="121" stroke="#859900" stroke-width=".8" opacity=".5" />
+    
+    <rect x="308" y="141" width="264" height="14" fill="url(#roGrad)" opacity=".55" />
+    <line x1="308" y1="141" x2="572" y2="141" stroke="#268bd2" stroke-width=".8" opacity=".5" />
+    <line x1="308" y1="155" x2="572" y2="155" stroke="#268bd2" stroke-width=".8" opacity=".5" />
+
+    <!-- network indicator -->
+    <g transform="translate(384, 420)">
+      <rect x="0" y="0" width="112" height="28" rx="14" fill="#001a22" stroke="#0d4757" />
+      <circle cx="14" cy="14" r="4" fill="#cb4b16" />
+      <text x="26" y="18" font-family="JetBrains Mono, monospace" font-size="11" fill="#cb4b16">net: denied</text>
+    </g>
+  </svg>
+
+  <div class="diagram-legend">
+    <div><span class="lg-swatch" style="background:#859900"></span> read-write mount</div>
+    <div><span class="lg-swatch" style="background:#268bd2"></span> read-only mount</div>
+    <div><span class="lg-swatch" style="background:#dc322f; opacity:.6"></span> stripped / blocked</div>
+    <div><span class="lg-swatch" style="background:#2aa198"></span> bwrap boundary</div>
+  </div>
+</div>

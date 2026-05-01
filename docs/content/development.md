@@ -4,7 +4,7 @@ description: Build, test, dev mode, and release workflows for inner
 weight: 5
 ---
 
-# Development
+
 
 All SDLC commands live in `.sdlc/`. They are plain bash scripts that resolve the project root automatically, so they can be run from any directory.
 

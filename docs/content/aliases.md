@@ -4,7 +4,7 @@ description: Define short names for frequently used inner commands
 weight: 4
 ---
 
-# Aliases
+
 
 Aliases let you define short names for frequently used `inner` commands directly in your config file. They work like git aliases: the alias name is expanded into the configured command before argument parsing.
 

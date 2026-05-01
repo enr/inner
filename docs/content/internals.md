@@ -4,7 +4,7 @@ description: How inner builds the bwrap command — architecture and low-level d
 weight: 6
 ---
 
-# Internals
+
 
 This page is for contributors who want to understand how `inner` works at a low level: how the bwrap command is assembled, why certain flags are applied, and what the design constraints are.
 

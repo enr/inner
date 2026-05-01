@@ -3,7 +3,7 @@ title: inner
 description: Isolated sandbox environments to run agents and scripts
 ---
 
-# inner
+
 
 `inner` is a Linux CLI tool that runs scripts and agentic tools — Claude Code, Gemini, interactive shells — in isolated, reproducible sandbox environments backed by [bubblewrap (bwrap)](https://github.com/containers/bubblewrap).
 
@@ -34,14 +34,14 @@ inner run -p claude-one-shot --arg "refactor the auth module"
 
 | Page | Description |
 |------|-------------|
-| [Getting Started](getting-started/) | Install, first run, environment check |
-| [Commands](commands/) | Full command and flag reference |
-| [Profiles](profiles/) | Profile TOML configuration reference |
-| [Aliases](aliases/) | Define short names for frequently used commands |
-| [Examples](examples/) | Common usage patterns with explanations |
-| [Cheat Sheet](cheatsheet/) | Quick reference for commands and tasks |
-| [Development](development/) | Build, test, dev mode, release |
-| [Internals](internals/) | bwrap command construction, flag decisions, architecture |
+| [Getting Started](/inner/getting-started/) | Install, first run, environment check |
+| [Commands](/inner/commands/) | Full command and flag reference |
+| [Profiles](/inner/profiles/) | Profile TOML configuration reference |
+| [Aliases](/inner/aliases/) | Define short names for frequently used commands |
+| [Examples](/inner/examples/) | Common usage patterns with explanations |
+| [Cheat Sheet](/inner/cheatsheet/) | Quick reference for commands and tasks |
+| [Development](/inner/development/) | Build, test, dev mode, release |
+| [Internals](/inner/internals/) | bwrap command construction, flag decisions, architecture |
 
 ## Requirements
 

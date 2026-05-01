@@ -4,7 +4,7 @@ description: All inner commands, subcommands, flags, and options
 weight: 2
 ---
 
-# Command Reference
+
 
 ## Global Synopsis
 
@@ -295,7 +295,7 @@ This means the checks probe what a real agent run would actually see — not the
 | shims active in PATH | MEDIUM | Shim directory must be first in `PATH` |
 | network restricted | MEDIUM | TCP connection to 8.8.8.8:53 must fail |
 
-Custom checks can be added to a profile under `[verify.custom]` — see [Profiles](../profiles/).
+Custom checks can be added to a profile under `[verify.custom]` — see [Profiles](/inner/profiles/).
 
 ### Output symbols
 
@@ -445,7 +445,7 @@ The created layout:
 
 **Tip:** commit `.inner/` to the project repository. Team members get the directory structure
 and local defaults without any manual setup. To further customize, see
-[`inner config edit --local`](#inner-config) and the [profiles guide](../profiles/).
+[`inner config edit --local`](#inner-config) and the [profiles guide](/inner/profiles/).
 
 ### Flags
 

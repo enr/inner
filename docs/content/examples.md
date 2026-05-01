@@ -4,7 +4,7 @@ description: Common usage patterns with explanations
 weight: 4
 ---
 
-# Examples
+
 
 ## One-Shot Agent Command
 
@@ -233,7 +233,7 @@ When a project depends on a library and you want the agent to see both source tr
       myapp-workspace.toml      ← profile that mounts both trees
 ```
 
-The `.inner/` directory sits at the root of your projects folder and is picked up automatically by `inner` as a [local config directory](../configuration).
+The `.inner/` directory sits at the root of your projects folder and is picked up automatically by `inner` as a [local config directory](/inner/configuration).
 
 ### Local config: `~/Projects/.inner/config.toml`
 

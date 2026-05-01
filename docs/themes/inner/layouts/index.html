@@ -1,3 +1,137 @@
 {{ define "main" }}
-{{ .Content }}
+<section class="hero">
+  <div class="hero-head">
+    <div class="kbar">
+      <span class="badge info">v{{ .Site.Params.currentAppVersion }}</span>
+      <span class="badge ok">linux/amd64 · arm64</span>
+      <span class="badge">Apache-2.0</span>
+    </div>
+    <h1>
+      <span class="prompt">$</span>Run agents in a box you actually trust.
+    </h1>
+    <p class="lede">
+      <code>inner</code> is a Linux CLI that wraps Claude Code, Aider, Gemini and
+      ordinary shells in <strong>bubblewrap</strong>-backed sandboxes. Reproducible
+      profiles control exactly which paths are mounted, which env vars survive,
+      and whether the network is reachable. Nothing more.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/enr/inner/releases/latest">
+        Download v{{ .Site.Params.currentAppVersion }} <span class="arrow">→</span>
+      </a>
+      <a class="btn" href="{{ "/inner/getting-started/" | absURL }}">Getting Started</a>
+      <a class="btn" href="{{ .Site.Params.repoURL }}">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.34c-2.22.48-2.69-1.07-2.69-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.74.54 1.49v2.21c0 .21.15.46.55.38C13.71 14.53 16 11.54 16 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        View source
+      </a>
+    </div>
+    <div class="meta-line">
+      <span><span class="dot"></span> bwrap 0.9.0+</span>
+      <span><span class="dot"></span> kernel 5.10+</span>
+      <span><span class="dot"></span> Go 1.24 to build</span>
+    </div>
+  </div>
+
+  <div class="hero-diagram">
+    <div class="dwin">
+      <div class="dwin-tb">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="dwin-title">inner run -p claude-interactive -w ~/projects/myapp</div>
+        <div class="dwin-spacer"></div>
+        <div class="dwin-meta">PID 84122 · t+0.024s</div>
+      </div>
+      <div class="dwin-body">
+        {{ partial "diagram.html" . }}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="pillars">
+  <div class="section-head">
+    <div class="section-label">// THE FOUR PILLARS</div>
+    <h2 style="border: none; padding: 0; margin: 0">
+      Trust the sandbox, not the agent.
+    </h2>
+    <p class="dim" style="max-width: 640px">
+      Agentic CLIs need broad filesystem access and the ability to execute
+      arbitrary commands. <code>inner</code> gives them a smaller, well-defined world to play in.
+    </p>
+  </div>
+  <div class="pillar-grid">
+    <div class="pillar">
+      <div class="pillar-head">
+        <span class="pillar-tag" style="color: var(--green); border-color: var(--green)">01</span>
+        <span class="pillar-title">Process isolation</span>
+      </div>
+      <p>Each run is wrapped in a fresh set of Linux kernel namespaces — pid, mount, user, net, ipc, uts. The agent can’t see your other processes.</p>
+      <code class="pillar-mono">unshare(CLONE_NEW{PID,NS,USER,NET,IPC,UTS})</code>
+    </div>
+    <div class="pillar">
+      <div class="pillar-head">
+        <span class="pillar-tag" style="color: var(--blue); border-color: var(--blue)">02</span>
+        <span class="pillar-title">Filesystem separation</span>
+      </div>
+      <p>The sandbox sees only what the profile mounts. Read-only by default; explicit rw on directories you name. Everything else is invisible.</p>
+      <code class="pillar-mono">--ro-bind /usr /usr --bind /workspace /workspace</code>
+    </div>
+    <div class="pillar">
+      <div class="pillar-head">
+        <span class="pillar-tag" style="color: var(--orange); border-color: var(--orange)">03</span>
+        <span class="pillar-title">Environment sanitization</span>
+      </div>
+      <p>Sensitive variables — git creds, ssh-agent, cloud tokens — are stripped before exec. The profile names the few that pass through.</p>
+      <code class="pillar-mono">passthrough = ["ANTHROPIC_API_KEY", "DISPLAY", "PATH"]</code>
+    </div>
+    <div class="pillar">
+      <div class="pillar-head">
+        <span class="pillar-tag" style="color: var(--cyan); border-color: var(--cyan)">04</span>
+        <span class="pillar-title">Security verification</span>
+      </div>
+      <p>inner verify runs a battery of checks against a profile — host paths leaking in, agent sockets reachable, dangerous capabilities. Catches mistakes before agents do.</p>
+      <code class="pillar-mono">$ inner verify -p claude-containers --suggest</code>
+    </div>
+  </div>
+</section>
+
+<div class="doc-content">
+  {{ .Content }}
+</div>
+
+<footer class="foot">
+  <div class="foot-grid">
+    <div>
+      <div class="foot-brand mono">
+        <span class="fg-cyan">▣</span> inner <span class="muted">v{{ .Site.Params.currentAppVersion }}</span>
+      </div>
+      <p class="muted" style="font-size: 12.5px">
+        Sandboxed agentic tooling for Linux. Built on bubblewrap, inspired by
+        git's profile-driven simplicity.
+      </p>
+    </div>
+    <div>
+      <div class="foot-h">DOCS</div>
+      <a href="{{ "/inner/getting-started/" | absURL }}">Getting started</a>
+      <a href="{{ "/inner/profiles/" | absURL }}">Profiles</a>
+      <a href="{{ "/inner/examples/" | absURL }}">Examples</a>
+      <a href="{{ "/inner/cheatsheet/" | absURL }}">Cheat sheet</a>
+    </div>
+    <div>
+      <div class="foot-h">PROJECT</div>
+      <a href="{{ .Site.Params.repoURL }}">GitHub</a>
+      <a href="{{ .Site.Params.repoURL }}/releases">Releases</a>
+      <a href="{{ .Site.Params.repoURL }}/issues">Issues</a>
+    </div>
+    <div>
+      <div class="foot-h">RELATED</div>
+      <a href="https://github.com/containers/bubblewrap">bubblewrap</a>
+    </div>
+  </div>
+  <div class="foot-bottom">
+    <span class="muted">© 2026 — Apache-2.0</span>
+    <span class="muted mono">SHA: 4c93d63 · built {{ now.Format "2006-01-02" }}</span>
+  </div>
+</footer>
 {{ end }}

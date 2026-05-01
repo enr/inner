@@ -4,7 +4,7 @@ description: Quick reference for inner commands and common tasks
 weight: 7
 ---
 
-# Cheat Sheet
+
 
 ## Health & Environment
 
@@ -75,7 +75,7 @@ weight: 7
 |------|---------|
 | View merged config | `inner config show` |
 | Edit global config | `inner config edit` |
-| Edit local (.inner/) config | `inner config edit --local` |
+| Edit local (/inner/.inner/) config | `inner config edit --local` |
 
 ---
 
