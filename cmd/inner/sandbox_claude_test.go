@@ -564,3 +564,42 @@ func TestExtractExpiresAt_claudeAiOauthNested(t *testing.T) {
 		t.Errorf("extractExpiresAt = %d, want %d", got, want)
 	}
 }
+
+// ── normaliseTimestamp ────────────────────────────────────────────────────────
+
+func TestNormaliseTimestamp(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int64
+		want int64
+	}{
+		{
+			name: "already seconds (below threshold)",
+			in:   1_775_866_433, // 2026-04-11 in seconds
+			want: 1_775_866_433,
+		},
+		{
+			name: "milliseconds (above threshold) converted to seconds",
+			in:   1_775_866_433_000,
+			want: 1_775_866_433,
+		},
+		{
+			name: "exactly at threshold is treated as seconds",
+			in:   msThreshold,
+			want: msThreshold,
+		},
+		{
+			name: "one above threshold is treated as milliseconds",
+			in:   msThreshold + 1,
+			want: (msThreshold + 1) / 1000,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normaliseTimestamp(tc.in)
+			if got != tc.want {
+				t.Errorf("normaliseTimestamp(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}

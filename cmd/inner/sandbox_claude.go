@@ -150,10 +150,15 @@ func extractExpiresAt(raw map[string]json.RawMessage) int64 {
 	return 0
 }
 
+// msThreshold is the boundary above which a timestamp is treated as
+// milliseconds rather than seconds. 1e10 seconds ≈ year 2286, so any value
+// above this is unambiguously a millisecond timestamp for the foreseeable future.
+const msThreshold int64 = 10_000_000_000
+
 // normaliseTimestamp converts a timestamp to Unix seconds.
-// Values above 1e10 are assumed to be milliseconds (Claude Code stores ms).
+// Values above msThreshold are assumed to be milliseconds (Claude Code stores ms).
 func normaliseTimestamp(ts int64) int64 {
-	if ts > 10_000_000_000 {
+	if ts > msThreshold {
 		return ts / 1000
 	}
 	return ts
