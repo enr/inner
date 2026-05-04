@@ -124,14 +124,14 @@ This key enables rootless container runtimes (podman, docker rootless) to work i
 ### Environment
 
 ```go
-if cfg.Env.Clear {
+if !cfg.Env.InheritAll {
     args = append(args, "--clearenv")
     for _, key := range cfg.Env.Inherit { ... }
 }
 for key, val := range cfg.Env.Set { ... }
 ```
 
-Driven by `cfg.Env` (profile `[env]` section, CLI `-e KEY=VAL`). Explicit `set` values always override inherited ones.
+Driven by `cfg.Env` (profile `[env]` section, CLI `-e KEY=VAL`). The host environment is always cleared unless `InheritAll` is set (`inherit_all = true` in the profile). Explicit `set` values always override inherited ones.
 
 ### Clipboard / display server
 
@@ -172,7 +172,7 @@ If `cfg.ShimDir` is non-empty (populated by `cmd_run.go` after `shim.Builder.Bui
 
 ### Git config injection
 
-If `cfg.GitConfigPath` is non-empty (set after `git.Sanitize()`), the sanitized gitconfig is bind-mounted at its temp path and `GIT_CONFIG_GLOBAL` is set to point to it.
+If `cfg.GitConfigPath` is non-empty (set after `git.Sanitize()`), the sanitized gitconfig is bind-mounted at the fixed in-sandbox path `/etc/inner/gitconfig` and `GIT_CONFIG_GLOBAL` is set to that path. The host temp path is never exposed inside the sandbox, so the host `/tmp` layout is not leaked.
 
 ---
 

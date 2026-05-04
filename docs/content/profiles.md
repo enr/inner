@@ -374,18 +374,19 @@ Controls environment variable inheritance and injection.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `clearenv` | bool | `true` | Clear all host environment variables |
+| `inherit_all` | bool | `false` | Inherit the full host environment (opt-in; leaks secrets) |
 | `inherit` | list | `[]` | Variables to pass through from the host |
 | `set` | table | `{}` | Variables to set explicitly in the sandbox |
 
 ```toml
 [env]
-clearenv = true
 inherit  = ["TERM", "LANG", "HOME", "USER"]
 set      = { "CI" = "true", "LOG_LEVEL" = "debug" }
 ```
 
-When `clearenv = false` all host variables are inherited and `set` acts as overrides.
+The host environment is cleared by default. Set `inherit_all = true` to inherit all host variables (not recommended — leaks secrets such as `AWS_*`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK`). Use `inherit` to selectively pass through individual variables.
+
+> **Note:** the legacy `clearenv` TOML key is accepted for backward compatibility but has no effect; clearing is always the default.
 
 ---
 
@@ -774,7 +775,6 @@ network = false
 "~/projects/myapp" = { dest = "/workspace", mode = "rw" }
 
 [env]
-clearenv = true
 inherit  = ["TERM", "LANG", "HOME"]
 set      = { "PYTHONDONTWRITEBYTECODE" = "1" }
 

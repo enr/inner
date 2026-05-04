@@ -106,7 +106,7 @@ func TestPrepareRollbackCleansIntermediateDirs(t *testing.T) {
 	if err := os.MkdirAll(readonlyDir, 0o555); err != nil {
 		t.Fatalf("creating readonly dir: %v", err)
 	}
-	t.Cleanup(func() { os.Chmod(readonlyDir, 0o755) }) //nolint:errcheck
+	t.Cleanup(func() { os.Chmod(readonlyDir, 0o755) })  //nolint:errcheck
 	dest2 := filepath.Join(readonlyDir, "sub", "child") // cannot create sub inside readonly dir
 
 	_, err := Prepare(dir, []string{dest1, dest2}, RunInfo{Profile: "test", Command: "cmd"})

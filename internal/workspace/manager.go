@@ -196,7 +196,7 @@ func tryFlockStale(path string) bool {
 	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if err == nil {
 		syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck
-		return true                                  // acquired → no live holder
+		return true                                 // acquired → no live holder
 	}
 	return false // EWOULDBLOCK → live holder
 }
