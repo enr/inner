@@ -292,6 +292,11 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			bindPath := r.path
 			if resolved, err := evalSymlinks(r.path); err == nil {
 				bindPath = resolved
+			} else {
+				// r.path exists (checked above) but EvalSymlinks failed — broken
+				// symlink. Falling back to the unresolved path would cause bwrap to
+				// silently skip the mount, leaving sensitive content readable.
+				return nil, fmt.Errorf("hide %s: cannot resolve %s: %w", r.key, r.path, err)
 			}
 			if r.dir {
 				args = append(args, "--tmpfs", bindPath)

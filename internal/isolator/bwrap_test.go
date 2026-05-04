@@ -1,7 +1,9 @@
 package isolator
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -694,6 +696,31 @@ func TestBuild_sensitiveResources_nonexistentSkipped(t *testing.T) {
 	}
 	if count > 0 {
 		t.Errorf("unexpected --tmpfs for sensitive dirs when paths don't exist, got %v", args)
+	}
+}
+
+func TestBuild_brokenSymlink_failsClosed(t *testing.T) {
+	// A sensitive path that exists as a broken symlink: Lstat succeeds but
+	// EvalSymlinks fails. Before the fix, Build silently used the unresolved
+	// path, causing bwrap to skip the mount and leave the path readable.
+	home, _ := os.UserHomeDir()
+	sshPath := filepath.Join(home, ".ssh")
+	iso := testIsolator(runtime.RuntimeInfo{})
+	iso.statFn = func(p string) (os.FileInfo, error) {
+		if p == sshPath {
+			return nil, nil // broken symlink: Lstat sees the entry
+		}
+		return nil, os.ErrNotExist
+	}
+	iso.evalSymlinksFn = func(p string) (string, error) {
+		if p == sshPath {
+			return "", fmt.Errorf("lstat %s: no such file or directory", p)
+		}
+		return p, nil
+	}
+	_, err := iso.Build(config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "sh"}})
+	if err == nil {
+		t.Error("Build should return an error when a sensitive path is a broken symlink, got nil")
 	}
 }
 
