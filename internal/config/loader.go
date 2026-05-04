@@ -58,6 +58,18 @@ func (l *Loader) LocalProfilesDir() string {
 	return filepath.Join(l.WorkDir, ".inner", "profiles")
 }
 
+// validateProfileName rejects names that could escape the profiles directory
+// via path-traversal sequences.
+func validateProfileName(name string) error {
+	if strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("invalid profile name %q: must not contain path separators", name)
+	}
+	if name == ".." || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid profile name %q: must not contain '..'", name)
+	}
+	return nil
+}
+
 // ProfilePath returns the path to a named profile file.
 func (l *Loader) ProfilePath(name string) string {
 	return filepath.Join(l.Dir, "profiles", name+".toml")
@@ -161,6 +173,9 @@ func (l *Loader) loadEffectiveGlobal() (*GlobalConfig, error) {
 // Local profile (WorkDir/.inner/profiles) takes precedence over global (~/.inner/profiles).
 // Returns an error if the profile is not found in either location.
 func (l *Loader) LoadProfile(name string) (*Profile, error) {
+	if err := validateProfileName(name); err != nil {
+		return nil, err
+	}
 	// Local profile takes precedence over global.
 	if localPath := l.LocalProfilePath(name); localPath != "" {
 		if _, err := os.Stat(localPath); err == nil {
@@ -431,9 +446,13 @@ func (l *Loader) loadRaw(path string) (*Profile, toml.MetaData, error) {
 // resolveExtendsPath converts an extends= value to an absolute file path.
 // Values that look like paths (contain '/', start with '~') are expanded;
 // bare names are looked up in the profiles directory.
+// Returns "" for bare names that fail profile-name validation.
 func (l *Loader) resolveExtendsPath(val string) string {
 	if filepath.IsAbs(val) || strings.ContainsRune(val, '/') || strings.HasPrefix(val, "~") {
 		return ExpandPath(val)
+	}
+	if validateProfileName(val) != nil {
+		return ""
 	}
 	return l.ProfilePath(val)
 }
@@ -463,6 +482,9 @@ func (l *Loader) loadProfilePath(absPath string, visited map[string]bool) (*Prof
 
 	// Resolve the base profile path and load it recursively.
 	basePath := l.resolveExtendsPath(p.Extends)
+	if basePath == "" {
+		return nil, fmt.Errorf("invalid extends value %q: bare name must not contain path separators or '..'", p.Extends)
+	}
 	absBasePath, err := filepath.Abs(basePath)
 	if err != nil {
 		absBasePath = basePath

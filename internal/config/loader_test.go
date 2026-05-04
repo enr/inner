@@ -1219,6 +1219,91 @@ capabilities   = ["claude"]
 	}
 }
 
+// --- path-traversal validation tests (issue #8) ---
+
+func TestLoadProfile_traversal_slashInName(t *testing.T) {
+	// A name containing "/" must be rejected before any filesystem access.
+	dir := t.TempDir()
+	// Place a valid TOML file one level above the profiles dir so that a
+	// naive filepath.Join(dir, "profiles", "../secret.toml") would reach it.
+	writeFile(t, filepath.Join(dir, "secret.toml"), `name = "secret"`)
+
+	l := NewLoader(dir)
+	_, err := l.LoadProfile("../secret")
+	if err == nil {
+		t.Fatal("LoadProfile with traversal name should return an error")
+	}
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("error should mention 'invalid', got: %v", err)
+	}
+}
+
+func TestLoadProfile_traversal_backslashInName(t *testing.T) {
+	l := NewLoader(t.TempDir())
+	_, err := l.LoadProfile(`foo\bar`)
+	if err == nil {
+		t.Fatal("LoadProfile with backslash in name should return an error")
+	}
+}
+
+func TestLoadProfile_traversal_dotdotName(t *testing.T) {
+	l := NewLoader(t.TempDir())
+	_, err := l.LoadProfile("..")
+	if err == nil {
+		t.Fatal("LoadProfile with '..' name should return an error")
+	}
+}
+
+func TestLoadProfile_traversal_dotdotComponent(t *testing.T) {
+	// Dotdot embedded in a longer name must also be caught.
+	l := NewLoader(t.TempDir())
+	_, err := l.LoadProfile("foo/../bar")
+	if err == nil {
+		t.Fatal("LoadProfile with '..' component should return an error")
+	}
+}
+
+func TestLoadProfile_traversal_doesNotReachOutsideProfilesDir(t *testing.T) {
+	// Even if a valid TOML file is reachable via traversal, LoadProfile must
+	// not load it — the traversal error fires before any stat/open.
+	dir := t.TempDir()
+	// This file would be reached by name "../outside" without the fix.
+	writeFile(t, filepath.Join(dir, "outside.toml"), "name = \"outside\"\ndescription = \"should not be loaded\"")
+
+	l := NewLoader(dir)
+	_, err := l.LoadProfile("../outside")
+	if err == nil {
+		t.Fatal("LoadProfile with traversal must not load files outside the profiles dir")
+	}
+}
+
+func TestLoadProfile_extends_traversal_bareNameDotDot(t *testing.T) {
+	// extends with a bare name that is ".." should be rejected.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `extends = ".."`)
+	// Place a TOML file at dir/profiles/...toml — won't be reached because the
+	// name is rejected at validation time.
+	l := NewLoader(dir)
+	_, err := l.LoadProfile("child")
+	if err == nil {
+		t.Fatal("extends with bare '..' should return an error")
+	}
+}
+
+func TestLoadProfile_extends_traversal_bareNameSlash(t *testing.T) {
+	// extends with a bare name containing "/" should be rejected.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "secret.toml"), `name = "secret"`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `extends = "../secret"`)
+	// Without the fix resolveExtendsPath takes the path branch and ExpandPath
+	// returns dir/secret.toml — a file outside the profiles directory.
+	l := NewLoader(dir)
+	_, err := l.LoadProfile("child")
+	if err == nil {
+		t.Fatal("extends with traversal path must not load files outside the profiles dir")
+	}
+}
+
 func TestLoadProfile_noCapabilities_emptySlice(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "profiles", "plain.toml"), `
