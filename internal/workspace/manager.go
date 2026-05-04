@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,6 +30,7 @@ type lockData struct {
 // Manager holds state for a single sandbox run's workspace directories.
 type Manager struct {
 	lockPath string
+	lockFile *os.File // kept open to hold the exclusive flock
 	created  []string // dirs we created (removed on Release)
 }
 
@@ -41,6 +41,19 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 	if _, err := os.Stat(workspacesPath); err != nil {
 		return nil, fmt.Errorf("workspaces_path %q does not exist: %w", workspacesPath, err)
 	}
+
+	// Acquire a global sentinel flock so the scan+mkdir+write sequence is atomic
+	// across concurrent inner invocations (fixes TOCTOU, issue #10).
+	sentinelPath := filepath.Join(workspacesPath, ".inner-sentinel.flock")
+	sentinel, err := os.OpenFile(sentinelPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("opening sentinel lock %q: %w", sentinelPath, err)
+	}
+	defer sentinel.Close()
+	if err := syscall.Flock(int(sentinel.Fd()), syscall.LOCK_EX); err != nil {
+		return nil, fmt.Errorf("acquiring sentinel lock: %w", err)
+	}
+	defer syscall.Flock(int(sentinel.Fd()), syscall.LOCK_UN) //nolint:errcheck
 
 	// Scan existing lock files; remove stale ones; fail on live conflicts.
 	entries, err := os.ReadDir(workspacesPath)
@@ -58,7 +71,10 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 			os.Remove(lockPath) //nolint:errcheck
 			continue
 		}
-		if !isAlive(ld.Pid) {
+		// Use flock to detect liveness instead of kill(pid, 0): acquiring
+		// LOCK_EX|LOCK_NB succeeds only if no live process holds the lock,
+		// which eliminates the PID-reuse false-positive (issue #10).
+		if tryFlockStale(lockPath) {
 			os.Remove(lockPath) //nolint:errcheck
 			continue
 		}
@@ -77,7 +93,6 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 	for _, dest := range dests {
 		if _, err := os.Stat(dest); os.IsNotExist(err) {
 			if err := os.MkdirAll(dest, 0o755); err != nil {
-				// Roll back already-created dirs.
 				for _, d := range created {
 					os.Remove(d) //nolint:errcheck
 				}
@@ -87,22 +102,31 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 		}
 	}
 
-	// Write lock file.
+	// Create lock file with O_EXCL (TOCTOU) and 0600 (no world-readable leakage).
+	// Hold the flock for the process lifetime so stale detection works for us too.
 	pid := os.Getpid()
 	lockPath := filepath.Join(workspacesPath, ".inner-"+strconv.Itoa(pid)+".lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		for _, d := range created {
+			os.Remove(d) //nolint:errcheck
+		}
+		return nil, fmt.Errorf("creating lock file %q: %w", lockPath, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		os.Remove(lockPath) //nolint:errcheck
+		for _, d := range created {
+			os.Remove(d) //nolint:errcheck
+		}
+		return nil, fmt.Errorf("flocking lock file %q: %w", lockPath, err)
+	}
 	ld := lockData{
 		Profile: info.Profile,
 		Command: info.Command,
 		Pid:     pid,
 		Started: time.Now().UTC().Format(time.RFC3339),
 		Dests:   dests,
-	}
-	f, err := os.Create(lockPath)
-	if err != nil {
-		for _, d := range created {
-			os.Remove(d) //nolint:errcheck
-		}
-		return nil, fmt.Errorf("creating lock file %q: %w", lockPath, err)
 	}
 	if err := toml.NewEncoder(f).Encode(ld); err != nil {
 		f.Close()
@@ -112,24 +136,35 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 		}
 		return nil, fmt.Errorf("writing lock file %q: %w", lockPath, err)
 	}
-	f.Close()
 
-	return &Manager{lockPath: lockPath, created: created}, nil
+	return &Manager{lockPath: lockPath, lockFile: f, created: created}, nil
 }
 
 // Release removes the lock file and any workspace directories that were
 // created by Prepare. Errors are silently ignored (best-effort cleanup).
 func (m *Manager) Release() {
 	os.Remove(m.lockPath) //nolint:errcheck
+	if m.lockFile != nil {
+		m.lockFile.Close() // also releases the flock
+	}
 	for _, d := range m.created {
 		os.Remove(d) //nolint:errcheck
 	}
 }
 
-// isAlive reports whether the given pid refers to a running process.
-// Returns true both when the process exists and when we lack permission to
-// signal it (the process exists but belongs to another user).
-func isAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+// tryFlockStale reports whether the lock file at path is stale (not held by a
+// live process). It opens the file and attempts a non-blocking exclusive flock;
+// success means nobody is currently holding it.
+func tryFlockStale(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return true // can't open → treat as stale
+	}
+	defer f.Close()
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck
+		return true                                  // acquired → no live holder
+	}
+	return false // EWOULDBLOCK → live holder
 }
