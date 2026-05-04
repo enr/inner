@@ -528,10 +528,10 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 		fmt.Fprintln(w)
 	}
 
-	if rc.Env.Clear || len(rc.Env.Inherit) > 0 || len(rc.Env.Set) > 0 {
+	if rc.Env.InheritAll || len(rc.Env.Inherit) > 0 || len(rc.Env.Set) > 0 {
 		fmt.Fprintln(w, "env:")
-		if rc.Env.Clear {
-			fmt.Fprintln(w, "  clearenv: true")
+		if rc.Env.InheritAll {
+			fmt.Fprintln(w, "  inherit_all: true  # WARNING: full host env inherited")
 		}
 		if len(rc.Env.Inherit) > 0 {
 			fmt.Fprintf(w, "  inherit: %s\n", strings.Join(rc.Env.Inherit, ", "))

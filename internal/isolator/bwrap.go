@@ -196,7 +196,9 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	}
 
 	// ── Environment ──────────────────────────────────────────────────────────
-	if cfg.Env.Clear {
+	// Clear by default; only skip when InheritAll explicitly opts into full
+	// host env inheritance (leaks secrets — use sparingly).
+	if !cfg.Env.InheritAll {
 		args = append(args, "--clearenv")
 		// Explicitly forward each whitelisted variable from the host.
 		for _, key := range cfg.Env.Inherit {

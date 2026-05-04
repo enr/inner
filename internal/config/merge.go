@@ -62,6 +62,9 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("env", "clearenv") {
 		result.Env.Clear = overlay.Env.Clear
 	}
+	if meta.IsDefined("env", "inherit_all") {
+		result.Env.InheritAll = overlay.Env.InheritAll
+	}
 	if meta.IsDefined("env", "inherit") {
 		result.Env.Inherit = mergeUnique(base.Env.Inherit, overlay.Env.Inherit)
 	}

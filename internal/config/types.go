@@ -95,10 +95,18 @@ type MountEntry struct {
 
 // EnvConfig describes how environment variables are handled inside the sandbox.
 // Shared between Profile TOML and RunConfig.
+//
+// The sandbox clears the host environment by default. Set InheritAll=true (TOML:
+// inherit_all = true) to opt into full host env inheritance — doing so leaks
+// all host secrets (AWS_*, GITHUB_TOKEN, etc.) into the sandbox.
 type EnvConfig struct {
-	Clear   bool              `toml:"clearenv"`
-	Inherit []string          `toml:"inherit"`
-	Set     map[string]string `toml:"set"`
+	// Clear is kept for backward compatibility with existing profiles that set
+	// clearenv = true; it has no effect on sandbox behaviour (clearing is the
+	// default). Use inherit_all = true to opt into full env inheritance instead.
+	Clear      bool              `toml:"clearenv"`
+	InheritAll bool              `toml:"inherit_all"`
+	Inherit    []string          `toml:"inherit"`
+	Set        map[string]string `toml:"set"`
 }
 
 // GitConfig describes how the host gitconfig is sanitized before injection.

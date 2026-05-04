@@ -239,25 +239,40 @@ func TestBuild_workspaceMountsAfterWorkdirBind(t *testing.T) {
 
 // ── Environment ───────────────────────────────────────────────────────────────
 
-func TestBuild_clearenv(t *testing.T) {
+func TestBuild_clearenv_byDefault(t *testing.T) {
+	// When Env is the zero value (no clearenv field in profile), the sandbox
+	// must still clear the host environment. Inheriting it silently leaks
+	// secrets (AWS_*, GITHUB_TOKEN, etc.) into the sandbox.
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Env:        config.EnvConfig{}, // zero value — no explicit clearenv field
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if !hasFlag(args, "--clearenv") {
+		t.Errorf("expected --clearenv by default (zero Env), got %v", args)
+	}
+}
+
+func TestBuild_clearenv_explicit(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{
 		Env:        config.EnvConfig{Clear: true},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
 	if !hasFlag(args, "--clearenv") {
-		t.Errorf("expected --clearenv, got %v", args)
+		t.Errorf("expected --clearenv when Clear=true, got %v", args)
 	}
 }
 
-func TestBuild_noClearenv(t *testing.T) {
+func TestBuild_inheritAll_noClearing(t *testing.T) {
+	// InheritAll=true is the explicit opt-in to full host env inheritance.
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{
-		Env:        config.EnvConfig{Clear: false},
+		Env:        config.EnvConfig{InheritAll: true},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
 	if hasFlag(args, "--clearenv") {
-		t.Errorf("unexpected --clearenv when Clear=false, got %v", args)
+		t.Errorf("unexpected --clearenv when InheritAll=true, got %v", args)
 	}
 }
 
