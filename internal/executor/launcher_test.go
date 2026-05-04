@@ -2,7 +2,9 @@ package executor
 
 import (
 	"bytes"
+	"errors"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -232,6 +234,65 @@ func TestLauncher_cleanups_multipleCalledInOrder(t *testing.T) {
 	}
 	if len(order) != 3 || order[0] != 1 || order[1] != 2 || order[2] != 3 {
 		t.Errorf("cleanups called in wrong order: %v", order)
+	}
+}
+
+// ── PostStart ─────────────────────────────────────────────────────────────────
+
+func TestLauncher_postStart_called(t *testing.T) {
+	l, _, _ := newTestLauncher()
+	called := make(chan struct{})
+	_, err := l.Run(exec.Command("true"), RunOptions{
+		PostStart: func() error { close(called); return nil },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("postStart was never called")
+	}
+}
+
+func TestLauncher_postStart_errorIsLogged(t *testing.T) {
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	l, _, _ := newTestLauncher()
+	called := make(chan struct{})
+	_, err := l.Run(exec.Command("true"), RunOptions{
+		PostStart: func() error {
+			close(called)
+			return errors.New("poststart-failure")
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("postStart was never called")
+	}
+	// Give the goroutine time to log after postStart returns.
+	time.Sleep(50 * time.Millisecond)
+	if !strings.Contains(logBuf.String(), "poststart-failure") {
+		t.Errorf("expected postStart error to be logged, got: %q", logBuf.String())
+	}
+}
+
+func TestLauncher_postStart_errorDoesNotAbortRun(t *testing.T) {
+	l, _, _ := newTestLauncher()
+	result, err := l.Run(exec.Command("sh", "-c", "exit 0"), RunOptions{
+		PostStart: func() error { return errors.New("poststart-failure") },
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", result.ExitCode)
 	}
 }
 

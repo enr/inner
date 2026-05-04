@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -35,7 +36,7 @@ type RunOptions struct {
 	CursorFix string
 	// PostStart, if non-nil, is called in a goroutine immediately after the
 	// process is started. It runs concurrently with the process and must not
-	// block indefinitely. Errors are logged but do not abort the run.
+	// block indefinitely. Errors are logged via log.Printf and do not abort the run.
 	PostStart func() error
 	// Cleanups are called in order after the process exits, regardless of exit code.
 	// Errors are collected but do not affect the RunResult.
@@ -115,12 +116,12 @@ func (l *Launcher) Run(cmd *exec.Cmd, opts RunOptions) (RunResult, error) {
 
 // ── Non-interactive ───────────────────────────────────────────────────────────
 
-func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, postStart func() error, log *os.File) (int, error) {
+func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, postStart func() error, logFile *os.File) (int, error) {
 	stdout := l.Stdout
 	stderr := l.Stderr
-	if log != nil {
-		stdout = io.MultiWriter(l.Stdout, log)
-		stderr = io.MultiWriter(l.Stderr, log)
+	if logFile != nil {
+		stdout = io.MultiWriter(l.Stdout, logFile)
+		stderr = io.MultiWriter(l.Stderr, logFile)
 	}
 	cmd.Stdin = l.Stdin
 	cmd.Stdout = stdout
@@ -131,7 +132,11 @@ func (l *Launcher) runNonInteractive(cmd *exec.Cmd, timeoutSec int, postStart fu
 	}
 
 	if postStart != nil {
-		go postStart() //nolint:errcheck
+		go func() {
+			if err := postStart(); err != nil {
+				log.Printf("postStart: %v", err)
+			}
+		}()
 	}
 
 	done := make(chan struct{})
@@ -212,7 +217,11 @@ func (l *Launcher) runInteractive(cmd *exec.Cmd, timeoutSec int, forceRawMode bo
 	}
 
 	if postStart != nil {
-		go postStart() //nolint:errcheck
+		go func() {
+			if err := postStart(); err != nil {
+				log.Printf("postStart: %v", err)
+			}
+		}()
 	}
 
 	done := make(chan struct{})
