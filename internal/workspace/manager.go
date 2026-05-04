@@ -92,13 +92,12 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 	var created []string
 	for _, dest := range dests {
 		if _, err := os.Stat(dest); os.IsNotExist(err) {
+			newDirs := dirsToCreate(dest)
 			if err := os.MkdirAll(dest, 0o755); err != nil {
-				for _, d := range created {
-					os.Remove(d) //nolint:errcheck
-				}
+				removeDeepestFirst(created)
 				return nil, fmt.Errorf("creating workspace directory %q: %w", dest, err)
 			}
-			created = append(created, dest)
+			created = append(created, newDirs...)
 		}
 	}
 
@@ -108,17 +107,13 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 	lockPath := filepath.Join(workspacesPath, ".inner-"+strconv.Itoa(pid)+".lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		for _, d := range created {
-			os.Remove(d) //nolint:errcheck
-		}
+		removeDeepestFirst(created)
 		return nil, fmt.Errorf("creating lock file %q: %w", lockPath, err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		os.Remove(lockPath) //nolint:errcheck
-		for _, d := range created {
-			os.Remove(d) //nolint:errcheck
-		}
+		removeDeepestFirst(created)
 		return nil, fmt.Errorf("flocking lock file %q: %w", lockPath, err)
 	}
 	ld := lockData{
@@ -131,9 +126,7 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 	if err := toml.NewEncoder(f).Encode(ld); err != nil {
 		f.Close()
 		os.Remove(lockPath) //nolint:errcheck
-		for _, d := range created {
-			os.Remove(d) //nolint:errcheck
-		}
+		removeDeepestFirst(created)
 		return nil, fmt.Errorf("writing lock file %q: %w", lockPath, err)
 	}
 
@@ -147,8 +140,47 @@ func (m *Manager) Release() {
 	if m.lockFile != nil {
 		m.lockFile.Close() // also releases the flock
 	}
-	for _, d := range m.created {
-		os.Remove(d) //nolint:errcheck
+	removeDeepestFirst(m.created)
+}
+
+// dirsToCreate returns the directories that os.MkdirAll(dest) would create,
+// ordered shallowest-first. It walks dest upward until it finds an existing
+// ancestor, then returns the chain from that ancestor's immediate child down
+// to dest. Returns nil if dest already exists.
+func dirsToCreate(dest string) []string {
+	dest = filepath.Clean(dest)
+	// Find deepest existing ancestor.
+	existing := dest
+	for {
+		if _, err := os.Stat(existing); err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break // reached filesystem root
+		}
+		existing = parent
+	}
+	if existing == dest {
+		return nil
+	}
+	// Collect from dest up to (but not including) existing, then reverse.
+	var dirs []string
+	for cur := dest; cur != existing; cur = filepath.Dir(cur) {
+		dirs = append(dirs, cur)
+	}
+	// Reverse to get shallowest-first order.
+	for i, j := 0, len(dirs)-1; i < j; i, j = i+1, j-1 {
+		dirs[i], dirs[j] = dirs[j], dirs[i]
+	}
+	return dirs
+}
+
+// removeDeepestFirst removes directories in reverse order (deepest first) so
+// that children are removed before their parents.
+func removeDeepestFirst(dirs []string) {
+	for i := len(dirs) - 1; i >= 0; i-- {
+		os.Remove(dirs[i]) //nolint:errcheck
 	}
 }
 
