@@ -169,6 +169,10 @@ func applyStrip(sections []rawSection, strip string) []rawSection {
 
 // applyOverride sets section.key = value, upserting the key and creating
 // the section if necessary. overrideKey format: "section.key".
+// If multiple sections share the same name (e.g. [remote "origin"] and
+// [remote "upstream"] both have name "remote"), the override is skipped: there
+// is no way to target a specific subsection, and silently modifying the first
+// match would be incorrect.
 func applyOverride(sections []rawSection, overrideKey, value string) []rawSection {
 	parts := strings.SplitN(strings.ToLower(overrideKey), ".", 2)
 	if len(parts) != 2 {
@@ -178,6 +182,18 @@ func applyOverride(sections []rawSection, overrideKey, value string) []rawSectio
 	if !isSafeOverrideNamePart(sectionName) || !isSafeOverrideNamePart(keyName) {
 		return sections
 	}
+
+	// Count how many sections share this name; reject ambiguous multi-instance cases.
+	count := 0
+	for _, s := range sections {
+		if s.name == sectionName {
+			count++
+		}
+	}
+	if count > 1 {
+		return sections
+	}
+
 	newLine := fmt.Sprintf("\t%s = %s", keyName, quoteGitConfigValue(value))
 
 	for i, s := range sections {

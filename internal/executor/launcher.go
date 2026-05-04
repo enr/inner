@@ -271,14 +271,18 @@ func applyTimeout(cmd *exec.Cmd, timeoutSec int, done <-chan struct{}) {
 		return
 	}
 	go func() {
+		t := time.NewTimer(time.Duration(timeoutSec) * time.Second)
+		defer t.Stop()
 		select {
-		case <-time.After(time.Duration(timeoutSec) * time.Second):
+		case <-t.C:
 			if cmd.Process == nil {
 				return
 			}
 			_ = cmd.Process.Signal(syscall.SIGTERM)
+			grace := time.NewTimer(5 * time.Second)
+			defer grace.Stop()
 			select {
-			case <-time.After(5 * time.Second):
+			case <-grace.C:
 				_ = cmd.Process.Kill()
 			case <-done:
 			}

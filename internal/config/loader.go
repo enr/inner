@@ -461,6 +461,12 @@ func (l *Loader) resolveExtendsPath(val string) string {
 // any extends chain. visited tracks paths already in the current chain so that
 // cycles are detected and reported as errors.
 func (l *Loader) loadProfilePath(absPath string, visited map[string]bool) (*Profile, error) {
+	// Canonicalize via symlinks so that two different path strings pointing to
+	// the same file are treated as one entry by the cycle detector.
+	if canonical, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = canonical
+	}
+
 	if visited[absPath] {
 		return nil, fmt.Errorf("extends cycle detected at %q", absPath)
 	}

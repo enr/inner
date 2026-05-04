@@ -108,6 +108,27 @@ func TestBuild_baseFlags(t *testing.T) {
 	}
 }
 
+func TestBuild_tmpfsSlashTmp_comesAfter_rootBind(t *testing.T) {
+	// Safety invariant: --tmpfs /tmp must be emitted AFTER --ro-bind / / so the
+	// tmpfs shadows the host's /tmp. If the order were reversed, host /tmp would
+	// be visible inside the sandbox.
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	rootIdx := indexSeq(args, "--ro-bind", "/", "/")
+	tmpfsIdx := indexSeq(args, "--tmpfs", "/tmp")
+	if rootIdx == -1 {
+		t.Fatal("--ro-bind / / not found in args")
+	}
+	if tmpfsIdx == -1 {
+		t.Fatal("--tmpfs /tmp not found in args")
+	}
+	if tmpfsIdx <= rootIdx {
+		t.Errorf("--tmpfs /tmp (idx %d) must come after --ro-bind / / (idx %d) or host /tmp leaks into sandbox", tmpfsIdx, rootIdx)
+	}
+}
+
 func TestBuild_separatorPresent(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{
@@ -426,11 +447,26 @@ func TestBuild_gitConfigPath(t *testing.T) {
 		Entrypoint:    config.Entrypoint{Cmd: "sh"},
 	})
 
-	if !hasSeq(args, "--ro-bind", "/tmp/inner-gitconfig-abc", "/tmp/inner-gitconfig-abc") {
-		t.Errorf("expected gitconfig ro-bind, got %v", args)
+	const sandboxPath = "/etc/inner/gitconfig"
+	if !hasSeq(args, "--ro-bind", "/tmp/inner-gitconfig-abc", sandboxPath) {
+		t.Errorf("expected gitconfig bound to sandbox path %q, got %v", sandboxPath, args)
 	}
-	if !hasSeq(args, "--setenv", "GIT_CONFIG_GLOBAL", "/tmp/inner-gitconfig-abc") {
-		t.Errorf("expected GIT_CONFIG_GLOBAL setenv, got %v", args)
+	if !hasSeq(args, "--setenv", "GIT_CONFIG_GLOBAL", sandboxPath) {
+		t.Errorf("expected GIT_CONFIG_GLOBAL=%q, got %v", sandboxPath, args)
+	}
+}
+
+func TestBuild_gitConfigPath_hostPathNotLeaked(t *testing.T) {
+	// The temp gitconfig lives at a host-only path like /tmp/inner-gitconfig-XXXX.
+	// Mounting it at that same path inside the sandbox leaks the host /tmp layout.
+	// It must be mounted at a fixed in-sandbox path instead.
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		GitConfigPath: "/tmp/inner-gitconfig-abc",
+		Entrypoint:    config.Entrypoint{Cmd: "sh"},
+	})
+	if hasSeq(args, "--ro-bind", "/tmp/inner-gitconfig-abc", "/tmp/inner-gitconfig-abc") {
+		t.Errorf("gitconfig must not be mounted at its host path (leaks host /tmp layout), got %v", args)
 	}
 }
 

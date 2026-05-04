@@ -212,6 +212,30 @@ func TestProcess_subsectionPreserved(t *testing.T) {
 	}
 }
 
+func TestProcess_override_multiInstanceSection_isNoOp(t *testing.T) {
+	// [remote "origin"] and [remote "upstream"] both have section name "remote".
+	// An override of "remote.url" cannot unambiguously target one subsection, so
+	// it must be a no-op rather than silently modifying the first match.
+	input := `[remote "origin"]
+	url = https://github.com/user/repo.git
+[remote "upstream"]
+	url = https://github.com/org/repo.git
+`
+	out := Process(input, nil, map[string]string{"remote.url": "https://evil.example.com"})
+	noopOut := Process(input, nil, nil)
+	if out != noopOut {
+		t.Errorf("override on multi-instance section must be a no-op, got:\n%s", out)
+	}
+}
+
+func TestProcess_override_singleInstanceSection_stillApplied(t *testing.T) {
+	// Overrides on sections that appear exactly once must still work.
+	out := Process(sampleGitconfig, nil, map[string]string{"push.default": "nothing"})
+	if !strings.Contains(out, "nothing") {
+		t.Errorf("expected push.default overridden to 'nothing', got:\n%s", out)
+	}
+}
+
 func TestProcess_trailingNewline(t *testing.T) {
 	out := Process(sampleGitconfig, nil, nil)
 	if !strings.HasSuffix(out, "\n") {

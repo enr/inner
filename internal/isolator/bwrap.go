@@ -331,8 +331,12 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 
 	// ── Git config injection ─────────────────────────────────────────────────
 	if cfg.GitConfigPath != "" {
-		args = append(args, "--ro-bind", cfg.GitConfigPath, cfg.GitConfigPath)
-		args = append(args, "--setenv", "GIT_CONFIG_GLOBAL", cfg.GitConfigPath)
+		// Mount at a fixed in-sandbox path rather than the host /tmp path to
+		// avoid leaking the host tmp layout into the sandbox.
+		const sandboxGitConfig = "/etc/inner/gitconfig"
+		args = append(args, "--dir", "/etc/inner")
+		args = append(args, "--ro-bind", cfg.GitConfigPath, sandboxGitConfig)
+		args = append(args, "--setenv", "GIT_CONFIG_GLOBAL", sandboxGitConfig)
 	}
 
 	// ── Working directory ────────────────────────────────────────────────────

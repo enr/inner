@@ -708,6 +708,37 @@ func TestLoadProfile_extends_cycle(t *testing.T) {
 	}
 }
 
+func TestLoadProfile_extends_cycleViaSymlink_detected(t *testing.T) {
+	// Profile a.toml references itself via a symlink alias of the profiles directory.
+	// Without EvalSymlinks canonicalization, the cycle detector sees two different
+	// path strings (/dir/profiles/a.toml vs /link/profiles/a.toml) and takes one
+	// extra recursion level to discover the cycle. With canonicalization it fires
+	// immediately.
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	if err := os.MkdirAll(profilesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// a.toml extends itself by going through a symlinked path to the same file.
+	linkDir := filepath.Join(dir, "link")
+	if err := os.Symlink(dir, linkDir); err != nil {
+		t.Skipf("symlink creation failed (likely unsupported in this environment): %v", err)
+	}
+
+	writeFile(t, filepath.Join(profilesDir, "a.toml"),
+		fmt.Sprintf(`extends = %q`, filepath.Join(linkDir, "profiles", "a.toml")))
+
+	l := NewLoader(dir)
+	_, err := l.LoadProfile("a")
+	if err == nil {
+		t.Fatal("expected error for extends cycle via symlink, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error should mention cycle, got: %v", err)
+	}
+}
+
 func TestLoadProfile_extends_baseNotFound(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `extends = "nonexistent"`)

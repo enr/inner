@@ -429,6 +429,7 @@ func (a *App) profileInstallFromURL(w io.Writer, rawURL, name string, force bool
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return fmt.Errorf("creating profiles directory: %w", err)
 	}
+	// Profile files are user-readable config, not credentials; 0644 is intentional.
 	if err := os.WriteFile(destPath, data, 0o644); err != nil { //nolint:gosec
 		return fmt.Errorf("writing profile: %w", err)
 	}
