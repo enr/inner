@@ -304,6 +304,59 @@ func TestBuild_setEnv(t *testing.T) {
 	}
 }
 
+func TestBuild_setEnv_deterministicOrder(t *testing.T) {
+	// Map iteration in Go is randomised; --setenv entries must be emitted in
+	// sorted key order so that dry-run output and command logging are
+	// reproducible across runs.
+	iso := testIsolator(runtime.RuntimeInfo{})
+	cfg := config.RunConfig{
+		Env: config.EnvConfig{
+			Set: map[string]string{
+				"ZEBRA": "z",
+				"ALPHA": "a",
+				"MANGO": "m",
+			},
+		},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	}
+
+	// Collect indices of the three --setenv KEY triples.
+	collectSetenvPositions := func() (int, int, int) {
+		args := cmdArgs(t, iso, cfg)
+		alpha, mango, zebra := -1, -1, -1
+		for i := 0; i+2 < len(args); i++ {
+			if args[i] == "--setenv" {
+				switch args[i+1] {
+				case "ALPHA":
+					alpha = i
+				case "MANGO":
+					mango = i
+				case "ZEBRA":
+					zebra = i
+				}
+			}
+		}
+		return alpha, mango, zebra
+	}
+
+	alpha, mango, zebra := collectSetenvPositions()
+	if alpha == -1 || mango == -1 || zebra == -1 {
+		t.Fatalf("not all --setenv entries found; ALPHA=%d MANGO=%d ZEBRA=%d", alpha, mango, zebra)
+	}
+	if !(alpha < mango && mango < zebra) {
+		t.Errorf("--setenv entries not in sorted key order: ALPHA@%d MANGO@%d ZEBRA@%d", alpha, mango, zebra)
+	}
+
+	// Run several times to catch non-determinism that might not show on first call.
+	for range 20 {
+		a, m, z := collectSetenvPositions()
+		if a != alpha || m != mango || z != zebra {
+			t.Errorf("non-deterministic order: ALPHA@%d MANGO@%d ZEBRA@%d (first run: %d %d %d)",
+				a, m, z, alpha, mango, zebra)
+		}
+	}
+}
+
 // ── Clipboard / display ───────────────────────────────────────────────────────
 
 func TestBuild_clipboardWayland(t *testing.T) {

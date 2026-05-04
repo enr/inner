@@ -206,8 +206,13 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		}
 	}
 	// Explicitly set variables override whatever was inherited.
-	for key, val := range cfg.Env.Set {
-		args = append(args, "--setenv", key, val)
+	setKeys := make([]string, 0, len(cfg.Env.Set))
+	for k := range cfg.Env.Set {
+		setKeys = append(setKeys, k)
+	}
+	slices.Sort(setKeys)
+	for _, key := range setKeys {
+		args = append(args, "--setenv", key, cfg.Env.Set[key])
 	}
 
 	// ── Clipboard / display server ───────────────────────────────────────────
