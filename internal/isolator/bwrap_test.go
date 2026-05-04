@@ -548,6 +548,81 @@ func TestBuild_netrc_hiddenByDefault(t *testing.T) {
 	}
 }
 
+func TestBuild_cloudCredentials_hiddenByDefault(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	dirs := []struct {
+		name string
+		path string
+	}{
+		{"aws-credentials", home + "/.aws"},
+		{"gcloud-credentials", home + "/.config/gcloud"},
+		{"kube-config", home + "/.kube"},
+		{"azure-credentials", home + "/.azure"},
+		{"password-store", home + "/.password-store"},
+	}
+	for _, d := range dirs {
+		if !hasSeq(args, "--tmpfs", d.path) {
+			t.Errorf("expected --tmpfs %s (%s) to be hidden, got %v", d.path, d.name, args)
+		}
+	}
+
+	files := []struct {
+		name string
+		path string
+	}{
+		{"docker-config", home + "/.docker/config.json"},
+		{"npmrc", home + "/.npmrc"},
+		{"pypirc", home + "/.pypirc"},
+		{"cargo-credentials", home + "/.cargo/credentials"},
+	}
+	for _, f := range files {
+		if !hasSeq(args, "--bind", "/dev/null", f.path) {
+			t.Errorf("expected --bind /dev/null %s (%s) to be hidden, got %v", f.path, f.name, args)
+		}
+	}
+}
+
+func TestBuild_cloudCredentials_allowedNotHidden(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+
+	cases := []struct {
+		allowKey string
+		path     string
+		dir      bool
+	}{
+		{"aws-credentials", home + "/.aws", true},
+		{"gcloud-credentials", home + "/.config/gcloud", true},
+		{"kube-config", home + "/.kube", true},
+		{"azure-credentials", home + "/.azure", true},
+		{"docker-config", home + "/.docker/config.json", false},
+		{"npmrc", home + "/.npmrc", false},
+		{"pypirc", home + "/.pypirc", false},
+		{"cargo-credentials", home + "/.cargo/credentials", false},
+		{"password-store", home + "/.password-store", true},
+	}
+	for _, c := range cases {
+		args := cmdArgs(t, iso, config.RunConfig{
+			Allow:      []string{c.allowKey},
+			Entrypoint: config.Entrypoint{Cmd: "sh"},
+		})
+		if c.dir {
+			if hasSeq(args, "--tmpfs", c.path) {
+				t.Errorf("key %s: unexpected --tmpfs %s when in Allow", c.allowKey, c.path)
+			}
+		} else {
+			if hasSeq(args, "--bind", "/dev/null", c.path) {
+				t.Errorf("key %s: unexpected --bind /dev/null %s when in Allow", c.allowKey, c.path)
+			}
+		}
+	}
+}
+
 func TestBuild_sensitiveResources_nonexistentSkipped(t *testing.T) {
 	// When paths don't exist, no hide args should be added.
 	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})

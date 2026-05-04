@@ -34,6 +34,9 @@ type Profile struct {
 var ValidAllowKeys = []string{
 	"ssh-keys", "git-credentials", "gpg-keys",
 	"docker-socket", "podman-socket", "nested-user-ns", "netrc",
+	"aws-credentials", "gcloud-credentials", "kube-config", "azure-credentials",
+	"docker-config", "npmrc", "pypirc", "cargo-credentials",
+	"password-store",
 }
 
 // ValidCapabilities is the exhaustive set of named capabilities accepted in

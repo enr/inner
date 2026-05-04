@@ -249,6 +249,18 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			{"podman-socket", "/run/user/" + uid + "/podman/podman.sock", false},
 			{"bash-history", filepath.Join(home, ".bash_history"), false},
 			{"zsh-history", filepath.Join(home, ".zsh_history"), false},
+			// Cloud provider credentials.
+			{"aws-credentials", filepath.Join(home, ".aws"), true},
+			{"gcloud-credentials", filepath.Join(home, ".config", "gcloud"), true},
+			{"kube-config", filepath.Join(home, ".kube"), true},
+			{"azure-credentials", filepath.Join(home, ".azure"), true},
+			// Package manager / registry tokens.
+			{"docker-config", filepath.Join(home, ".docker", "config.json"), false},
+			{"npmrc", filepath.Join(home, ".npmrc"), false},
+			{"pypirc", filepath.Join(home, ".pypirc"), false},
+			{"cargo-credentials", filepath.Join(home, ".cargo", "credentials"), false},
+			// Password managers.
+			{"password-store", filepath.Join(home, ".password-store"), true},
 		}
 
 		for _, r := range sensitive {
