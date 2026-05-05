@@ -11,9 +11,7 @@
   <div class="app">
     <aside class="sb">
       <a class="sb-brand" href="{{ "/" | absURL | relURL }}" style="text-decoration: none">
-        <span class="glyph">▣</span>
-        <span class="name">{{ .Site.Title }}</span>
-        <span class="ver">v{{ .Site.Params.currentAppVersion }}</span>
+        <img class="sb-logo" src="{{ "logo.png" | absURL | relURL }}" alt="inner logo">
       </a>
       <div class="sb-tag">{{ .Site.Params.tagline }}</div>
       
@@ -56,6 +54,7 @@
       <div class="sb-foot">
         <div class="row"><span class="dot"></span> github.com/enr/inner</div>
         <div class="row muted">Apache-2.0 · linux/amd64</div>
+        <div class="row muted">v{{ .Site.Params.currentAppVersion }}</div>
       </div>
     </aside>
 

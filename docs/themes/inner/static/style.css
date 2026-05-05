@@ -98,31 +98,17 @@ body {
 }
 
 .sb-brand {
-  padding: 20px 22px 18px;
+  padding: 14px 22px 12px;
   border-bottom: 1px solid var(--rule);
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
+  display: block;
 }
 
-.sb-brand .glyph {
-  color: var(--accent);
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: -.02em;
-}
-
-.sb-brand .name {
-  color: var(--base1);
-  font-weight: 700;
-  font-size: 17px;
-  letter-spacing: -.01em;
-}
-
-.sb-brand .ver {
-  margin-left: auto;
-  color: var(--text-mute);
-  font-size: 11px;
+.sb-logo {
+  width: 100%;
+  height: auto;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  display: block;
 }
 
 .sb-tag {
