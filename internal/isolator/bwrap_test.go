@@ -447,7 +447,7 @@ func TestBuild_gitConfigPath(t *testing.T) {
 		Entrypoint:    config.Entrypoint{Cmd: "sh"},
 	})
 
-	const sandboxPath = "/etc/inner/gitconfig"
+	const sandboxPath = "/tmp/inner/gitconfig"
 	if !hasSeq(args, "--ro-bind", "/tmp/inner-gitconfig-abc", sandboxPath) {
 		t.Errorf("expected gitconfig bound to sandbox path %q, got %v", sandboxPath, args)
 	}

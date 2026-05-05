@@ -333,8 +333,10 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	if cfg.GitConfigPath != "" {
 		// Mount at a fixed in-sandbox path rather than the host /tmp path to
 		// avoid leaking the host tmp layout into the sandbox.
-		const sandboxGitConfig = "/etc/inner/gitconfig"
-		args = append(args, "--dir", "/etc/inner")
+		// /tmp is already a writable tmpfs; --dir there avoids touching the
+		// read-only root bind.
+		const sandboxGitConfig = "/tmp/inner/gitconfig"
+		args = append(args, "--dir", "/tmp/inner")
 		args = append(args, "--ro-bind", cfg.GitConfigPath, sandboxGitConfig)
 		args = append(args, "--setenv", "GIT_CONFIG_GLOBAL", sandboxGitConfig)
 	}
