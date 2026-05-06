@@ -66,6 +66,8 @@ func claudeExplain() CapabilityExplain {
 		},
 		PreRun: []string{
 			"Token refresh / credential unlock: runs 'claude -p /try-login' in background (output hidden) to trigger the OS keyring graphical unlock dialog and refresh any expired OAuth token; inner then waits for Enter before continuing (skip with --yes)",
+			"Near-expiry warning: prints a warning when the token will expire within 30 minutes so the user can plan for re-authentication before starting a long session",
+			"D-Bus passthrough: inherits DBUS_SESSION_BUS_ADDRESS into the sandbox so Claude's libsecret can reach the OS keyring for mid-session token refresh; prevents 401 errors during long sessions",
 		},
 	}
 }

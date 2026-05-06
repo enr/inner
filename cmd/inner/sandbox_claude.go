@@ -109,6 +109,25 @@ func claudeTokenExpired(credPath string) (bool, error) {
 	return time.Now().Unix() >= ts, nil
 }
 
+// claudeTokenExpiresWithin reports whether the OAuth token in credPath will
+// expire within d from now. Returns false if the file cannot be read, cannot
+// be parsed, or contains no recognisable expiry field.
+func claudeTokenExpiresWithin(credPath string, d time.Duration) bool {
+	data, err := os.ReadFile(credPath)
+	if err != nil {
+		return false
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	ts := extractExpiresAt(raw)
+	if ts == 0 {
+		return false
+	}
+	return time.Until(time.Unix(ts, 0)) < d
+}
+
 // extractExpiresAt looks for an expiry timestamp in the decoded credential
 // object and returns it as Unix seconds. It recognises:
 //   - "expiresAt"                  top-level, milliseconds  (Claude Code current format)
@@ -272,9 +291,8 @@ func prepareClaude(src string) (string, func(), error) {
 	// ── Required: auth credentials ────────────────────────────────────────────
 	credSrc := filepath.Join(src, ".credentials.json")
 
-	// (Option A) If the token is detectably expired at this point
-	// (ensureClaudeTokenFresh was already attempted), fail fast with an
-	// actionable message rather than letting the sandbox start and receive a 401.
+	// Fail fast if the token is still expired at copy time (applyClaude already
+	// attempted an unlock/refresh before calling prepareClaude).
 	if expired, err := claudeTokenExpired(credSrc); err == nil && expired {
 		cleanup()
 		return "", nil, fmt.Errorf(
@@ -313,14 +331,24 @@ func prepareClaude(src string) (string, func(), error) {
 	return tmp, cleanup, nil
 }
 
+// tokenNearExpiryThreshold is the window within which a still-valid token is
+// considered "near expiry". When the token will expire within this duration,
+// applyClaude prints a warning so the user knows to plan for re-authentication.
+const tokenNearExpiryThreshold = 30 * time.Minute
+
 // applyClaude injects the claude sandbox mounts into rc.
 // It creates a sandboxed temporary clone of ~/.claude and — when ~/.claude.json
 // exists on the host — a temporary copy of that file, then appends both mounts
 // to rc.Mounts.
 //
-// Credential unlock: only triggered when the OAuth token is expired or its
-// expiry cannot be determined. When the token is fresh the unlock step is
-// skipped and a diagnostic message is printed. Warnings are written to os.Stderr.
+// Credential unlock: triggered when the OAuth token is expired or unreadable.
+// A near-expiry warning is printed when the token will expire within
+// tokenNearExpiryThreshold. Warnings are written to os.Stderr.
+//
+// D-Bus passthrough: DBUS_SESSION_BUS_ADDRESS is inherited into the sandbox so
+// that Claude's libsecret can reach the OS keyring for mid-session token
+// refresh. Without it, an expired token inside a long session causes a 401
+// because the sandbox environment is otherwise fully cleared.
 func applyClaude(rc *config.RunConfig) (func(), error) {
 	claudeDir := claudeHomeDir()
 	w := claudeWarningWriter
@@ -352,9 +380,26 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 					"Run 'claude' on the host machine to renew it, then relaunch inner.",
 			)
 		}
+	case claudeTokenExpiresWithin(credPath, tokenNearExpiryThreshold):
+		// Token is still valid but expires very soon. Warn so the user can
+		// plan: if the session outlasts the token and the in-sandbox refresh
+		// fails for any reason, Claude will return 401.
+		fmt.Fprintf(w, "inner: claude: token expires soon (%s) — consider relaunching after renewal if the session is expected to run past expiry\n", expiry)
 	default:
 		// Token is fresh — skip unlock entirely.
 		fmt.Fprintf(w, "inner: claude: token valid (expires %s) — skipping unlock\n", expiry)
+	}
+
+	// ── D-Bus passthrough for mid-session token refresh ───────────────────────
+	// The sandbox clears the environment. Without DBUS_SESSION_BUS_ADDRESS,
+	// Claude's libsecret cannot locate the keyring daemon and cannot refresh
+	// an expired OAuth token mid-session, causing a 401 after long sessions.
+	// We inherit only this one variable (not XDG_RUNTIME_DIR) to minimise the
+	// attack surface: the D-Bus socket is already reachable via the ro-bind of
+	// /, and connect(2) on a Unix socket does not require write permission on
+	// the socket file itself.
+	if v := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); v != "" {
+		rc.Env.Inherit = append(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS")
 	}
 
 	var cleanups []func()
