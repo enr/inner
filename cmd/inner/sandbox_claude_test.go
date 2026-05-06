@@ -551,6 +551,138 @@ func TestFormatTokenExpiry_noExpiryField(t *testing.T) {
 	}
 }
 
+// ── claudeTokenExpiresWithin ──────────────────────────────────────────────────
+
+func TestClaudeTokenExpiresWithin_tokenExpiresSoon_returnsTrue(t *testing.T) {
+	f, err := os.CreateTemp("", "creds-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	// Token expires in 10 minutes from now.
+	expiresAt := (time.Now().Add(10 * time.Minute).Unix()) * 1000
+	fmt.Fprintf(f, `{"claudeAiOauth":{"expiresAt":%d}}`, expiresAt)
+	f.Close()
+
+	if !claudeTokenExpiresWithin(f.Name(), 30*time.Minute) {
+		t.Error("expected true: token expires in 10 min, threshold is 30 min")
+	}
+}
+
+func TestClaudeTokenExpiresWithin_tokenFresh_returnsFalse(t *testing.T) {
+	f, err := os.CreateTemp("", "creds-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	// Token expires in 2 hours from now.
+	expiresAt := (time.Now().Add(2 * time.Hour).Unix()) * 1000
+	fmt.Fprintf(f, `{"claudeAiOauth":{"expiresAt":%d}}`, expiresAt)
+	f.Close()
+
+	if claudeTokenExpiresWithin(f.Name(), 30*time.Minute) {
+		t.Error("expected false: token expires in 2h, threshold is 30 min")
+	}
+}
+
+func TestClaudeTokenExpiresWithin_missingFile_returnsFalse(t *testing.T) {
+	if claudeTokenExpiresWithin("/nonexistent/.credentials.json", 30*time.Minute) {
+		t.Error("expected false for missing file")
+	}
+}
+
+func TestClaudeTokenExpiresWithin_noExpiryField_returnsFalse(t *testing.T) {
+	f, err := os.CreateTemp("", "creds-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	fmt.Fprint(f, `{"accessToken":"abc"}`)
+	f.Close()
+
+	if claudeTokenExpiresWithin(f.Name(), 30*time.Minute) {
+		t.Error("expected false when no expiry field")
+	}
+}
+
+// ── applyClaude: D-Bus env var passthrough ────────────────────────────────────
+
+func TestApplyClaude_inheritsDBusSessionBusAddress(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	claudeDir := filepath.Join(fakeHome, ".claude")
+	makeClaudeHome(t, claudeDir, map[string]string{
+		".credentials.json": `{}`,
+	})
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
+	if err != nil {
+		t.Fatalf("applyClaude: %v", err)
+	}
+	defer cleanup()
+
+	found := false
+	for _, key := range rc.Env.Inherit {
+		if key == "DBUS_SESSION_BUS_ADDRESS" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected DBUS_SESSION_BUS_ADDRESS in rc.Env.Inherit for mid-session token refresh")
+	}
+}
+
+func TestApplyClaude_noDBusEnvVar_doesNotInherit(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	claudeDir := filepath.Join(fakeHome, ".claude")
+	makeClaudeHome(t, claudeDir, map[string]string{
+		".credentials.json": `{}`,
+	})
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "") // explicitly unset
+
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
+	if err != nil {
+		t.Fatalf("applyClaude: %v", err)
+	}
+	defer cleanup()
+
+	for _, key := range rc.Env.Inherit {
+		if key == "DBUS_SESSION_BUS_ADDRESS" {
+			t.Error("DBUS_SESSION_BUS_ADDRESS should not be inherited when not set on host")
+		}
+	}
+}
+
+// ── applyClaude: near-expiry warning ─────────────────────────────────────────
+
+func TestApplyClaude_nearExpiryToken_printsWarning(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	claudeDir := filepath.Join(fakeHome, ".claude")
+	// Token expires in 10 minutes — within the 30-minute near-expiry threshold.
+	expiresAt := (time.Now().Add(10 * time.Minute).Unix()) * 1000
+	makeClaudeHome(t, claudeDir, map[string]string{
+		".credentials.json": fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"tok","expiresAt":%d}}`, expiresAt),
+	})
+
+	var buf strings.Builder
+	claudeWarningWriter = &buf
+	t.Cleanup(func() { claudeWarningWriter = io.Discard })
+
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
+	if err != nil {
+		t.Fatalf("applyClaude: %v", err)
+	}
+	defer cleanup()
+
+	if !strings.Contains(buf.String(), "soon") {
+		t.Errorf("expected near-expiry warning containing 'soon', got: %q", buf.String())
+	}
+}
+
 // ── extractExpiresAt: claudeAiOauth format ───────────────────────────────────
 
 func TestExtractExpiresAt_claudeAiOauthNested(t *testing.T) {
