@@ -82,7 +82,8 @@ git tag -a "${tag_name}" -m "Release ${release_version}"
 
 # --- back to snapshot ---
 echo "${snapshot_version}" > VERSION
-git add VERSION
+sed -i "s/^  currentAppVersion = .*/  currentAppVersion = \"${snapshot_version}\"/" docs/hugo.toml
+git add VERSION docs/hugo.toml
 git commit -m "[skip ci] prepare snapshot ${snapshot_version}"
 
 git push
