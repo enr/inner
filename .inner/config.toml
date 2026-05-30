@@ -1,9 +1,0 @@
-# inner local configuration (directory-level)
-# Settings here override ~/.inner/config.toml for this directory.
-
-# Profile used by default in this directory when -p is not specified.
-default_profile = ".inner/profiles/inner-dev.toml"
-
-# Aliases expand a short name to a full inner command (local overrides global).
-# [aliases]
-# review = "run --profile code-review"
