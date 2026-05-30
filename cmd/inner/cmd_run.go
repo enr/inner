@@ -156,7 +156,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		if rc.Env.Set == nil {
 			rc.Env.Set = make(map[string]string)
 		}
-		rc.Env.Set["PS1"] = sandboxPS1(profileName)
+		rc.Env.Set["PS1"] = sandboxPS1(rc.Name)
 	}
 
 	// 5d. For shell sessions with cursor_fix = "shell", inject PROMPT_COMMAND
