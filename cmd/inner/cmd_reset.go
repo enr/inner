@@ -17,9 +17,9 @@ import (
 func (a *App) reset_(w io.Writer, force bool) error {
 	dir := a.loader.Dir
 
-	// If ~/.inner does not exist at all, just init.
+	// If the config directory does not exist at all, just init.
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		fmt.Fprintln(w, "~/.inner does not exist, running init...")
+		fmt.Fprintln(w, "config directory does not exist, running init...")
 		return a.init_(w, false)
 	}
 
@@ -54,7 +54,7 @@ func (a *App) newResetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Restore built-in profiles to the versions embedded in the binary",
-		Long: `Overwrites all built-in default profiles in ~/.inner/profiles/ with the
+		Long: `Overwrites all built-in default profiles in ~/.config/inner/profiles/ with the
 versions embedded in the current binary.
 
 Only profiles whose filename matches a built-in profile are overwritten.

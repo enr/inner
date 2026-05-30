@@ -159,7 +159,7 @@ type OutputConfig struct {
 	TimeoutSeconds int    `toml:"timeout_seconds"`
 }
 
-// GlobalConfig represents ~/.inner/config.toml.
+// GlobalConfig represents the merged result of all loaded config files.
 type GlobalConfig struct {
 	LogDir         string            `toml:"log_dir"`
 	DefaultProfile string            `toml:"default_profile"`

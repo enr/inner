@@ -50,7 +50,7 @@ type profileEntry struct {
 // are also shown in wide mode but hidden in normal mode.
 func (a *App) profileList(w io.Writer, wide bool) error {
 	defaultName := a.loader.DefaultProfileName()
-	// default_profile may be a file path (e.g. ".inner/profiles/foo.toml");
+	// default_profile may be a file path (e.g. ".config/inner/profiles/foo.toml");
 	// normalise to the bare stem so it matches the name column.
 	if strings.HasSuffix(defaultName, ".toml") {
 		defaultName = strings.TrimSuffix(filepath.Base(defaultName), ".toml")
@@ -386,7 +386,7 @@ func (a *App) profileClone(w io.Writer, src, dst string) error {
 var fetchProfileURL = config.FetchURL
 
 // profileInstallFromURL downloads a profile TOML from rawURL and installs it
-// in the global profiles directory (~/.inner/profiles/).
+// in the global profiles directory (~/.config/inner/profiles/).
 // name overrides the filename derived from the URL; if empty, the last path
 // segment (without .toml extension) is used.
 // If force is false and the destination file already exists, an error is returned.
@@ -466,7 +466,7 @@ interactive = true
 
 [output]
 summary         = false
-log             = "~/.inner/logs/"
+log             = "~/.config/inner/logs/"
 timeout_seconds = 0
 `, name)
 }

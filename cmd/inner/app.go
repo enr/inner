@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 
@@ -28,6 +29,9 @@ func newApp() (*App, error) {
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		loader.WorkDir = cwd
+	}
+	for _, w := range loader.LegacyWarnings() {
+		fmt.Fprintln(os.Stderr, w)
 	}
 	return &App{
 		loader:     loader,

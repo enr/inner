@@ -58,39 +58,40 @@ func InitVerbose(dir string) (InitResult, error) {
 	return r, nil
 }
 
-// InitLocal creates a .inner/ directory in workDir with a starter config.toml
-// and an empty profiles/ directory. Idempotent: safe to run multiple times.
+// InitLocal creates a .config/inner/ directory in workDir with a starter
+// config file and an empty profiles/ directory. Idempotent: safe to run
+// multiple times.
 func InitLocal(workDir string) (InitResult, error) {
 	var r InitResult
-	innerDir := filepath.Join(workDir, ".inner")
-	profilesDir := filepath.Join(innerDir, "profiles")
+	configDir := filepath.Join(workDir, ".config", "inner")
+	profilesDir := filepath.Join(configDir, "profiles")
 
-	if _, err := os.Stat(innerDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(innerDir, 0o755); err != nil {
-			return r, fmt.Errorf("creating .inner directory: %w", err)
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			return r, fmt.Errorf("creating .config/inner directory: %w", err)
 		}
 	} else if err != nil {
-		return r, fmt.Errorf("checking .inner directory: %w", err)
+		return r, fmt.Errorf("checking .config/inner directory: %w", err)
 	}
 
 	if _, err := os.Stat(profilesDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(profilesDir, 0o755); err != nil {
-			return r, fmt.Errorf("creating .inner/profiles directory: %w", err)
+			return r, fmt.Errorf("creating .config/inner/profiles directory: %w", err)
 		}
 		r.DirsCreated = append(r.DirsCreated, profilesDir)
 	} else if err != nil {
-		return r, fmt.Errorf("checking .inner/profiles directory: %w", err)
+		return r, fmt.Errorf("checking .config/inner/profiles directory: %w", err)
 	}
 
-	cfgPath := filepath.Join(innerDir, "config.toml")
+	cfgPath := filepath.Join(workDir, ".config", "inner.toml")
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		const tmpl = "# inner local configuration (directory-level)\n# Settings here override ~/.inner/config.toml for this directory.\n\n# Profile used by default in this directory when -p is not specified.\n# default_profile = \"my-project-profile\"\n\n# Directory where run logs are stored (overrides global).\n# log_dir = \"~/.inner/logs/\"\n\n# Host directory for workspace mount-point pre-creation (overrides global).\n# Required only when a profile mount uses the ${workspaces_path} token.\n# workspaces_path = \"~/.inner/workspaces\"\n\n# Aliases expand a short name to a full inner command (local overrides global).\n# [aliases]\n# review = \"run --profile code-review\"\n"
+		const tmpl = "# inner project configuration (.config/inner.toml)\n# Settings here override the user config for this project.\n# Commit this file; use inner.local.toml for secrets and personal overrides.\n\n# Profile used by default in this project when -p is not specified.\n# default_profile = \"my-project-profile\"\n\n# Host directory for workspace mount-point pre-creation (overrides global).\n# Required only when a profile mount uses the ${workspaces_path} token.\n# workspaces_path = \"~/.config/inner/workspaces\"\n\n# Aliases expand a short name to a full inner command (project overrides global).\n# [aliases]\n# review = \"run --profile code-review\"\n"
 		if err := os.WriteFile(cfgPath, []byte(tmpl), 0o644); err != nil {
-			return r, fmt.Errorf("writing local config: %w", err)
+			return r, fmt.Errorf("writing project config: %w", err)
 		}
 		r.ConfigCreated = true
 	} else if err != nil {
-		return r, fmt.Errorf("checking local config: %w", err)
+		return r, fmt.Errorf("checking project config: %w", err)
 	}
 
 	return r, nil
@@ -103,7 +104,7 @@ func installConfig(dir string) (bool, error) {
 	if _, err := os.Stat(cfgPath); err == nil {
 		return false, nil // already present
 	}
-	const tmpl = "# inner global configuration\n\n# Profile used by default when -p is not specified.\ndefault_profile = \"shell\"\n\n# Directory where run logs are stored.\n# log_dir = \"~/.inner/logs/\"\n\n# Host directory where workspace mount-point directories are pre-created\n# before running the sandbox. Required only when a profile mount uses the\n# ${workspaces_path} token in its dest field.\n# workspaces_path = \"~/.inner/workspaces\"\n\n# Aliases expand a short name to a full inner command.\n# [aliases]\n# c  = \"run -p claude-interactive\"\n# cs = \"run -p claude-one-shot\"\n"
+	const tmpl = "# inner global configuration (~/.config/inner/config.toml)\n\n# Profile used by default when -p is not specified.\ndefault_profile = \"shell\"\n\n# Directory where run logs are stored.\n# log_dir = \"~/.config/inner/logs/\"\n\n# Host directory where workspace mount-point directories are pre-created\n# before running the sandbox. Required only when a profile mount uses the\n# ${workspaces_path} token in its dest field.\n# workspaces_path = \"~/.config/inner/workspaces\"\n\n# Aliases expand a short name to a full inner command.\n# [aliases]\n# c  = \"run -p claude-interactive\"\n# cs = \"run -p claude-one-shot\"\n"
 	return true, os.WriteFile(cfgPath, []byte(tmpl), 0o644)
 }
 

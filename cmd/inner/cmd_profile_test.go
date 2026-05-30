@@ -137,7 +137,7 @@ func TestProfileList_localProfiles(t *testing.T) {
 	app, dir, workDir := newTestAppWithWorkDir(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "global.toml"),
 		`name = "global"\ndescription = "Global profile"`)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "local.toml"),
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "local.toml"),
 		`name = "local"\ndescription = "Local profile"`)
 
 	var buf bytes.Buffer
@@ -184,11 +184,11 @@ func TestProfileList_defaultMarked(t *testing.T) {
 }
 
 func TestProfileList_defaultAsPath(t *testing.T) {
-	// default_profile set to a file path like ".inner/profiles/local-prof.toml"
+	// default_profile set to a file path like ".config/inner/profiles/local-prof.toml"
 	app, _, workDir := newTestAppWithWorkDir(t)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "config.toml"),
-		`default_profile = ".inner/profiles/local-prof.toml"`)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "local-prof.toml"),
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner.toml"),
+		`default_profile = ".config/inner/profiles/local-prof.toml"`)
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "local-prof.toml"),
 		`name = "local-prof"\ndescription = "My local profile"`)
 
 	var buf bytes.Buffer
@@ -203,8 +203,8 @@ func TestProfileList_defaultAsPath(t *testing.T) {
 
 func TestProfileList_localDefaultMarked(t *testing.T) {
 	app, _, workDir := newTestAppWithWorkDir(t)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-prof"`)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "local-prof.toml"),
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "local-prof"`)
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "local-prof.toml"),
 		`name = "local-prof"\ndescription = "My local profile"`)
 
 	var buf bytes.Buffer
@@ -431,7 +431,7 @@ func TestProfileEdit_localProfile(t *testing.T) {
 		editedPath = path
 		return nil
 	}
-	localPath := filepath.Join(workDir, ".inner", "profiles", "local-only.toml")
+	localPath := filepath.Join(workDir, ".config", "inner", "profiles", "local-only.toml")
 	writeTestFile(t, localPath, `name = "local-only"`)
 
 	if err := app.profileEdit(&bytes.Buffer{}, "local-only"); err != nil {
@@ -455,7 +455,7 @@ func TestProfileEdit_localOverridesGlobal(t *testing.T) {
 		return nil
 	}
 	writeTestFile(t, filepath.Join(dir, "profiles", "shared.toml"), `name = "shared"`)
-	localPath := filepath.Join(workDir, ".inner", "profiles", "shared.toml")
+	localPath := filepath.Join(workDir, ".config", "inner", "profiles", "shared.toml")
 	writeTestFile(t, localPath, `name = "shared"`)
 
 	if err := app.profileEdit(&bytes.Buffer{}, "shared"); err != nil {
@@ -709,7 +709,7 @@ func TestProfileList_sameNameNormalMode(t *testing.T) {
 	app, dir, workDir := newTestAppWithWorkDir(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "foo.toml"),
 		`name = "foo"\ndescription = "global foo"`)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "foo.toml"),
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "foo.toml"),
 		`name = "foo"\ndescription = "local foo"`)
 
 	var buf bytes.Buffer
@@ -735,7 +735,7 @@ func TestProfileList_wideShadowed(t *testing.T) {
 	app, dir, workDir := newTestAppWithWorkDir(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "foo.toml"),
 		`name = "foo"\ndescription = "global foo"`)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "foo.toml"),
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "foo.toml"),
 		`name = "foo"\ndescription = "local foo"`)
 
 	var buf bytes.Buffer
@@ -760,7 +760,7 @@ func TestProfileList_wideMode(t *testing.T) {
 	app, dir, workDir := newTestAppWithWorkDir(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "alpha.toml"),
 		`name = "alpha"\ndescription = "Alpha"`)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "profiles", "beta.toml"),
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "beta.toml"),
 		`name = "beta"\ndescription = "Beta"`)
 
 	var buf bytes.Buffer

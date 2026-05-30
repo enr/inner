@@ -23,18 +23,40 @@ func (a *App) newConfigCmd() *cobra.Command {
 
 // ── Business logic (testable) ─────────────────────────────────────────────────
 
-// configShow writes global and local config sections to w.
+// configShow writes all config sections (user + project) to w.
 func (a *App) configShow(w io.Writer) error {
 	globalPath := a.loader.GlobalConfigPath()
 	if err := showConfigSection(w, "Global", globalPath); err != nil {
 		return err
 	}
-	localPath := a.loader.LocalConfigPath()
-	if localPath == "" || localPath == globalPath {
+
+	if a.loader.WorkDir == "" {
 		return nil
 	}
-	fmt.Fprintln(w)
-	return showConfigSection(w, "Local", localPath)
+
+	projectFiles := a.loader.ProjectConfigFiles()
+	if len(projectFiles) == 0 {
+		localPath := a.loader.LocalConfigPath()
+		if localPath != "" {
+			fmt.Fprintln(w)
+			if err := showConfigSection(w, "Local", localPath); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, path := range projectFiles {
+		fmt.Fprintln(w)
+		label := "Local"
+		if rel, err := filepath.Rel(a.loader.WorkDir, path); err == nil {
+			label = "Local: " + rel
+		}
+		if err := showConfigSection(w, label, path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // showConfigSection prints a labelled config file section to w.
@@ -86,13 +108,13 @@ func (a *App) configEdit(_ io.Writer, useLocal bool) error {
 
 // globalConfigTemplate returns a starter global config.toml with commented defaults.
 func globalConfigTemplate() string {
-	return `# inner global configuration
+	return `# inner global configuration (~/.config/inner/config.toml)
 
 # Profile used by default when -p is not specified.
 # default_profile = "shell"
 
 # Directory where run logs are stored.
-# log_dir = "~/.inner/logs/"
+# log_dir = "~/.config/inner/logs/"
 
 # Aliases expand a short name to a full inner command.
 # Example: "inner review" → "inner run --profile code-review"
@@ -104,16 +126,14 @@ func globalConfigTemplate() string {
 
 // localConfigTemplate returns a starter local config.toml with commented defaults.
 func localConfigTemplate() string {
-	return `# inner local configuration (directory-level)
-# Settings here override ~/.inner/config.toml for this directory.
+	return `# inner project configuration (.config/inner.toml)
+# Settings here override the user config for this project.
+# Commit this file; use inner.local.toml for secrets and personal overrides.
 
-# Profile used by default in this directory when -p is not specified.
+# Profile used by default in this project when -p is not specified.
 # default_profile = "my-project-profile"
 
-# Directory where run logs are stored.
-# log_dir = "~/.inner/logs/"
-
-# Aliases expand a short name to a full inner command (local overrides global).
+# Aliases expand a short name to a full inner command (project overrides global).
 # [aliases]
 # review = "run --profile code-review"
 `
@@ -140,8 +160,8 @@ func (a *App) configEditCmd() *cobra.Command {
 		Short: "Open a config file in $EDITOR",
 		Long: `Open a configuration file in $EDITOR.
 
-  --global (default): edit ~/.inner/config.toml
-  --local:            edit .inner/config.toml in the current directory`,
+  --global (default): edit ~/.config/inner/config.toml
+  --local:            edit .config/inner.toml in the current directory`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if useLocal && useGlobal {
 				return fmt.Errorf("--local and --global are mutually exclusive")

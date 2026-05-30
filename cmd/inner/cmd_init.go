@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// init_ creates the ~/.inner directory structure, installs default profiles,
+// init_ creates the ~/.config/inner directory structure, installs default profiles,
 // and writes a starter config.toml if none exists.
-// If local is true, creates a .inner/ directory in the current working directory instead.
+// If local is true, creates a .config/inner/ directory in the current working directory instead.
 func (a *App) init_(w io.Writer, local bool) error {
 	if local {
 		if a.loader.WorkDir == "" {
@@ -64,14 +64,14 @@ func (a *App) newInitCmd() *cobra.Command {
 	var local bool
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize ~/.inner (profiles, config, directories)",
-		Long: `Create the ~/.inner directory structure, install default profiles, and write a starter config.toml if none exists. Idempotent: safe to run multiple times.
+		Short: "Initialize ~/.config/inner (profiles, config, directories)",
+		Long: `Create the ~/.config/inner directory structure, install default profiles, and write a starter config.toml if none exists. Idempotent: safe to run multiple times.
 
-With --local: create a .inner/ directory in the current directory with a starter config.toml and an empty profiles/ folder.`,
+With --local: create a .config/inner/ directory in the current directory with a starter config file and an empty profiles/ folder.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.init_(cmd.OutOrStdout(), local)
 		},
 	}
-	cmd.Flags().BoolVar(&local, "local", false, "Initialize a local .inner/ directory in the current directory")
+	cmd.Flags().BoolVar(&local, "local", false, "Initialize a local .config/inner/ directory in the current directory")
 	return cmd
 }

@@ -10,19 +10,23 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Loader loads and merges configuration from ~/.inner/.
+// Loader loads and merges configuration from the XDG-style config hierarchy.
 type Loader struct {
-	Dir     string // root config directory, e.g. ~/.inner
-	WorkDir string // current working directory for local config lookup; empty = no local config
+	Dir       string // user config directory, e.g. ~/.config/inner
+	SystemDir string // system config directory, e.g. /etc/inner; empty = skip
+	WorkDir   string // current working directory for project config lookup; empty = no project config
 }
 
-// DefaultLoader returns a Loader pointing at the default ~/.inner directory.
+// DefaultLoader returns a Loader pointing at the default config directories.
 func DefaultLoader() (*Loader, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("cannot determine home directory: %w", err)
 	}
-	return &Loader{Dir: filepath.Join(home, ".inner")}, nil
+	return &Loader{
+		Dir:       filepath.Join(home, ".config", "inner"),
+		SystemDir: "/etc/inner",
+	}, nil
 }
 
 // NewLoader returns a Loader with an explicit config directory (useful in tests).
@@ -35,27 +39,36 @@ func NewLoaderWithWorkDir(dir, workDir string) *Loader {
 	return &Loader{Dir: dir, WorkDir: workDir}
 }
 
-// GlobalConfigPath returns the path to the global config file.
+// GlobalConfigPath returns the path to the user-level config file.
 func (l *Loader) GlobalConfigPath() string {
 	return filepath.Join(l.Dir, "config.toml")
 }
 
-// LocalConfigPath returns the path to the local (directory-level) config file.
+// SystemConfigPath returns the path to the system-level config file.
+// Returns empty string if SystemDir is not set.
+func (l *Loader) SystemConfigPath() string {
+	if l.SystemDir == "" {
+		return ""
+	}
+	return filepath.Join(l.SystemDir, "config.toml")
+}
+
+// LocalConfigPath returns the path to the primary committed project config file.
 // Returns empty string if WorkDir is not set.
 func (l *Loader) LocalConfigPath() string {
 	if l.WorkDir == "" {
 		return ""
 	}
-	return filepath.Join(l.WorkDir, ".inner", "config.toml")
+	return filepath.Join(l.WorkDir, ".config", "inner.toml")
 }
 
-// LocalProfilesDir returns the path to the local profiles directory.
+// LocalProfilesDir returns the path to the project-level profiles directory.
 // Returns empty string if WorkDir is not set.
 func (l *Loader) LocalProfilesDir() string {
 	if l.WorkDir == "" {
 		return ""
 	}
-	return filepath.Join(l.WorkDir, ".inner", "profiles")
+	return filepath.Join(l.WorkDir, ".config", "inner", "profiles")
 }
 
 // validateProfileName rejects names that could escape the profiles directory
@@ -75,13 +88,13 @@ func (l *Loader) ProfilePath(name string) string {
 	return filepath.Join(l.Dir, "profiles", name+".toml")
 }
 
-// LocalProfilePath returns the path to a named profile file in the local profiles directory.
+// LocalProfilePath returns the path to a named profile file in the project-level profiles directory.
 // Returns empty string if WorkDir is not set.
 func (l *Loader) LocalProfilePath(name string) string {
 	if l.WorkDir == "" {
 		return ""
 	}
-	return filepath.Join(l.WorkDir, ".inner", "profiles", name+".toml")
+	return filepath.Join(l.WorkDir, ".config", "inner", "profiles", name+".toml")
 }
 
 // ProfilesDir returns the path to the profiles directory.
@@ -119,54 +132,186 @@ func (l *Loader) ProfileNames() []string {
 	return names
 }
 
-// LoadGlobal reads the global config file.
-// Returns an empty GlobalConfig (not an error) if the file does not exist.
-func (l *Loader) LoadGlobal() (*GlobalConfig, error) {
-	cfg := &GlobalConfig{}
-	path := l.GlobalConfigPath()
-	_, err := toml.DecodeFile(path, cfg)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return cfg, nil
-		}
-		return nil, fmt.Errorf("reading global config %s: %w", path, err)
-	}
-	return cfg, nil
-}
-
-// LoadLocal reads the local (directory-level) config file from WorkDir/.inner/config.toml.
-// Returns nil (no error) if WorkDir is not set or the file does not exist.
-func (l *Loader) LoadLocal() (*GlobalConfig, error) {
-	path := l.LocalConfigPath()
-	if path == "" {
-		return nil, nil
-	}
+// loadGlobalFrom reads a GlobalConfig from an explicit path.
+// Returns nil (no error) if the file does not exist.
+func (l *Loader) loadGlobalFrom(path string) (*GlobalConfig, error) {
 	cfg := &GlobalConfig{}
 	_, err := toml.DecodeFile(path, cfg)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("reading local config %s: %w", path, err)
+		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
 	return cfg, nil
 }
 
-// loadEffectiveGlobal loads the global config and merges the local config on top.
-// Local config takes precedence; missing local config is silently ignored.
+// pathAncestors returns the chain of directories from the filesystem root to
+// absPath (inclusive), ordered root-first.
+func pathAncestors(absPath string) []string {
+	clean := filepath.Clean(absPath)
+	var chain []string
+	for {
+		chain = append([]string{clean}, chain...)
+		parent := filepath.Dir(clean)
+		if parent == clean {
+			break
+		}
+		clean = parent
+	}
+	return chain
+}
+
+// collectProjectConfigFiles returns the project-level config file paths that
+// exist on disk, walking from the filesystem root to workDir (inclusive).
+// Within each directory files are ordered lowest→highest precedence:
+//
+//	.config/inner.toml, .config/inner.local.toml, inner.toml, inner.local.toml
+func collectProjectConfigFiles(workDir string) []string {
+	dirs := pathAncestors(workDir)
+	var files []string
+	for _, dir := range dirs {
+		for _, rel := range []string{
+			filepath.Join(".config", "inner.toml"),
+			filepath.Join(".config", "inner.local.toml"),
+			"inner.toml",
+			"inner.local.toml",
+		} {
+			p := filepath.Join(dir, rel)
+			if _, err := os.Stat(p); err == nil {
+				files = append(files, p)
+			}
+		}
+	}
+	return files
+}
+
+// LoadGlobal reads the user-level config file (~/.config/inner/config.toml).
+// Returns an empty GlobalConfig (not an error) if the file does not exist.
+func (l *Loader) LoadGlobal() (*GlobalConfig, error) {
+	cfg, err := l.loadGlobalFrom(l.GlobalConfigPath())
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return &GlobalConfig{}, nil
+	}
+	return cfg, nil
+}
+
+// LoadLocal reads and merges the project-level config files from WorkDir.
+// Files are processed in order (lowest → highest precedence):
+//
+//	.config/inner.toml, .config/inner.local.toml, inner.toml, inner.local.toml
+//
+// Returns nil (no error) if WorkDir is not set or no files exist.
+func (l *Loader) LoadLocal() (*GlobalConfig, error) {
+	if l.WorkDir == "" {
+		return nil, nil
+	}
+	names := []string{
+		filepath.Join(".config", "inner.toml"),
+		filepath.Join(".config", "inner.local.toml"),
+		"inner.toml",
+		"inner.local.toml",
+	}
+	var result *GlobalConfig
+	for _, name := range names {
+		overlay, err := l.loadGlobalFrom(filepath.Join(l.WorkDir, name))
+		if err != nil {
+			return nil, err
+		}
+		if overlay == nil {
+			continue
+		}
+		if result == nil {
+			result = overlay
+		} else {
+			result = mergeGlobalConfig(result, overlay)
+		}
+	}
+	return result, nil
+}
+
+// loadEffectiveGlobal loads and merges all config sources in precedence order:
+//  1. System config (/etc/inner/config.toml)
+//  2. User config (~/.config/inner/config.toml)
+//  3. Project config files (root → WorkDir traversal, 4 files per directory)
 func (l *Loader) loadEffectiveGlobal() (*GlobalConfig, error) {
-	global, err := l.LoadGlobal()
+	cfg := &GlobalConfig{}
+
+	if l.SystemDir != "" {
+		sys, err := l.loadGlobalFrom(filepath.Join(l.SystemDir, "config.toml"))
+		if err != nil {
+			return nil, err
+		}
+		if sys != nil {
+			cfg = mergeGlobalConfig(cfg, sys)
+		}
+	}
+
+	user, err := l.LoadGlobal()
 	if err != nil {
 		return nil, err
 	}
-	local, err := l.LoadLocal()
+	cfg = mergeGlobalConfig(cfg, user)
+
+	if l.WorkDir != "" {
+		for _, path := range collectProjectConfigFiles(l.WorkDir) {
+			proj, err := l.loadGlobalFrom(path)
+			if err != nil {
+				return nil, err
+			}
+			if proj != nil {
+				cfg = mergeGlobalConfig(cfg, proj)
+			}
+		}
+	}
+
+	return cfg, nil
+}
+
+// ProjectConfigFiles returns the project-level config file paths that exist on
+// disk, in load order (lowest → highest precedence). Returns nil if WorkDir is
+// not set.
+func (l *Loader) ProjectConfigFiles() []string {
+	if l.WorkDir == "" {
+		return nil
+	}
+	return collectProjectConfigFiles(l.WorkDir)
+}
+
+// LegacyWarnings returns warning messages if the old ~/.inner config paths are
+// found. These files are NOT loaded by the current version.
+func (l *Loader) LegacyWarnings() []string {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	if local == nil {
-		return global, nil
+	var warnings []string
+	if p := filepath.Join(home, ".inner", "config.toml"); fileExists(p) {
+		warnings = append(warnings, fmt.Sprintf(
+			"WARNING: legacy config found at %s — move it to %s (this file is NOT loaded)",
+			p, l.GlobalConfigPath(),
+		))
 	}
-	return mergeGlobalConfig(global, local), nil
+	if p := filepath.Join(home, ".inner", "profiles"); dirExists(p) {
+		warnings = append(warnings, fmt.Sprintf(
+			"WARNING: legacy profiles dir found at %s — move it to %s (these profiles are NOT loaded)",
+			p, l.ProfilesDir(),
+		))
+	}
+	return warnings
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // LoadProfile reads a named profile file.
@@ -330,9 +475,9 @@ func (l *Loader) Build(profileName string) (*RunConfig, error) {
 // applying path expansion. Returns an error if a mount dest uses the
 // ${workspaces_path} token but no workspaces_path is configured.
 //
-// workDir is the directory from which inner was invoked (the project root that
-// contains .inner/). It is substituted for the ${workdir} token in mount
-// source paths, making local profiles portable across machines.
+// workDir is the directory from which inner was invoked. It is substituted for
+// the ${workdir} token in mount source paths, making local profiles portable
+// across machines.
 func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, error) {
 	// Expand ~ and ${UID} in env.set values (e.g. DOCKER_HOST with socket paths).
 	expandedEnv := p.Env
@@ -370,7 +515,7 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 	// If dest contains ${workspaces_path}, substitute it and record the path
 	// so the workspace manager can pre-create the directory on the host.
 	// If src contains ${workdir}, substitute it with the invocation directory
-	// (the project root containing .inner/) so local profiles are portable.
+	// so local profiles are portable across machines.
 	const token = "${workspaces_path}"
 	const workdirToken = "${workdir}"
 	for src, entry := range p.Mounts {

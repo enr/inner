@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/enr/inner/internal/config"
 )
 
 // ── configShow ────────────────────────────────────────────────────────────────
@@ -53,7 +51,7 @@ func TestConfigShow_localFileShown(t *testing.T) {
 	workDir := t.TempDir()
 	app.loader.WorkDir = workDir
 	writeTestFile(t, filepath.Join(dir, "config.toml"), `log_dir = "/global/logs"`)
-	writeTestFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-prof"`)
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "local-prof"`)
 
 	var buf bytes.Buffer
 	if err := app.configShow(&buf); err != nil {
@@ -71,23 +69,13 @@ func TestConfigShow_localFileShown(t *testing.T) {
 	}
 }
 
-func TestConfigShow_noLocalSection_whenWorkDirIsConfigParent(t *testing.T) {
-	// Simulates the user running "config show" from ~:
-	//   loader.Dir     = <base>/.inner   (mirrors ~/.inner)
-	//   loader.WorkDir = <base>          (mirrors ~)
-	// → LocalConfigPath()  = <base>/.inner/config.toml
-	// → GlobalConfigPath() = <base>/.inner/config.toml
-	// Both paths coincide → the file must be shown exactly once.
-	base := t.TempDir()
-	innerDir := filepath.Join(base, ".inner")
-	if err := os.MkdirAll(innerDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	app := &App{
-		loader:   config.NewLoaderWithWorkDir(innerDir, base),
-		editorFn: func(string) error { return nil },
-	}
-	writeTestFile(t, filepath.Join(innerDir, "config.toml"), `log_dir = "/logs"`)
+func TestConfigShow_noLocalSection_whenNoProjectFiles(t *testing.T) {
+	// WorkDir is set but no project config files exist → only Global shown,
+	// plus a placeholder for the primary project config path.
+	app, dir := newTestApp(t)
+	workDir := t.TempDir()
+	app.loader.WorkDir = workDir
+	writeTestFile(t, filepath.Join(dir, "config.toml"), `log_dir = "/logs"`)
 
 	var buf bytes.Buffer
 	if err := app.configShow(&buf); err != nil {
@@ -97,8 +85,9 @@ func TestConfigShow_noLocalSection_whenWorkDirIsConfigParent(t *testing.T) {
 	if count := strings.Count(out, "# Global:"); count != 1 {
 		t.Errorf("expected exactly one '# Global:' header, got %d: %s", count, out)
 	}
-	if strings.Contains(out, "# Local:") {
-		t.Errorf("expected no '# Local:' section when paths coincide, got: %s", out)
+	// A placeholder "Local" section is shown pointing to the primary project path.
+	if !strings.Contains(out, "Local") {
+		t.Errorf("expected a 'Local' placeholder section, got: %s", out)
 	}
 }
 
@@ -178,9 +167,9 @@ func TestConfigEdit_localCreatesFileInWorkDir(t *testing.T) {
 		t.Fatalf("configEdit --local: %v", err)
 	}
 
-	path := filepath.Join(workDir, ".inner", "config.toml")
+	path := filepath.Join(workDir, ".config", "inner.toml")
 	if _, err := os.Stat(path); err != nil {
-		t.Errorf("expected .inner/config.toml to be created: %v", err)
+		t.Errorf("expected .config/inner.toml to be created: %v", err)
 	}
 }
 
@@ -198,7 +187,7 @@ func TestConfigEdit_localEditorCalledWithCorrectPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expected := filepath.Join(workDir, ".inner", "config.toml")
+	expected := filepath.Join(workDir, ".config", "inner.toml")
 	if calledWith != expected {
 		t.Errorf("editorFn called with %q, want %q", calledWith, expected)
 	}

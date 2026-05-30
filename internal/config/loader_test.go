@@ -868,7 +868,7 @@ func TestLoadLocal_missing(t *testing.T) {
 func TestLoadLocal_withFile(t *testing.T) {
 	dir := t.TempDir()
 	workDir := t.TempDir()
-	writeFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-profile"`)
+	writeFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "local-profile"`)
 	l := NewLoaderWithWorkDir(dir, workDir)
 	cfg, err := l.LoadLocal()
 	if err != nil {
@@ -900,7 +900,7 @@ func TestLoadEffectiveGlobal_localOverridesGlobal(t *testing.T) {
 default_profile = "global-profile"
 log_dir = "/global/logs"
 `)
-	writeFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-profile"`)
+	writeFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "local-profile"`)
 
 	l := NewLoaderWithWorkDir(dir, workDir)
 	cfg, err := l.loadEffectiveGlobal()
@@ -920,7 +920,7 @@ func TestDefaultProfileName_localOverridesGlobal(t *testing.T) {
 	dir := t.TempDir()
 	workDir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "config.toml"), `default_profile = "global-profile"`)
-	writeFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-profile"`)
+	writeFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "local-profile"`)
 
 	l := NewLoaderWithWorkDir(dir, workDir)
 	if got := l.DefaultProfileName(); got != "local-profile" {
@@ -938,7 +938,7 @@ cmd = "bash"
 	writeFile(t, filepath.Join(dir, "profiles", "local-profile.toml"), `[entrypoint]
 cmd = "zsh"
 `)
-	writeFile(t, filepath.Join(workDir, ".inner", "config.toml"), `default_profile = "local-profile"`)
+	writeFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "local-profile"`)
 
 	l := NewLoaderWithWorkDir(dir, workDir)
 	rc, err := l.Build("")
@@ -1030,7 +1030,7 @@ func TestLoadProfile_localOverridesGlobal(t *testing.T) {
 	dir := t.TempDir()
 	workDir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "profiles", "foo.toml"), "name = \"foo\"\ndescription = \"global\"")
-	writeFile(t, filepath.Join(workDir, ".inner", "profiles", "foo.toml"), "name = \"foo\"\ndescription = \"local\"")
+	writeFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "foo.toml"), "name = \"foo\"\ndescription = \"local\"")
 
 	l := NewLoaderWithWorkDir(dir, workDir)
 	p, err := l.LoadProfile("foo")
@@ -1062,7 +1062,7 @@ func TestResolveProfilePath_localOverridesGlobal(t *testing.T) {
 	dir := t.TempDir()
 	workDir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "profiles", "foo.toml"), `name = "foo"`)
-	localPath := filepath.Join(workDir, ".inner", "profiles", "foo.toml")
+	localPath := filepath.Join(workDir, ".config", "inner", "profiles", "foo.toml")
 	writeFile(t, localPath, `name = "foo"`)
 
 	l := NewLoaderWithWorkDir(dir, workDir)
@@ -1448,5 +1448,128 @@ cursor_fix = "newlines"
 	}
 	if p.Entrypoint.CursorFix != "newlines" {
 		t.Errorf("CursorFix = %q, want %q (child override)", p.Entrypoint.CursorFix, "newlines")
+	}
+}
+
+// --- project config traversal tests ---
+
+func TestLoadLocal_fourFileMerge(t *testing.T) {
+	// All four project-level files present in WorkDir; each adds/overrides one field.
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "from-config-dir"`)
+	writeFile(t, filepath.Join(workDir, ".config", "inner.local.toml"), `log_dir = "/local-config-dir-log"`)
+	writeFile(t, filepath.Join(workDir, "inner.toml"), `workspaces_path = "/workspaces"`)
+	writeFile(t, filepath.Join(workDir, "inner.local.toml"), `default_profile = "from-local-toml"`)
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	cfg, err := l.LoadLocal()
+	if err != nil {
+		t.Fatalf("LoadLocal: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil GlobalConfig")
+	}
+	// inner.local.toml wins over .config/inner.toml for default_profile
+	if cfg.DefaultProfile != "from-local-toml" {
+		t.Errorf("DefaultProfile = %q, want from-local-toml", cfg.DefaultProfile)
+	}
+	// .config/inner.local.toml contributes log_dir
+	if cfg.LogDir != "/local-config-dir-log" {
+		t.Errorf("LogDir = %q, want /local-config-dir-log", cfg.LogDir)
+	}
+	// inner.toml contributes workspaces_path
+	if cfg.WorkspacesPath != "/workspaces" {
+		t.Errorf("WorkspacesPath = %q, want /workspaces", cfg.WorkspacesPath)
+	}
+}
+
+func TestLoadLocal_localTomlOverridesConfigDirToml(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "committed"`)
+	writeFile(t, filepath.Join(workDir, "inner.local.toml"), `default_profile = "secret"`)
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	cfg, err := l.LoadLocal()
+	if err != nil {
+		t.Fatalf("LoadLocal: %v", err)
+	}
+	if cfg.DefaultProfile != "secret" {
+		t.Errorf("DefaultProfile = %q, want secret (inner.local.toml wins)", cfg.DefaultProfile)
+	}
+}
+
+func TestProjectConfigFiles_onlyExistingReturned(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "p"`)
+
+	l := NewLoaderWithWorkDir(dir, workDir)
+	files := l.ProjectConfigFiles()
+	if len(files) == 0 {
+		t.Fatal("expected at least one file")
+	}
+	for _, f := range files {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("ProjectConfigFiles returned non-existent path %q", f)
+		}
+	}
+}
+
+func TestLoadEffectiveGlobal_traversalPicksUpAncestorConfig(t *testing.T) {
+	// Project config in a parent dir of WorkDir must be loaded.
+	dir := t.TempDir()
+	// Build a two-level path: parentDir/childDir
+	parentDir := t.TempDir()
+	childDir := filepath.Join(parentDir, "child")
+	if err := os.MkdirAll(childDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "config.toml"), `log_dir = "/global/logs"`)
+	writeFile(t, filepath.Join(parentDir, ".config", "inner.toml"), `default_profile = "from-parent"`)
+	writeFile(t, filepath.Join(childDir, "inner.toml"), `workspaces_path = "/ws"`)
+
+	l := NewLoaderWithWorkDir(dir, childDir)
+	cfg, err := l.loadEffectiveGlobal()
+	if err != nil {
+		t.Fatalf("loadEffectiveGlobal: %v", err)
+	}
+	if cfg.LogDir != "/global/logs" {
+		t.Errorf("LogDir = %q, want /global/logs", cfg.LogDir)
+	}
+	if cfg.DefaultProfile != "from-parent" {
+		t.Errorf("DefaultProfile = %q, want from-parent (from parent dir config)", cfg.DefaultProfile)
+	}
+	if cfg.WorkspacesPath != "/ws" {
+		t.Errorf("WorkspacesPath = %q, want /ws (from child dir config)", cfg.WorkspacesPath)
+	}
+}
+
+func TestLegacyWarnings_noLegacyFiles(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	l := NewLoader(t.TempDir())
+	warnings := l.LegacyWarnings()
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
+	}
+}
+
+func TestLegacyWarnings_legacyConfigFound(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	writeFile(t, filepath.Join(homeDir, ".inner", "config.toml"), `default_profile = "old"`)
+
+	l := NewLoader(filepath.Join(homeDir, ".config", "inner"))
+	warnings := l.LegacyWarnings()
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning for legacy config.toml")
+	}
+	if !strings.Contains(warnings[0], ".inner") {
+		t.Errorf("warning should mention .inner path, got: %s", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "NOT loaded") {
+		t.Errorf("warning should mention 'NOT loaded', got: %s", warnings[0])
 	}
 }

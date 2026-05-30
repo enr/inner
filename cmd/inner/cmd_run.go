@@ -58,7 +58,7 @@ var fetchRunProfileURL = config.FetchURL
 // runSandbox is the full pipeline for `inner run`.
 // It is an App method so tests can inject a fake isolator via a.isolatorFn.
 func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) error {
-	// 1. Auto-init ~/.inner (idempotent, best-effort).
+	// 1. Auto-init ~/.config/inner (idempotent, best-effort).
 	if err := setup.Init(a.loader.Dir); err != nil {
 		fmt.Fprintf(w, "warning: setup init: %v\n", err)
 	}
