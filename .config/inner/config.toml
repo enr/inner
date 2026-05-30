@@ -2,7 +2,7 @@
 # Settings here override ~/.inner/config.toml for this directory.
 
 # Profile used by default in this directory when -p is not specified.
-default_profile = ".inner/profiles/inner-dev.toml"
+default_profile = ".config/inner/profiles/inner-dev.toml"
 
 # Aliases expand a short name to a full inner command (local overrides global).
 # [aliases]
