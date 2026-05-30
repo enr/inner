@@ -1,0 +1,22 @@
+schema_version = "1"
+name        = "rust-claude"
+description = "Claude Code agent for Rust projects (cargo registry and rustup toolchain mounted)"
+extends     = "claude-interactive"
+
+[mounts]
+"~/.cargo"  = { dest = "~/.cargo",  mode = "rw" }
+"~/.rustup" = { dest = "~/.rustup", mode = "ro" }
+
+[env]
+# ANTHROPIC_API_KEY is merged with the inherit list from claude-interactive.
+inherit = ["ANTHROPIC_API_KEY"]
+
+[env.set]
+RUST_BACKTRACE = "1"
+
+[git]
+strip_sections = ["credential", "core.hooksPath"]
+overrides      = { "push.default" = "nothing" }
+
+[noop]
+block = ["apt-get", "apt", "yum", "dnf", "brew", "pacman", "yay"]
