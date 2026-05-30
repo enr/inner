@@ -1,6 +1,6 @@
 schema_version = "1"
 name          = "inner-dev"
-description   = "Interactive Claude Code session for developing inner itself (writable GOPATH/GOCACHE)"
+description   = "Inner profile for developing inner itself"
 capabilities  = ["claude"]
 
 [sandbox]
@@ -9,7 +9,6 @@ clipboard = false
 
 [mounts]
 "/run/user/$UID"     = { dest = "/run/user/$UID",      mode = "tmpfs" }
-"${workdir}"         = { dest = "~/Projects/inner",    mode = "rw" }
 
 [env]
 clearenv = true
@@ -20,10 +19,17 @@ GOPATH  = "/tmp/gopath"
 GOCACHE = "/tmp/gocache"
 
 [entrypoint]
-cmd         = "claude"
+cmd         = "/bin/bash"
 args        = []
 interactive = true
-tui         = true
+tui         = false
+cursor_fix  = "shell"
+history     = [
+  "claude",
+  "claude --dangerously-skip-permissions",
+  "podman ps",
+  "podman images",
+]
 
 [output]
 summary         = false
