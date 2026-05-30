@@ -380,6 +380,33 @@ func TestLoadProfileAuto_fallsBackToName(t *testing.T) {
 	}
 }
 
+func TestLoadProfileAuto_pathRelativeToWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "dev.toml"), `name = "dev"`)
+	l := NewLoaderWithWorkDir(dir, workDir)
+	// Simulate default_profile = ".config/inner/profiles/dev.toml" in project config.
+	p, err := l.LoadProfileAuto(".config/inner/profiles/dev.toml")
+	if err != nil {
+		t.Fatalf("LoadProfileAuto with WorkDir-relative path: %v", err)
+	}
+	if p.Name != "dev" {
+		t.Errorf("Name = %q, want dev", p.Name)
+	}
+}
+
+func TestLoadProfileAuto_pathLikeMissingGivesClearError(t *testing.T) {
+	dir := t.TempDir()
+	l := NewLoader(dir)
+	_, err := l.LoadProfileAuto(".inner/profiles/dev.toml")
+	if err == nil {
+		t.Fatal("expected error for missing path-like profile")
+	}
+	if strings.Contains(err.Error(), "must not contain path separators") {
+		t.Errorf("got misleading path-separator error; want file-not-found: %v", err)
+	}
+}
+
 func TestBuild_fromPath(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := filepath.Join(dir, "custom.toml")
@@ -869,6 +896,23 @@ func TestLoadLocal_withFile(t *testing.T) {
 	dir := t.TempDir()
 	workDir := t.TempDir()
 	writeFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "local-profile"`)
+	l := NewLoaderWithWorkDir(dir, workDir)
+	cfg, err := l.LoadLocal()
+	if err != nil {
+		t.Fatalf("LoadLocal: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil GlobalConfig")
+	}
+	if cfg.DefaultProfile != "local-profile" {
+		t.Errorf("DefaultProfile = %q, want %q", cfg.DefaultProfile, "local-profile")
+	}
+}
+
+func TestLoadLocal_withXDGMirroredFile(t *testing.T) {
+	dir := t.TempDir()
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(workDir, ".config", "inner", "config.toml"), `default_profile = "local-profile"`)
 	l := NewLoaderWithWorkDir(dir, workDir)
 	cfg, err := l.LoadLocal()
 	if err != nil {

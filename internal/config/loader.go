@@ -59,7 +59,7 @@ func (l *Loader) LocalConfigPath() string {
 	if l.WorkDir == "" {
 		return ""
 	}
-	return filepath.Join(l.WorkDir, ".config", "inner.toml")
+	return filepath.Join(l.WorkDir, ".config", "inner", "config.toml")
 }
 
 // LocalProfilesDir returns the path to the project-level profiles directory.
@@ -166,14 +166,18 @@ func pathAncestors(absPath string) []string {
 // exist on disk, walking from the filesystem root to workDir (inclusive).
 // Within each directory files are ordered lowest→highest precedence:
 //
-//	.config/inner.toml, .config/inner.local.toml, inner.toml, inner.local.toml
+//	.config/inner.toml, .config/inner/config.toml,
+//	.config/inner.local.toml, .config/inner/config.local.toml,
+//	inner.toml, inner.local.toml
 func collectProjectConfigFiles(workDir string) []string {
 	dirs := pathAncestors(workDir)
 	var files []string
 	for _, dir := range dirs {
 		for _, rel := range []string{
 			filepath.Join(".config", "inner.toml"),
+			filepath.Join(".config", "inner", "config.toml"),
 			filepath.Join(".config", "inner.local.toml"),
+			filepath.Join(".config", "inner", "config.local.toml"),
 			"inner.toml",
 			"inner.local.toml",
 		} {
@@ -202,7 +206,9 @@ func (l *Loader) LoadGlobal() (*GlobalConfig, error) {
 // LoadLocal reads and merges the project-level config files from WorkDir.
 // Files are processed in order (lowest → highest precedence):
 //
-//	.config/inner.toml, .config/inner.local.toml, inner.toml, inner.local.toml
+//	.config/inner.toml, .config/inner/config.toml,
+//	.config/inner.local.toml, .config/inner/config.local.toml,
+//	inner.toml, inner.local.toml
 //
 // Returns nil (no error) if WorkDir is not set or no files exist.
 func (l *Loader) LoadLocal() (*GlobalConfig, error) {
@@ -211,7 +217,9 @@ func (l *Loader) LoadLocal() (*GlobalConfig, error) {
 	}
 	names := []string{
 		filepath.Join(".config", "inner.toml"),
+		filepath.Join(".config", "inner", "config.toml"),
 		filepath.Join(".config", "inner.local.toml"),
+		filepath.Join(".config", "inner", "config.local.toml"),
 		"inner.toml",
 		"inner.local.toml",
 	}
@@ -403,6 +411,21 @@ func (l *Loader) LoadProfileAuto(nameOrPath string) (*Profile, error) {
 			abs = expanded
 		}
 		return l.loadProfilePath(abs, nil)
+	}
+	// If the value looks like a path (contains separators), also try resolving
+	// it relative to WorkDir before falling through to bare-name lookup.
+	if strings.ContainsAny(expanded, "/\\") {
+		if l.WorkDir != "" {
+			candidate := filepath.Join(l.WorkDir, expanded)
+			if _, err := os.Stat(candidate); err == nil {
+				abs, err := filepath.Abs(candidate)
+				if err != nil {
+					abs = candidate
+				}
+				return l.loadProfilePath(abs, nil)
+			}
+		}
+		return nil, fmt.Errorf("profile file not found: %s", nameOrPath)
 	}
 	return l.LoadProfile(nameOrPath)
 }
