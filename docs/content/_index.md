@@ -24,7 +24,7 @@ Agentic tools have broad filesystem access and execute arbitrary commands. `inne
 
 ## How it works
 
-`inner` reads a **profile** (a TOML file in `~/.inner/profiles/`) and uses it to construct a `bwrap` command that wraps your tool. The profile controls network access, mounted paths, environment variables, command shimming, and more.
+`inner` reads a **profile** (a TOML file in `~/.config/inner/profiles/`) and uses it to construct a `bwrap` command that wraps your tool. The profile controls network access, mounted paths, environment variables, command shimming, and more.
 
 ```
 inner run -p claude-one-shot --arg "refactor the auth module"

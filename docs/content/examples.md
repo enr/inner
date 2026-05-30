@@ -227,15 +227,16 @@ When a project depends on a library and you want the agent to see both source tr
   myapp/                        ← your application
   mylib/                        ← the dependency you're also working on
   workspaces/                   ← mount-point staging area (created automatically)
-  .inner/
-    config.toml                 ← local config with workspaces_path and aliases
-    profiles/
-      myapp-workspace.toml      ← profile that mounts both trees
+  .config/
+    inner.toml                  ← local config with workspaces_path and aliases
+    inner/
+      profiles/
+        myapp-workspace.toml    ← profile that mounts both trees
 ```
 
-The `.inner/` directory sits at the root of your projects folder and is picked up automatically by `inner` as a [local config directory](/inner/configuration).
+The `.config/inner.toml` file sits at the root of your projects folder and is picked up automatically by `inner` as a [local config](/inner/configuration) during the root-to-cwd traversal.
 
-### Local config: `~/Projects/.inner/config.toml`
+### Local config: `~/Projects/.config/inner.toml`
 
 ```toml
 workspaces_path = "~/Projects/workspaces"

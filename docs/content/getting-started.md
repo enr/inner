@@ -51,10 +51,10 @@ sudo cp ./bin/inner /usr/local/bin/inner
 
 ## First Run
 
-On the first invocation `inner` initializes `~/.inner/` and installs the built-in profiles:
+On the first invocation `inner` initializes `~/.config/inner/` and installs the built-in profiles:
 
 ```
-~/.inner/
+~/.config/inner/
 ├── config.toml        # global configuration (default_profile = "shell")
 ├── profiles/          # sandbox profiles (TOML)
 │   ├── shell.toml
@@ -82,8 +82,8 @@ Example output:
 ```
 [ok] bwrap found: /usr/bin/bwrap (version 0.9.0)
 [ok] user namespaces: supported
-[ok] profiles dir: /home/alice/.inner/profiles
-[ok] logs dir: /home/alice/.inner/logs
+[ok] profiles dir: /home/alice/.config/inner/profiles
+[ok] logs dir: /home/alice/.config/inner/logs
 [ok] ANTHROPIC_API_KEY: set
 [ok] claude binary: /usr/local/bin/claude
 [ok] display server: wayland (WAYLAND_DISPLAY=wayland-1)
@@ -103,7 +103,7 @@ Start an interactive shell in the default sandbox (`shell` profile by default):
 inner run
 ```
 
-To change the default profile, edit `~/.inner/config.toml`:
+To change the default profile, edit `~/.config/inner/config.toml`:
 
 ```toml
 default_profile = "claude-interactive"

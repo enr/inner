@@ -20,7 +20,7 @@ CLI flags     ──┼──► RunConfig ──► BwrapIsolator.Build() ─�
 
 ### Layer 1: Profile TOML → RunConfig
 
-`config.Loader.Build()` reads `~/.inner/profiles/<name>.toml` and converts it to a `config.RunConfig` via `toRunConfig()`. `RunConfig` is the central contract between configuration and execution: it speaks in terms of **intent** (`Network bool`, `Entrypoint.Interactive bool`, `Allow []string`), never in bwrap-specific flags.
+`config.Loader.Build()` reads `~/.config/inner/profiles/<name>.toml` and converts it to a `config.RunConfig` via `toRunConfig()`. `RunConfig` is the central contract between configuration and execution: it speaks in terms of **intent** (`Network bool`, `Entrypoint.Interactive bool`, `Allow []string`), never in bwrap-specific flags.
 
 CLI overrides (`applyOverrides` in `cmd_run.go`) are applied on top of the loaded `RunConfig` before it reaches the isolator. This keeps the isolator free of any flag-parsing logic.
 

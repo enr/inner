@@ -6,11 +6,11 @@ weight: 3
 
 
 
-A **profile** is a TOML file that fully describes a sandbox environment. Profiles are stored in `~/.inner/profiles/<name>.toml`.
+A **profile** is a TOML file that fully describes a sandbox environment. Profiles are stored in `~/.config/inner/profiles/<name>.toml`.
 
-**Local (per-directory) profiles** can be placed in `.inner/profiles/` inside the current working directory. They are discovered automatically and shown with a `[local]` tag in `inner profile list`. When a local profile has the same name as a global one, the **local profile takes precedence** — `inner run -p foo` will load `.inner/profiles/foo.toml` rather than `~/.inner/profiles/foo.toml`. The shadowed global profile is hidden in the default list view and visible only with `inner profile list --wide`.
+**Local (per-directory) profiles** can be placed in `.config/inner/profiles/` inside the current working directory. They are discovered automatically and shown with a `[local]` tag in `inner profile list`. When a local profile has the same name as a global one, the **local profile takes precedence** — `inner run -p foo` will load `.config/inner/profiles/foo.toml` rather than `~/.config/inner/profiles/foo.toml`. The shadowed global profile is hidden in the default list view and visible only with `inner profile list --wide`.
 
-Alternatively, you can pass a **file path** directly to `-p`/`--profile`. If the value points to an existing file it is loaded as-is; otherwise it is treated as a profile name looked up in the profiles directory. This lets you use local or project-specific profile files without installing them in `~/.inner/profiles/`:
+Alternatively, you can pass a **file path** directly to `-p`/`--profile`. If the value points to an existing file it is loaded as-is; otherwise it is treated as a profile name looked up in the profiles directory. This lets you use local or project-specific profile files without installing them in `~/.config/inner/profiles/`:
 
 ```bash
 inner run -p profiles/inner-dev.toml
@@ -122,7 +122,7 @@ experimental  = false  # set to true to prevent inner run from starting
 A profile can inherit from a base profile using the `extends` field. The child profile starts as a complete copy of the base and then applies its own fields on top — only the fields explicitly declared in the child file take effect.
 
 ```toml
-extends = "claude"          # name of a profile in ~/.inner/profiles/
+extends = "claude"          # name of a profile in ~/.config/inner/profiles/
 # or
 extends = "~/my-base.toml"  # explicit file path (~ and absolute paths supported)
 ```
@@ -139,7 +139,7 @@ extends = "~/my-base.toml"  # explicit file path (~ and absolute paths supported
 ### Example
 
 ```toml
-# ~/.inner/profiles/claude.toml  (base)
+# ~/.config/inner/profiles/claude.toml  (base)
 [sandbox]
 allow = ["ssh-keys"]
 
@@ -153,7 +153,7 @@ timeout_seconds = 3600
 ```
 
 ```toml
-# ~/.inner/profiles/claude-net.toml  (child)
+# ~/.config/inner/profiles/claude-net.toml  (child)
 extends     = "claude"
 description = "Claude with network access"
 
@@ -171,7 +171,7 @@ Inheritance chains are supported — `A extends B extends C` produces the result
 
 ### `extends` resolution
 
-If the value contains `/`, starts with `~`, or is an absolute path, it is treated as a file path (with `~` expansion). Otherwise it is looked up by name in `~/.inner/profiles/`.
+If the value contains `/`, starts with `~`, or is an absolute path, it is treated as a file path (with `~` expansion). Otherwise it is looked up by name in `~/.config/inner/profiles/`.
 
 ---
 
@@ -274,10 +274,10 @@ Use this when you want an agent to have full write access to a directory without
 
 ### Portable source paths (`${workdir}`) {#portable-source-paths-workdir}
 
-When a profile lives inside a project's `.inner/profiles/` directory, hard-coding the host source path ties the profile to a specific machine. Use the `${workdir}` token in the mount source to refer portably to the directory from which `inner` is invoked (i.e. the project root that contains `.inner/`):
+When a profile lives inside a project's `.config/inner/profiles/` directory, hard-coding the host source path ties the profile to a specific machine. Use the `${workdir}` token in the mount source to refer portably to the directory from which `inner` is invoked (i.e. the project root that contains `.config/inner/`):
 
 ```toml
-# .inner/profiles/my-project.toml
+# .config/inner/profiles/my-project.toml
 [mounts]
 "${workdir}" = { dest = "~/projects/myapp", mode = "rw" }
 ```
@@ -314,8 +314,8 @@ Dests that use the `${workspaces_path}` token are exempt — `inner` creates the
 When a mount destination does not exist on the host, use the `${workspaces_path}` token in `dest`. `inner` will pre-create the directory before running `bwrap` and remove it (if empty) after the sandbox exits.
 
 ```toml
-# ~/.inner/config.toml
-workspaces_path = "~/.inner/workspaces"
+# ~/.config/inner/config.toml
+workspaces_path = "~/.config/inner/workspaces"
 ```
 
 ```toml
@@ -324,7 +324,7 @@ workspaces_path = "~/.inner/workspaces"
 "~/projects/myapp" = { dest = "${workspaces_path}/myapp", mode = "rw" }
 ```
 
-At runtime `inner` resolves `${workspaces_path}` → `~/.inner/workspaces` and runs `mkdir -p ~/.inner/workspaces/myapp` before launching `bwrap`.
+At runtime `inner` resolves `${workspaces_path}` → `~/.config/inner/workspaces` and runs `mkdir -p ~/.config/inner/workspaces/myapp` before launching `bwrap`.
 
 **`dest` can be any path under `workspaces_path`**, including nested subdirectories — `inner` uses `os.MkdirAll` so intermediate directories are created automatically. The only requirement is that `workspaces_path` itself already exists on the host.
 
@@ -342,23 +342,23 @@ At runtime `inner` resolves `${workspaces_path}` → `~/.inner/workspaces` and r
 The effective `workspaces_path` is resolved in this order (highest priority first):
 
 1. **Profile** `workspaces_path` field — overrides everything for that specific profile
-2. **Local config** `workspaces_path` (`.inner/config.toml` in the current working directory)
-3. **Global config** `workspaces_path` (`~/.inner/config.toml`)
+2. **Local config** `workspaces_path` (`.config/inner.toml` in the current working directory)
+3. **Global config** `workspaces_path` (`~/.config/inner/config.toml`)
 
-This lets you set a default in `~/.inner/config.toml`, override it per-project in `.inner/config.toml`, and further override it in a specific profile when needed.
+This lets you set a default in `~/.config/inner/config.toml`, override it per-project in `.config/inner.toml`, and further override it in a specific profile when needed.
 
 ```toml
-# ~/.inner/config.toml  (global default)
-workspaces_path = "~/.inner/workspaces"
+# ~/.config/inner/config.toml  (global default)
+workspaces_path = "~/.config/inner/workspaces"
 ```
 
 ```toml
-# /my-project/.inner/config.toml  (per-project override)
+# /my-project/.config/inner.toml  (per-project override)
 workspaces_path = "/my-project/.workspaces"
 ```
 
 ```toml
-# /my-project/.inner/profiles/custom.toml  (per-profile override)
+# /my-project/.config/inner/profiles/custom.toml  (per-profile override)
 workspaces_path = "/tmp/custom-workspaces"
 ```
 
@@ -490,7 +490,7 @@ Controls logging and runtime behavior.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `summary` | bool | `false` | Print execution summary after the run |
-| `log` | string | `~/.inner/logs/` | Directory for run logs |
+| `log` | string | `~/.config/inner/logs/` | Directory for run logs |
 | `timeout_seconds` | int | `0` | Kill sandbox after N seconds (`0` = no limit) |
 
 ---
@@ -687,10 +687,10 @@ inner run -p gemini-interactive
 
 ## Default Profile
 
-`inner run` (without `-p`) uses the profile configured in `~/.inner/config.toml`:
+`inner run` (without `-p`) uses the profile configured in `~/.config/inner/config.toml`:
 
 ```toml
-# ~/.inner/config.toml
+# ~/.config/inner/config.toml
 default_profile = "shell"
 ```
 
@@ -746,7 +746,7 @@ inner profile install https://example.com/my-profile.toml --force
 
 ### `inner profile install` {#inner-profile-install}
 
-Downloads a profile TOML from an HTTP/HTTPS URL and installs it in `~/.inner/profiles/`.
+Downloads a profile TOML from an HTTP/HTTPS URL and installs it in `~/.config/inner/profiles/`.
 
 ```
 inner profile install URL [--name NAME] [--force]

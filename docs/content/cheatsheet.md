@@ -12,7 +12,7 @@ weight: 7
 |------|---------|
 | Check requirements & setup | `inner doctor` |
 | View current version | `inner version` |
-| Initialize/Repair `~/.inner` | `inner init` |
+| Initialize/Repair `~/.config/inner` | `inner init` |
 | Reset built-in profiles | `inner reset` |
 
 ## Profiles
@@ -75,7 +75,7 @@ weight: 7
 |------|---------|
 | View merged config | `inner config show` |
 | Edit global config | `inner config edit` |
-| Edit local (/inner/.inner/) config | `inner config edit --local` |
+| Edit local (.config/inner.toml) config | `inner config edit --local` |
 
 ---
 
@@ -94,7 +94,7 @@ inner run -p https://example.com/custom.toml
 ```
 
 ### Quick Aliases
-Define a shortcut in `~/.inner/config.toml`:
+Define a shortcut in `~/.config/inner/config.toml`:
 ```toml
 [aliases]
 test = "run --profile claude-one-shot --network"

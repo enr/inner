@@ -108,13 +108,13 @@ inner run -p https://raw.githubusercontent.com/acme/profiles/main/claude-restric
 
 `--dry-run` prints the resolved profile, config file paths, effective sandbox settings, and the
 `bwrap` command that would be executed. The local config line is always shown so you can confirm
-whether a `.inner/config.toml` in the current directory is being picked up:
+whether a `.config/inner.toml` in the current directory is being picked up:
 
 ```
 profile:       claude-interactive
-profile path:  ~/.inner/profiles/claude-interactive.toml
-global config: ~/.inner/config.toml
-local config:  ~/projects/myapp/.inner/config.toml (missing)
+profile path:  ~/.config/inner/profiles/claude-interactive.toml
+global config: ~/.config/inner/config.toml
+local config:  ~/projects/myapp/.config/inner.toml (missing)
 
 entrypoint: /usr/bin/claude
 interactive: true
@@ -129,7 +129,7 @@ bwrap command:
 
 ## `inner profile`
 
-Manage sandbox profiles stored in `~/.inner/profiles/`.
+Manage sandbox profiles stored in `~/.config/inner/profiles/`.
 
 ### `inner profile list`
 
@@ -151,7 +151,7 @@ Output:
 ```
 
 - `*` marks the profile that will be used when `-p` is not specified (the effective default, accounting for any local `default_profile` override).
-- `[local]` marks profiles found in `.inner/profiles/` of the current directory rather than `~/.inner/profiles/`.
+- `[local]` marks profiles found in `.config/inner/profiles/` of the current directory rather than `~/.config/inner/profiles/`.
 - When a local profile has the same name as a global one, the global profile is **hidden** (the local takes precedence). Use `--wide` to reveal it.
 
 | Flag | Short | Description |
@@ -162,9 +162,9 @@ Wide output example (when a local `shell` profile shadows the global one):
 
 ```
   NAME   SCOPE   DESCRIPTION                   PATH
-  shell  global  Bash shell, no network  [shadowed]  ~/.inner/profiles/shell.toml
-* shell  local   Project shell variant  [local]      ~/projects/myapp/.inner/profiles/shell.toml
-  claude-interactive  global  Claude Code interactive    ~/.inner/profiles/claude-interactive.toml
+  shell  global  Bash shell, no network  [shadowed]  ~/.config/inner/profiles/shell.toml
+* shell  local   Project shell variant  [local]      ~/projects/myapp/.config/inner/profiles/shell.toml
+  claude-interactive  global  Claude Code interactive    ~/.config/inner/profiles/claude-interactive.toml
 ```
 
 ### `inner profile show`
@@ -192,7 +192,7 @@ Create a new profile from a template, then open it in `$EDITOR`:
 inner profile new myprofile
 ```
 
-Creates `~/.inner/profiles/myprofile.toml`.
+Creates `~/.config/inner/profiles/myprofile.toml`.
 
 ### `inner profile edit`
 
@@ -228,7 +228,7 @@ inner profile clone claude-interactive my-agent
 
 ### `inner profile install`
 
-Download and install a profile from an HTTP/HTTPS URL into `~/.inner/profiles/`:
+Download and install a profile from an HTTP/HTTPS URL into `~/.config/inner/profiles/`:
 
 ```bash
 inner profile install URL [--name NAME] [--force]
@@ -324,7 +324,7 @@ Exit code is `1` if any check fails and is not overridden by `[sandbox].allow`.
 
 ## `inner log`
 
-Manage execution logs stored in `~/.inner/logs/` (or the path set in global config).
+Manage execution logs stored in `~/.config/inner/logs/` (or the path set in global config).
 
 ### `inner log list`
 
@@ -367,23 +367,23 @@ inner log clean --older-than 14
 
 ## `inner init`
 
-Initialize (or re-initialize) the `~/.inner` directory:
+Initialize (or re-initialize) the `~/.config/inner` directory:
 
 ```bash
-inner init           # initialize ~/.inner (global, default)
-inner init --local   # create .inner/ in the current directory
+inner init           # initialize ~/.config/inner (global, default)
+inner init --local   # create .config/inner/ in the current directory
 ```
 
 ### Global init (default)
 
-Creates `~/.inner/` and its subdirectories, installs the built-in profiles, and writes a
+Creates `~/.config/inner/` and its subdirectories, installs the built-in profiles, and writes a
 starter `config.toml` if none exists. Already-present files are never overwritten.
 
 Example output on a fresh install:
 
 ```
-dir: /home/alice/.inner
-created dirs: /home/alice/.inner/profiles, /home/alice/.inner/logs, /home/alice/.inner/directives
+dir: /home/alice/.config/inner
+created dirs: /home/alice/.config/inner/profiles, /home/alice/.config/inner/logs, /home/alice/.config/inner/directives
 config: created
 profile claude-containers: installed
 profile claude-interactive: installed
@@ -399,7 +399,7 @@ profile shell-with-claude: installed
 Example output when everything already exists:
 
 ```
-dir: /home/alice/.inner
+dir: /home/alice/.config/inner
 config: already exists (skipped)
 profile claude-containers: already exists (skipped)
 profile claude-interactive: already exists (skipped)
@@ -417,9 +417,8 @@ use [`inner reset`](#inner-reset).
 
 ### Local init (`--local`)
 
-Creates a `.inner/` directory in the current directory with a starter `config.toml` and an
-empty `profiles/` folder — so the directory structure is immediately visible and ready to
-customize:
+Creates `.config/inner/` and `.config/inner.toml` in the current directory — the directory
+structure is immediately visible and ready to customize:
 
 ```
 inner init --local
@@ -429,29 +428,30 @@ Example output:
 
 ```
 dir: /home/alice/projects/myapp
-created dirs: /home/alice/projects/myapp/.inner/profiles
+created dirs: /home/alice/projects/myapp/.config/inner/profiles
 config: created
 ```
 
 The created layout:
 
 ```
-.inner/
-├── config.toml   # local config template (all options commented out)
-└── profiles/     # place project-specific profiles here
+.config/
+├── inner.toml        # local config template (all options commented out)
+└── inner/
+    └── profiles/     # place project-specific profiles here
 ```
 
 `--local` is idempotent: running it again in the same directory skips existing files.
 
-**Tip:** commit `.inner/` to the project repository. Team members get the directory structure
-and local defaults without any manual setup. To further customize, see
-[`inner config edit --local`](#inner-config) and the [profiles guide](/inner/profiles/).
+**Tip:** commit `.config/inner.toml` and `.config/inner/profiles/` to the project repository.
+Team members get the directory structure and local defaults without any manual setup. To further
+customize, see [`inner config edit --local`](#inner-config) and the [profiles guide](/inner/profiles/).
 
 ### Flags
 
 | Flag | Description |
 |------|-------------|
-| `--local` | Create `.inner/` in the current directory instead of initializing `~/.inner` |
+| `--local` | Create `.config/inner/` in the current directory instead of initializing `~/.config/inner` |
 
 ---
 
@@ -464,7 +464,7 @@ inner reset          # asks for confirmation
 inner reset --force  # skips confirmation (useful in scripts)
 ```
 
-The command overwrites every file in `~/.inner/profiles/` whose name matches a
+The command overwrites every file in `~/.config/inner/profiles/` whose name matches a
 built-in profile. Files that do not match any built-in name — user-created
 profiles, cloned profiles under a custom name — are left completely untouched.
 
@@ -512,31 +512,43 @@ inner reset
 
 ## `inner config`
 
-Manage configuration. `inner` supports two levels of configuration:
+Manage configuration. `inner` uses a layered config hierarchy — each layer is merged on top of the previous:
 
-| Level | File | Scope |
-|-------|------|-------|
-| **Global** | `~/.inner/config.toml` | All directories |
-| **Local** | `.inner/config.toml` (in the current directory) | This directory only |
+| Level | File(s) | Scope |
+|-------|---------|-------|
+| **System** | `/etc/inner/config.toml` | All users (admin-set) |
+| **Global** | `~/.config/inner/config.toml` | All directories for this user |
+| **Project** | Per-directory, from filesystem root to cwd — see below | This project and its parents |
 
-Local config is merged on top of global. Fields set in the local file override the global value; unset fields fall back to global defaults.
+Fields set in a higher-precedence layer override lower-precedence values; unset fields fall back to the next layer.
+
+**Project config files** — `inner` walks from the filesystem root to the current working directory and loads these files (lowest → highest precedence) in each directory it passes through:
+
+```
+.config/inner.toml               # committed project config
+.config/inner/config.toml        # alternative committed location
+.config/inner.local.toml         # local overrides (not committed)
+.config/inner/config.local.toml  # alternative local override location
+inner.toml                       # top-level committed config
+inner.local.toml                 # top-level local overrides (not committed)
+```
 
 ### `inner config show`
 
-Print both the global and local configuration (if present):
+Print all active configuration layers (if present):
 
 ```bash
 inner config show
 ```
 
-Example output when a local config exists:
+Example output when a project config exists:
 
 ```
-# Global: /home/alice/.inner/config.toml
-log_dir = "~/.inner/logs/"
+# Global: /home/alice/.config/inner/config.toml
+log_dir = "~/.config/inner/logs/"
 default_profile = "shell"
 
-# Local: /home/alice/projects/myapp/.inner/config.toml
+# Local: /home/alice/projects/myapp/.config/inner.toml
 default_profile = "claude-interactive"
 ```
 
@@ -547,27 +559,27 @@ When a file is absent a placeholder is shown instead of an error.
 Open a config file in `$EDITOR`. By default, the global config is opened:
 
 ```bash
-inner config edit           # opens ~/.inner/config.toml  (default)
+inner config edit           # opens ~/.config/inner/config.toml  (default)
 inner config edit --global  # same as above (explicit)
-inner config edit --local   # opens .inner/config.toml in the current directory
+inner config edit --local   # opens .config/inner.toml in the current directory
 ```
 
-`--local` creates `.inner/config.toml` (and the `.inner/` directory) in the current directory if they do not yet exist.
+`--local` creates `.config/inner.toml` in the current directory if it does not yet exist.
 
 | Flag | Description |
 |------|-------------|
-| `--global` | Edit the global config `~/.inner/config.toml` (default) |
-| `--local` | Edit the local config `.inner/config.toml` in the current directory |
+| `--global` | Edit the global config `~/.config/inner/config.toml` (default) |
+| `--local` | Edit the project config `.config/inner.toml` in the current directory |
 
-**Config options (apply to both global and local files):**
+**Config options (apply to all layers):**
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `default_profile` | `"default"` | Profile used when `-p` is not specified |
-| `log_dir` | `~/.inner/logs/` | Directory where run logs are written |
+| `log_dir` | `~/.config/inner/logs/` | Directory where run logs are written |
 | `workspaces_path` | — | Host directory where workspace mount-point directories are pre-created. Required when a profile mount uses `${workspaces_path}` in its `dest` field. Local config overrides global. |
 
-**Tip:** commit `.inner/config.toml` to a project repository to give all contributors a consistent default profile without touching their personal `~/.inner/config.toml`.
+**Tip:** commit `.config/inner.toml` to a project repository to give all contributors a consistent default profile without touching their personal `~/.config/inner/config.toml`. Use `.config/inner.local.toml` (gitignored) for personal overrides like credentials.
 
 ---
 
@@ -583,8 +595,8 @@ Checks performed:
 
 - `bwrap` binary found and version reported
 - Unprivileged user namespaces supported
-- `~/.inner/profiles/` directory exists and each profile is validated (unknown `allow` keys, missing mounts, etc.)
-- `~/.inner/logs/` directory exists
+- `~/.config/inner/profiles/` directory exists and each profile is validated (unknown `allow` keys, missing mounts, etc.)
+- `~/.config/inner/logs/` directory exists
 - `ANTHROPIC_API_KEY` environment variable set
 - `claude` binary found on `$PATH`
 - `GEMINI_API_KEY` environment variable set

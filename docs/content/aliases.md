@@ -10,7 +10,7 @@ Aliases let you define short names for frequently used `inner` commands directly
 
 ## Defining aliases
 
-Aliases are declared in the `[aliases]` table of `~/.inner/config.toml` (global) or `.inner/config.toml` (local, directory-level):
+Aliases are declared in the `[aliases]` table of `~/.config/inner/config.toml` (global) or `.config/inner.toml` (local, directory-level):
 
 ```toml
 [aliases]
@@ -40,17 +40,17 @@ inner review -- "add unit tests"  # → inner run --profile code-review -- add u
 
 Aliases follow the same global/local precedence as the rest of the config:
 
-- `~/.inner/config.toml` — global, applies everywhere
-- `.inner/config.toml` — local (directory-level), overrides the global config for that directory
+- `~/.config/inner/config.toml` — global, applies everywhere
+- `.config/inner.toml` — local (directory-level), overrides the global config for that directory
 
 When the same alias key appears in both files, the **local value wins**.
 
 ```toml
-# ~/.inner/config.toml
+# ~/.config/inner/config.toml
 [aliases]
 review = "run --profile code-review"   # used everywhere
 
-# /my-project/.inner/config.toml
+# /my-project/.config/inner.toml
 [aliases]
 review = "run --profile my-project-review"  # used only inside /my-project
 ```
@@ -67,7 +67,7 @@ configured in the global or local `config.toml`. This lets you reference workspa
 directories without hardcoding absolute paths:
 
 ```toml
-# ~/.inner/config.toml  (or .inner/config.toml for per-project)
+# ~/.config/inner/config.toml  (or .config/inner.toml for per-project)
 workspaces_path = "~/Projects/workspaces"
 
 [aliases]

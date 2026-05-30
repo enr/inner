@@ -110,7 +110,7 @@ inner/
 │   ├── profile/        # profile validation
 │   ├── runtime/        # host detection (bwrap, namespaces, display)
 │   ├── sandbox/        # security checks and verification report
-│   ├── setup/          # ~/.inner init and default profile installation
+│   ├── setup/          # ~/.config/inner init and default profile installation
 │   ├── shim/           # blocking/rewriting shim generator
 │   └── version/        # version metadata (set via ldflags)
 ├── .sdlc/
