@@ -24,8 +24,8 @@ func (a *App) reset_(w io.Writer, force bool) error {
 	}
 
 	if !force {
-		fmt.Fprintf(w, "this command overwrites all built-in profiles in %s/profiles/.\n", dir)
-		fmt.Fprintln(w, "user-created profiles are not affected.")
+		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": overwrites all built-in profiles in %s/profiles/\n", dir)
+		fmt.Fprintln(w, "         user-created profiles are not affected.")
 		fmt.Fprint(w, "continue? [y/N] ")
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')

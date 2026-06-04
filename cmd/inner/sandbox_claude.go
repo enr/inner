@@ -220,7 +220,7 @@ func formatTokenExpiry(credPath string) string {
 func unlockClaudeCredentials(w io.Writer, autoConfirm bool, credPath string) {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
-		fmt.Fprintln(w, "inner: warning: claude not found in PATH; cannot unlock credentials")
+		fmt.Fprintln(w, colorizeW(w, ansiBoldYellow, "inner: warning")+": claude not found in PATH; cannot unlock credentials")
 		return
 	}
 
@@ -235,7 +235,7 @@ func unlockClaudeCredentials(w io.Writer, autoConfirm bool, credPath string) {
 	cmd.Stderr = io.Discard
 
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(w, "inner: warning: could not start claude for credential unlock: %v\n", err)
+		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "inner: warning")+": could not start claude for credential unlock: %v\n", err)
 		return
 	}
 	defer func() {
@@ -362,7 +362,7 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 	switch {
 	case expiryErr != nil:
 		// File missing or unreadable — cannot determine state.
-		fmt.Fprintf(w, "inner: claude: cannot read credentials (%v); attempting unlock\n", expiryErr)
+		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "inner: warning")+": cannot read credentials: %v — attempting unlock\n", expiryErr)
 		unlockClaudeCredentials(w, rc.AutoConfirm, credPath)
 	case expiry == "":
 		// File exists but has no recognisable expiry field — be optimistic but

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"strings"
 
@@ -9,14 +10,27 @@ import (
 
 // ANSI colour codes.
 const (
-	ansiReset  = "\033[0m"
-	ansiBold   = "\033[1m"
-	ansiDim    = "\033[2m"
-	ansiCyan   = "\033[36m"
-	ansiGreen  = "\033[32m"
-	ansiYellow = "\033[33m"
-	ansiBlue   = "\033[34m"
+	ansiReset      = "\033[0m"
+	ansiBold       = "\033[1m"
+	ansiDim        = "\033[2m"
+	ansiCyan       = "\033[36m"
+	ansiGreen      = "\033[32m"
+	ansiYellow     = "\033[33m"
+	ansiBlue       = "\033[34m"
+	ansiRed        = "\033[31m"
+	ansiBoldRed    = "\033[1;31m"
+	ansiBoldYellow = "\033[1;33m"
 )
+
+// colorizeW wraps text in ANSI colour codes only when w is a real TTY.
+// Falls back to plain text for pipes, redirections, and when NO_COLOR is set.
+func colorizeW(w io.Writer, code, text string) string {
+	f, ok := w.(*os.File)
+	if !ok || !isTTY(f) {
+		return text
+	}
+	return code + text + ansiReset
+}
 
 // highlightTOML applies simple ANSI colours to a TOML string.
 // It is line-oriented and covers the common cases without a full parser:

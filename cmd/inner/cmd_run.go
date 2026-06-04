@@ -60,7 +60,7 @@ var fetchRunProfileURL = config.FetchURL
 func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) error {
 	// 1. Auto-init ~/.config/inner (idempotent, best-effort).
 	if err := setup.Init(a.loader.Dir); err != nil {
-		fmt.Fprintf(w, "warning: setup init: %v\n", err)
+		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": setup init: %v\n", err)
 	}
 
 	// 2. Load RunConfig from profile.
@@ -127,7 +127,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 				continue
 			}
 			if strings.HasPrefix(m.Dest+"/", rc.Workdir+"/") {
-				fmt.Fprintf(w, "warning: mount %q is declared ro but is under workdir %q — the ro constraint will not be enforced\n", m.Dest, rc.Workdir)
+				fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": mount %q is declared ro but is under workdir %q — the ro constraint will not be enforced\n", m.Dest, rc.Workdir)
 			}
 		}
 	}
@@ -202,7 +202,13 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	if p, err := a.loader.LoadProfileAuto(profileName); err == nil {
 		result := profile.Validate(p, a.loader.WorkDir)
 		for _, issue := range result.Issues {
-			fmt.Fprintf(w, "profile %s\n", issue)
+			var marker string
+			if issue.Level == profile.LevelError {
+				marker = colorizeW(w, ansiBoldRed, "[error]")
+			} else {
+				marker = colorizeW(w, ansiBoldYellow, "[warning]")
+			}
+			fmt.Fprintf(w, "%s %s\n", marker, issue.Message)
 		}
 		if result.HasErrors() {
 			return fmt.Errorf("profile %q has errors, aborting", profileName)
@@ -455,7 +461,7 @@ func loadArgsFile(w io.Writer, path string) (string, error) {
 		return "", fmt.Errorf("args file %q contains null bytes; binary files are not supported", path)
 	}
 	if size > argsFileWarnSize {
-		fmt.Fprintf(w, "warning: args file %q is large (%d bytes); consider passing the file path as a mount instead\n", path, size)
+		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": args file %q is large (%d bytes); consider passing the file path as a mount instead\n", path, size)
 	}
 	return string(data), nil
 }
