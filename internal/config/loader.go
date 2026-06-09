@@ -59,7 +59,7 @@ func (l *Loader) LocalConfigPath() string {
 	if l.WorkDir == "" {
 		return ""
 	}
-	return filepath.Join(l.WorkDir, ".config", "inner", "config.toml")
+	return filepath.Join(l.WorkDir, ".config", "inner.toml")
 }
 
 // LocalProfilesDir returns the path to the project-level profiles directory.
