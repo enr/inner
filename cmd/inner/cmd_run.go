@@ -599,19 +599,22 @@ func prepareNestedUserNs(cmd *exec.Cmd) (func() error, error) {
 		return nil, fmt.Errorf("info pipe: %w", err)
 	}
 
+	// Insert --userns-block-fd 3 --info-fd 4 into bwrap args before the "--"
+	// separator. Only the first "--" is bwrap's separator; any later ones
+	// belong to the entrypoint args and must be left untouched.
+	sep := slices.Index(cmd.Args, "--")
+	if sep < 0 {
+		blockR.Close()
+		blockW.Close()
+		infoR.Close()
+		infoW.Close()
+		return nil, fmt.Errorf("bwrap args missing %q separator", "--")
+	}
+	cmd.Args = slices.Insert(cmd.Args, sep, "--userns-block-fd", "3", "--info-fd", "4")
+
 	// ExtraFiles[0] = fd 3 (blockR: bwrap blocks reading this until we close blockW)
 	// ExtraFiles[1] = fd 4 (infoW: bwrap writes {"child-pid": N} then closes it)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, blockR, infoW)
-
-	// Insert --userns-block-fd 3 --info-fd 4 into bwrap args before the "--" separator.
-	newArgs := make([]string, 0, len(cmd.Args)+4)
-	for _, arg := range cmd.Args {
-		if arg == "--" {
-			newArgs = append(newArgs, "--userns-block-fd", "3", "--info-fd", "4")
-		}
-		newArgs = append(newArgs, arg)
-	}
-	cmd.Args = newArgs
 
 	uid := os.Getuid()
 	gid := os.Getgid()
