@@ -721,3 +721,39 @@ func TestRunSandbox_URLProfile_fetchError(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestPrepareNestedUserNs_insertsBeforeFirstSeparatorOnly(t *testing.T) {
+	// The entrypoint args contain a literal "--" of their own; the bwrap flags
+	// must be inserted only before the first separator.
+	cmd := exec.Command("bwrap", "--ro-bind", "/", "/", "--", "claude", "--", "foo")
+	postStart, err := prepareNestedUserNs(cmd)
+	if err != nil {
+		t.Fatalf("prepareNestedUserNs: %v", err)
+	}
+	// Unblock the pipes so the test does not leak goroutine state if postStart
+	// were ever invoked; here we only inspect args.
+	_ = postStart
+
+	want := []string{"bwrap", "--ro-bind", "/", "/", "--userns-block-fd", "3", "--info-fd", "4", "--", "claude", "--", "foo"}
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("args = %v, want %v", cmd.Args, want)
+	}
+	for i := range want {
+		if cmd.Args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", cmd.Args, want)
+		}
+	}
+	if len(cmd.ExtraFiles) != 2 {
+		t.Fatalf("ExtraFiles = %d, want 2", len(cmd.ExtraFiles))
+	}
+}
+
+func TestPrepareNestedUserNs_missingSeparator(t *testing.T) {
+	cmd := exec.Command("bwrap", "--ro-bind", "/", "/")
+	if _, err := prepareNestedUserNs(cmd); err == nil {
+		t.Fatal("expected error for args without -- separator, got nil")
+	}
+	if len(cmd.ExtraFiles) != 0 {
+		t.Fatalf("ExtraFiles = %d, want 0 (cmd must not be mutated on error)", len(cmd.ExtraFiles))
+	}
+}

@@ -141,23 +141,58 @@ func TestBuild_separatorPresent(t *testing.T) {
 
 // ── Network ───────────────────────────────────────────────────────────────────
 
-func TestBuild_noPidUnshare_interactive(t *testing.T) {
+// PID isolation is now driven by RunConfig.PidNamespace, NOT by Interactive.
+// An interactive run with PidNamespace=true MUST still get --unshare-pid:
+// verified that --unshare-pid alone keeps the controlling terminal on
+// bubblewrap >= 0.9, so TUI apps are unaffected. The TTY-breaking flag is
+// --new-session, which inner never emits.
+func TestBuild_pidUnshare_interactive(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{
-		Entrypoint: config.Entrypoint{Cmd: "claude", Interactive: true},
+		PidNamespace: true,
+		Entrypoint:   config.Entrypoint{Cmd: "claude", Interactive: true},
 	})
-	if hasFlag(args, "--unshare-pid") {
-		t.Errorf("--unshare-pid must not be present for interactive runs: setsid() breaks TUI apps")
+	if !hasFlag(args, "--unshare-pid") {
+		t.Errorf("expected --unshare-pid for interactive run with PidNamespace=true, got %v", args)
 	}
 }
 
 func TestBuild_pidUnshare_nonInteractive(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{
-		Entrypoint: config.Entrypoint{Cmd: "claude", Interactive: false},
+		PidNamespace: true,
+		Entrypoint:   config.Entrypoint{Cmd: "claude", Interactive: false},
 	})
 	if !hasFlag(args, "--unshare-pid") {
 		t.Errorf("expected --unshare-pid for non-interactive runs, got %v", args)
+	}
+}
+
+// The pid_namespace = false escape hatch must drop --unshare-pid.
+func TestBuild_pidUnshare_disabled(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		PidNamespace: false,
+		Entrypoint:   config.Entrypoint{Cmd: "claude", Interactive: true},
+	})
+	if hasFlag(args, "--unshare-pid") {
+		t.Errorf("--unshare-pid must be absent when PidNamespace=false, got %v", args)
+	}
+}
+
+// Guard against the regression that breaks TUI apps: inner must NEVER emit
+// --new-session (it calls setsid(), detaching the controlling terminal →
+// ENXIO on open("/dev/tty")).
+func TestBuild_neverEmitsNewSession(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	for _, interactive := range []bool{true, false} {
+		args := cmdArgs(t, iso, config.RunConfig{
+			PidNamespace: true,
+			Entrypoint:   config.Entrypoint{Cmd: "claude", Interactive: interactive},
+		})
+		if hasFlag(args, "--new-session") {
+			t.Errorf("--new-session must never be emitted (breaks TUI controlling terminal); interactive=%v args=%v", interactive, args)
+		}
 	}
 }
 

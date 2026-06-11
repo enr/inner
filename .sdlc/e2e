@@ -579,6 +579,13 @@ fi
 
 section "Dry-run: process isolation"
 
+# PID isolation is now ON by default for ALL runs (interactive included).
+# Rationale: without --unshare-pid the sandbox shares the host PID namespace
+# and can read /proc/<pid>/environ of same-UID host processes, leaking
+# secrets. Verified that --unshare-pid alone keeps the controlling terminal,
+# so TUI apps are unaffected (the TTY-breaking flag is --new-session, which
+# inner never emits). Opt out per-profile with [sandbox] pid_namespace=false.
+
 LINE=$(bwrap_line "$NONET")
 if echo "$LINE" | grep -q -- "--unshare-pid"; then
     pass "non-interactive profile: --unshare-pid present in bwrap command"
@@ -586,12 +593,42 @@ else
     fail "non-interactive profile: --unshare-pid missing from bwrap command"
 fi
 
-# Interactive profile: do not override with --no-interactive
+# Interactive profile must now ALSO get PID isolation.
 LINE=$(bwrap_line "$INTERACTIVE")
 if echo "$LINE" | grep -q -- "--unshare-pid"; then
-    fail "interactive profile: --unshare-pid present (breaks TUI apps with setsid)"
+    pass "interactive profile: --unshare-pid present (PID isolation on by default)"
 else
-    pass "interactive profile: --unshare-pid correctly absent from bwrap command"
+    fail "interactive profile: --unshare-pid missing (host /proc would leak)"
+fi
+
+# inner must NEVER emit --new-session: it calls setsid(), detaches the
+# controlling terminal, and makes TUI apps hang on open(/dev/tty) (ENXIO).
+LINE=$(bwrap_line "$INTERACTIVE")
+if echo "$LINE" | grep -q -- "--new-session"; then
+    fail "interactive profile: --new-session present (breaks TUI controlling terminal)"
+else
+    pass "interactive profile: --new-session correctly absent"
+fi
+
+# Escape hatch: pid_namespace = false drops --unshare-pid.
+NOPIDNS="$TMPWORK/nopidns.toml"
+cat > "$NOPIDNS" <<'EOF'
+schema_version = "1"
+name = "inner-e2e-nopidns"
+
+[sandbox]
+network       = false
+pid_namespace = false
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = true
+EOF
+LINE=$(bwrap_line "$NOPIDNS")
+if echo "$LINE" | grep -q -- "--unshare-pid"; then
+    fail "pid_namespace=false: --unshare-pid present (escape hatch ignored)"
+else
+    pass "pid_namespace=false: --unshare-pid correctly absent (escape hatch works)"
 fi
 
 section "Dry-run: environment"

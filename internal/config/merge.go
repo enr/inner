@@ -37,6 +37,12 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("sandbox", "clipboard") {
 		result.Sandbox.Clipboard = overlay.Sandbox.Clipboard
 	}
+	// pid_namespace is a *bool: nil means "not set" so a child profile that
+	// does not mention it inherits the base value; an explicit true/false in
+	// the child always wins.
+	if meta.IsDefined("sandbox", "pid_namespace") {
+		result.Sandbox.PidNamespace = overlay.Sandbox.PidNamespace
+	}
 	if meta.IsDefined("sandbox", "allow") {
 		result.Sandbox.Allow = mergeUnique(base.Sandbox.Allow, overlay.Sandbox.Allow)
 	}

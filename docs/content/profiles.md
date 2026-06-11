@@ -197,7 +197,27 @@ Controls top-level sandbox behavior.
 |-----|------|---------|-------------|
 | `network` | bool | `false` | Allow network access |
 | `clipboard` | bool | `false` | Forward clipboard (requires display server) |
+| `pid_namespace` | bool | `true` | Give the sandbox a private PID namespace (`--unshare-pid`). See below. |
 | `allow` | list | `[]` | Explicitly permit sensitive resources (see below) |
+
+### `pid_namespace` — process isolation
+
+When `true` (the default) the sandbox runs in its own PID namespace and cannot
+see host processes. This prevents a sandboxed agent from reading
+`/proc/<pid>/environ` of your other processes (which would leak secrets like
+`AWS_*` / `GITHUB_TOKEN` exported in another shell) or signalling them.
+
+Leave this on. Set it to `false` **only** as an emergency escape hatch if an
+interactive TUI app misbehaves on an unusual kernel/bubblewrap combination:
+
+```toml
+[sandbox]
+pid_namespace = false   # NOT recommended — host processes become visible
+```
+
+PID isolation does **not** break TUI apps: `inner` never passes
+`--new-session` (the flag that would detach the controlling terminal), so
+`--unshare-pid` is safe for claude, gemini, and interactive shells.
 
 ### `allow` — sensitive resource opt-in
 

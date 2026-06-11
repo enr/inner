@@ -247,6 +247,62 @@ allow = ["ssh-keys", "netrc"]
 	}
 }
 
+// PID namespace isolation must default to ON when the profile does not
+// mention pid_namespace at all.
+func TestBuild_pidNamespaceDefaultsOn(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `
+[entrypoint]
+cmd = "bash"
+interactive = true
+`)
+	rc, err := NewLoader(dir).Build("p")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !rc.PidNamespace {
+		t.Errorf("PidNamespace = false, want true (default when unset)")
+	}
+}
+
+// An explicit pid_namespace = false is the escape hatch and must be honoured.
+func TestBuild_pidNamespaceExplicitFalse(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `
+[sandbox]
+pid_namespace = false
+
+[entrypoint]
+cmd = "bash"
+`)
+	rc, err := NewLoader(dir).Build("p")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if rc.PidNamespace {
+		t.Errorf("PidNamespace = true, want false (explicit opt-out)")
+	}
+}
+
+// An explicit pid_namespace = true is equivalent to the default.
+func TestBuild_pidNamespaceExplicitTrue(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `
+[sandbox]
+pid_namespace = true
+
+[entrypoint]
+cmd = "bash"
+`)
+	rc, err := NewLoader(dir).Build("p")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !rc.PidNamespace {
+		t.Errorf("PidNamespace = false, want true (explicit opt-in)")
+	}
+}
+
 func TestBuild_verifyCustomChecks(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "profiles", "p.toml"), `
@@ -874,6 +930,47 @@ timeout_seconds = 60
 	wantAllow := []string{"ssh-keys", "docker-socket"}
 	if len(rc.Allow) != len(wantAllow) {
 		t.Errorf("Allow = %v, want %v", rc.Allow, wantAllow)
+	}
+}
+
+// pid_namespace is a *bool so extends inheritance is "tri-state": a child
+// that does not mention it keeps the base value; a child that sets it wins.
+func TestBuild_extends_pidNamespaceInheritedAndOverridden(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[sandbox]
+pid_namespace = false
+
+[entrypoint]
+cmd = "bash"
+`)
+	// Child A: does not mention pid_namespace → inherits base's false.
+	writeFile(t, filepath.Join(dir, "profiles", "child-inherit.toml"), `
+extends = "base"
+`)
+	// Child B: explicitly re-enables it → true wins over inherited false.
+	writeFile(t, filepath.Join(dir, "profiles", "child-override.toml"), `
+extends = "base"
+
+[sandbox]
+pid_namespace = true
+`)
+	l := NewLoader(dir)
+
+	rcA, err := l.Build("child-inherit")
+	if err != nil {
+		t.Fatalf("Build child-inherit: %v", err)
+	}
+	if rcA.PidNamespace {
+		t.Error("child-inherit: PidNamespace = true, want false (inherited from base)")
+	}
+
+	rcB, err := l.Build("child-override")
+	if err != nil {
+		t.Fatalf("Build child-override: %v", err)
+	}
+	if !rcB.PidNamespace {
+		t.Error("child-override: PidNamespace = false, want true (child override)")
 	}
 }
 
