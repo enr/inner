@@ -152,13 +152,35 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// ── Process lifecycle ────────────────────────────────────────────────────
 	// --die-with-parent: sandbox is killed if the inner process crashes.
 	//
-	// --unshare-pid is applied only for non-interactive runs. When enabled,
-	// bwrap forks internally and the child calls setsid(), creating a new
-	// session with no controlling terminal. Interactive TUI apps (Node.js /
-	// claude, gemini) call open("/dev/tty") at startup to initialise raw mode;
-	// without a controlling terminal they receive ENXIO and hang with no output.
+	// --unshare-pid gives the sandbox a private PID namespace. Without it the
+	// sandboxed process shares the host PID namespace and — because --proc
+	// mounts a fresh procfs of the *current* namespace — sees every host
+	// process. Running as the same UID it can then read
+	// /proc/<pid>/environ of any of the user's other processes (leaking
+	// secrets like AWS_*/GITHUB_TOKEN exported in other shells, and defeating
+	// --clearenv) and can signal them. So PID isolation is applied for ALL
+	// runs, interactive included, unless the profile explicitly opts out via
+	// [sandbox] pid_namespace = false.
+	//
+	// History / TUI safety: an earlier version skipped --unshare-pid for
+	// interactive runs, believing it caused bwrap to setsid() and lose the
+	// controlling terminal, making TUI apps (claude, gemini — Node.js/libuv
+	// opens /dev/tty O_RDWR at init) fail with ENXIO and hang. Empirical
+	// verification (bubblewrap 0.9.0, PTY session) shows the controlling
+	// terminal survives --unshare-pid: bwrap's internal fork inherits the
+	// session, and open("/dev/tty") + tcgetattr succeed. The flag that
+	// actually calls setsid() and produces the ENXIO is --new-session, which
+	// inner never passes.
+	//
+	// Invariants for anyone touching this block:
+	//   1. NEVER add --new-session: it detaches the controlling terminal and
+	//      breaks every interactive TUI (verified: ENXIO on open("/dev/tty")).
+	//   2. NEVER add --as-pid-1: without bwrap's reaper as PID 1, zombies of
+	//      double-forking children (shells, agents spawning tools) accumulate.
+	//   3. Keep the pid_namespace = false escape hatch working: it is the
+	//      immediate rollback path if a kernel/bwrap combination regresses.
 	args = append(args, "--die-with-parent")
-	if !cfg.Entrypoint.Interactive {
+	if cfg.PidNamespace {
 		args = append(args, "--unshare-pid")
 	}
 

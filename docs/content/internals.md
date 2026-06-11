@@ -76,16 +76,30 @@ Sensitive files within the home directory are hidden after profile mounts are ap
 ### Process isolation: `--unshare-pid`
 
 ```go
-if !cfg.Entrypoint.Interactive {
+if cfg.PidNamespace {
     args = append(args, "--unshare-pid")
 }
 ```
 
-The decision is driven solely by `cfg.Entrypoint.Interactive`, a bool set in the profile (`[entrypoint] interactive = true`) or overridden at the CLI (`-i` / `--no-interactive`).
+The decision is driven by `cfg.PidNamespace`, which defaults to **true** and is controlled per-profile via `[sandbox] pid_namespace = false`.
 
-**Why it cannot be unconditional:** when `--unshare-pid` is active bwrap forks internally and the child calls `setsid()`, creating a new session with no controlling terminal. Interactive TUI apps call `open("/dev/tty")` at startup to initialise raw mode; with no controlling terminal that call fails with `ENXIO` and the app hangs silently with no output.
+**Why it must be on by default:** the base mount is `--ro-bind / /` and `--proc /proc` mounts a fresh procfs of the *current* PID namespace. Without `--unshare-pid` the sandbox shares the host PID namespace, so every host process is visible under `/proc`. Running as the same UID, the sandboxed agent can then read `/proc/<pid>/environ` of any of the user's other processes — leaking secrets such as `AWS_SECRET_ACCESS_KEY` or `GITHUB_TOKEN` exported in another shell, which defeats the `--clearenv` hygiene — and can send signals to those processes. A private PID namespace closes that hole: inside the sandbox only the sandbox's own processes exist.
 
-There is no check for a specific profile name — any profile or CLI invocation that sets `interactive = true` gets this behaviour.
+**Why it does not break TUI apps (the historical concern):** an earlier version skipped `--unshare-pid` for interactive runs, believing it forced bwrap to call `setsid()` and detach the controlling terminal, making TUI apps (claude, gemini — Node.js/libuv opens `/dev/tty` with `O_RDWR` during init) fail with `ENXIO` and hang. This was a misdiagnosis. Empirical testing (bubblewrap 0.9.0, under a real PTY) shows:
+
+| Flags | `open("/dev/tty", O_RDWR)` + `tcgetattr` | Host processes visible |
+|-------|------------------------------------------|------------------------|
+| no `--unshare-pid` | OK | **all of them (leak)** |
+| `--unshare-pid` | **OK** | isolated |
+| `--unshare-pid --new-session` | **ENXIO** | isolated |
+
+The flag that actually detaches the controlling terminal is `--new-session` (it calls `setsid()`), **which `inner` never emits**. With `--unshare-pid` alone, bwrap's internal fork inherits the session and the TTY keeps working.
+
+**Invariants** (enforced by tests in `internal/isolator/bwrap_test.go`):
+
+1. Never add `--new-session` — it breaks every interactive TUI (`ENXIO` on `open("/dev/tty")`).
+2. Never add `--as-pid-1` — without bwrap's reaper as PID 1, zombies of double-forking children accumulate.
+3. Keep the `pid_namespace = false` escape hatch working — it is the immediate rollback if a kernel/bwrap combination ever regresses.
 
 ### Network: `--unshare-net`
 

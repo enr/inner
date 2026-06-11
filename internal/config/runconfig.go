@@ -7,11 +7,21 @@ type RunConfig struct {
 	// Name is the logical profile name (from the profile's name field, or
 	// derived from the filename). It may differ from the CLI argument used
 	// to select the profile (which can be a file path).
-	Name          string
-	Mounts        []Mount
-	Env           EnvConfig
-	Network       bool
-	Clipboard     bool
+	Name      string
+	Mounts    []Mount
+	Env       EnvConfig
+	Network   bool
+	Clipboard bool
+	// PidNamespace requests a private PID namespace for the sandbox
+	// (bwrap --unshare-pid). True by default; resolved by toRunConfig from
+	// SandboxConfig.PidNamespace (nil = unset = true).
+	//
+	// When false the sandbox shares the host PID namespace: every host
+	// process is visible under /proc, and /proc/<pid>/environ of same-UID
+	// processes is readable — defeating the clearenv secret hygiene. Only
+	// disable as an escape hatch for TUI/terminal regressions on unusual
+	// kernel/bwrap combinations (see SandboxConfig.PidNamespace).
+	PidNamespace  bool
 	Entrypoint    Entrypoint
 	Git           *GitConfig // sanitization config (strip sections, overrides)
 	GitConfigPath string     // path to pre-sanitized gitconfig temp file (set by git.Sanitizer)

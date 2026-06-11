@@ -518,6 +518,7 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 		fmt.Fprintf(w, "workdir:     %s\n", rc.Workdir)
 	}
 	fmt.Fprintf(w, "network:     %v\n", rc.Network)
+	fmt.Fprintf(w, "pid-ns:      %v\n", rc.PidNamespace)
 	fmt.Fprintf(w, "clipboard:   %v\n", rc.Clipboard)
 	if rc.Timeout > 0 {
 		fmt.Fprintf(w, "timeout:     %ds\n", rc.Timeout)

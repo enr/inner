@@ -519,8 +519,12 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 	workspacesPath = ExpandPath(workspacesPath)
 
 	cfg := &RunConfig{
-		Name:               p.Name,
-		Network:            p.Sandbox.Network,
+		Name:    p.Name,
+		Network: p.Sandbox.Network,
+		// PID namespace isolation defaults to ON: a nil (unset) value means
+		// true; only an explicit pid_namespace = false in the profile
+		// disables it. See SandboxConfig.PidNamespace for the rationale.
+		PidNamespace:       p.Sandbox.PidNamespace == nil || *p.Sandbox.PidNamespace,
 		Clipboard:          p.Sandbox.Clipboard,
 		Env:                expandedEnv,
 		Git:                p.Git,

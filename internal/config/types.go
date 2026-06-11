@@ -56,6 +56,20 @@ var CapabilityHostDirs = map[string][]string{
 type SandboxConfig struct {
 	Network   bool `toml:"network"`
 	Clipboard bool `toml:"clipboard"`
+	// PidNamespace controls whether the sandbox gets its own PID namespace
+	// (bwrap --unshare-pid). Defaults to true (nil = unset = enabled).
+	//
+	// With PID isolation enabled the sandbox cannot see host processes: this
+	// blocks reading /proc/<pid>/environ of same-UID host processes (which
+	// would leak secrets such as AWS_* or GITHUB_TOKEN exported in other
+	// shells) and prevents sending signals to host processes.
+	//
+	// Set pid_namespace = false ONLY as an emergency escape hatch if an
+	// interactive TUI application misbehaves on a specific kernel/bwrap
+	// combination. Verified on bubblewrap >= 0.9: --unshare-pid alone keeps
+	// the controlling terminal (the TTY-breaking flag is --new-session,
+	// which inner never passes), so TUI apps work with PID isolation on.
+	PidNamespace *bool `toml:"pid_namespace"`
 	// Allow lists sensitive resources that are normally hidden but explicitly
 	// permitted in this sandbox. Valid keys are listed in ValidAllowKeys.
 	Allow []string `toml:"allow"`
