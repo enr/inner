@@ -7,7 +7,7 @@ theme = "inner"
 [params]
   tagline = "Isolated sandboxes to run agents or untrusted code."
   repoURL = "https://github.com/enr/inner"
-  currentAppVersion = "0.6.0"
+  currentAppVersion = "0.7.0-SNAPSHOT"
 
 [markup.goldmark.renderer]
   unsafe = true
