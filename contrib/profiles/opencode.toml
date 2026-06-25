@@ -1,0 +1,42 @@
+schema_version = "1"
+name        = "opencode"
+description = "Interactive OpenCode agent (network enabled)"
+
+[sandbox]
+network   = true
+clipboard = false
+
+[mounts]
+# Hide host runtime sockets (dbus, systemd, pipewire, …) from the sandbox.
+# OpenCode's Node.js runtime would otherwise find and connect to them,
+# which can cause blocking calls that hang startup.
+"/run/user/$UID" = { dest = "/run/user/$UID", mode = "tmpfs" }
+
+# OpenCode persistent data (auth, sessions, config)
+"~/.config/opencode"  = { dest = "~/.config/opencode",  mode = "rw" }
+"~/.local/share/opencode" = { dest = "~/.local/share/opencode", mode = "rw" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+
+[entrypoint]
+cmd         = "opencode"
+args        = []
+interactive = true
+# opencode (Node.js/libuv) probes terminal capabilities during module init,
+# before it calls setRawMode itself — tui = true makes the launcher put
+# the host terminal in raw mode before the child starts.
+tui         = true
+
+[output]
+summary         = false
+log             = "~/.inner/logs/"
+timeout_seconds = 0
+
+[noop]
+block = ["apt-get", "apt", "yum", "dnf", "brew", "pacman", "yay"]
+
+[git]
+strip_sections = ["credential", "core.hooksPath"]
+overrides      = { "push.default" = "nothing" }
