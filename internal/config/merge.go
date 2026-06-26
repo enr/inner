@@ -46,6 +46,11 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("sandbox", "allow") {
 		result.Sandbox.Allow = mergeUnique(base.Sandbox.Allow, overlay.Sandbox.Allow)
 	}
+	// [sandbox.limits]: merge field-by-field so a child profile can override
+	// individual sub-fields without resetting the ones it does not mention.
+	if meta.IsDefined("sandbox", "limits") {
+		result.Sandbox.Limits = mergeResourceLimits(base.Sandbox.Limits, overlay.Sandbox.Limits, meta)
+	}
 
 	// --- capabilities ---
 	if meta.IsDefined("capabilities") {
@@ -191,7 +196,45 @@ func mergeGlobalConfig(base, local *GlobalConfig) *GlobalConfig {
 		}
 		result.Aliases = merged
 	}
+	// DefaultLimits: merge field-by-field so a project config can override
+	// individual sub-fields without wiping limits set in the user config.
+	if local.DefaultLimits != nil {
+		if result.DefaultLimits == nil {
+			result.DefaultLimits = &ResourceLimits{}
+		}
+		if local.DefaultLimits.Memory != "" {
+			result.DefaultLimits.Memory = local.DefaultLimits.Memory
+		}
+		if local.DefaultLimits.CPU != "" {
+			result.DefaultLimits.CPU = local.DefaultLimits.CPU
+		}
+		if local.DefaultLimits.Pids > 0 {
+			result.DefaultLimits.Pids = local.DefaultLimits.Pids
+		}
+	}
 	return &result
+}
+
+// mergeResourceLimits merges overlay [sandbox.limits] sub-fields on top of
+// base, respecting TOML metadata so that only explicitly-defined keys win.
+func mergeResourceLimits(base, overlay *ResourceLimits, meta toml.MetaData) *ResourceLimits {
+	result := &ResourceLimits{}
+	if base != nil {
+		*result = *base
+	}
+	if overlay == nil {
+		return result
+	}
+	if meta.IsDefined("sandbox", "limits", "memory") {
+		result.Memory = overlay.Memory
+	}
+	if meta.IsDefined("sandbox", "limits", "cpu") {
+		result.CPU = overlay.CPU
+	}
+	if meta.IsDefined("sandbox", "limits", "pids") {
+		result.Pids = overlay.Pids
+	}
+	return result
 }
 
 // mergeUnique appends items from b to a, skipping duplicates. Order is preserved.

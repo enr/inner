@@ -48,6 +48,10 @@ type RunConfig struct {
 	// Experimental is true when the profile is marked experimental = true.
 	// inner run refuses to start when this is set.
 	Experimental bool
+	// Limits are the effective resource caps for this run, resolved from the
+	// priority chain: CLI flag > profile [sandbox.limits] > GlobalConfig
+	// [default_limits] > auto-detection. A zero-value field means no cap.
+	Limits ResourceLimits
 	// WorkspacesPath is the host directory used to pre-create workspace dirs.
 	WorkspacesPath string
 	// WorkspaceDests are the resolved mount dest paths that were produced by

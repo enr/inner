@@ -1714,3 +1714,169 @@ func TestLegacyWarnings_legacyConfigFound(t *testing.T) {
 		t.Errorf("warning should mention 'NOT loaded', got: %s", warnings[0])
 	}
 }
+
+// ── Resource limit resolution tests ───────────────────────────────────────────
+
+func TestResolveResourceLimits_autoFallback(t *testing.T) {
+	// With no global config and no profile limits, we get auto-detected values.
+	g := &GlobalConfig{}
+	p := &Profile{}
+	got := resolveResourceLimits(g, p)
+	auto := AutoLimits()
+	if got.Memory != auto.Memory {
+		t.Errorf("Memory = %q, want auto %q", got.Memory, auto.Memory)
+	}
+	if got.CPU != auto.CPU {
+		t.Errorf("CPU = %q, want auto %q", got.CPU, auto.CPU)
+	}
+	if got.Pids != auto.Pids {
+		t.Errorf("Pids = %d, want auto %d", got.Pids, auto.Pids)
+	}
+}
+
+func TestResolveResourceLimits_globalOverridesAuto(t *testing.T) {
+	g := &GlobalConfig{DefaultLimits: &ResourceLimits{Memory: "1G", CPU: "100%", Pids: 128}}
+	p := &Profile{}
+	got := resolveResourceLimits(g, p)
+	if got.Memory != "1G" {
+		t.Errorf("Memory = %q, want 1G", got.Memory)
+	}
+	if got.CPU != "100%" {
+		t.Errorf("CPU = %q, want 100%%", got.CPU)
+	}
+	if got.Pids != 128 {
+		t.Errorf("Pids = %d, want 128", got.Pids)
+	}
+}
+
+func TestResolveResourceLimits_globalPartialOverride(t *testing.T) {
+	// Only memory is set in global; CPU and Pids fall back to auto.
+	g := &GlobalConfig{DefaultLimits: &ResourceLimits{Memory: "3G"}}
+	p := &Profile{}
+	got := resolveResourceLimits(g, p)
+	auto := AutoLimits()
+	if got.Memory != "3G" {
+		t.Errorf("Memory = %q, want 3G", got.Memory)
+	}
+	if got.CPU != auto.CPU {
+		t.Errorf("CPU = %q, want auto %q", got.CPU, auto.CPU)
+	}
+	if got.Pids != auto.Pids {
+		t.Errorf("Pids = %d, want auto %d", got.Pids, auto.Pids)
+	}
+}
+
+func TestResolveResourceLimits_profileOverridesGlobal(t *testing.T) {
+	g := &GlobalConfig{DefaultLimits: &ResourceLimits{Memory: "2G", CPU: "200%", Pids: 256}}
+	p := &Profile{Sandbox: SandboxConfig{Limits: &ResourceLimits{Memory: "512M", Pids: 64}}}
+	got := resolveResourceLimits(g, p)
+	if got.Memory != "512M" {
+		t.Errorf("Memory = %q, want 512M (profile override)", got.Memory)
+	}
+	if got.CPU != "200%" {
+		t.Errorf("CPU = %q, want 200%% (from global, not in profile)", got.CPU)
+	}
+	if got.Pids != 64 {
+		t.Errorf("Pids = %d, want 64 (profile override)", got.Pids)
+	}
+}
+
+func TestMergeGlobalConfig_defaultLimits(t *testing.T) {
+	base := &GlobalConfig{DefaultLimits: &ResourceLimits{Memory: "2G", CPU: "100%", Pids: 256}}
+	local := &GlobalConfig{DefaultLimits: &ResourceLimits{Memory: "4G"}} // only memory
+	got := mergeGlobalConfig(base, local)
+	if got.DefaultLimits == nil {
+		t.Fatal("DefaultLimits is nil after merge")
+	}
+	if got.DefaultLimits.Memory != "4G" {
+		t.Errorf("Memory = %q, want 4G (local override)", got.DefaultLimits.Memory)
+	}
+	if got.DefaultLimits.CPU != "100%" {
+		t.Errorf("CPU = %q, want 100%% (preserved from base)", got.DefaultLimits.CPU)
+	}
+	if got.DefaultLimits.Pids != 256 {
+		t.Errorf("Pids = %d, want 256 (preserved from base)", got.DefaultLimits.Pids)
+	}
+}
+
+func TestMergeGlobalConfig_defaultLimits_nil_base(t *testing.T) {
+	base := &GlobalConfig{}
+	local := &GlobalConfig{DefaultLimits: &ResourceLimits{Memory: "1G"}}
+	got := mergeGlobalConfig(base, local)
+	if got.DefaultLimits == nil {
+		t.Fatal("DefaultLimits is nil after merge")
+	}
+	if got.DefaultLimits.Memory != "1G" {
+		t.Errorf("Memory = %q, want 1G", got.DefaultLimits.Memory)
+	}
+}
+
+func TestResolveResourceLimits_fromTOML(t *testing.T) {
+	// Full integration: write a global config with [default_limits] to disk,
+	// load it, and verify the resolved limits match.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	writeFile(t, cfgPath, `
+[default_limits]
+memory = "2G"
+cpu    = "150%"
+pids   = 300
+`)
+	profileDir := filepath.Join(dir, "profiles")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(profileDir, "test.toml"), `
+name = "test"
+[entrypoint]
+cmd = "/bin/sh"
+interactive = true
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("test")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if rc.Limits.Memory != "2G" {
+		t.Errorf("Limits.Memory = %q, want 2G", rc.Limits.Memory)
+	}
+	if rc.Limits.CPU != "150%" {
+		t.Errorf("Limits.CPU = %q, want 150%%", rc.Limits.CPU)
+	}
+	if rc.Limits.Pids != 300 {
+		t.Errorf("Limits.Pids = %d, want 300", rc.Limits.Pids)
+	}
+}
+
+func TestResolveResourceLimits_profileTOMLOverridesGlobal(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "config.toml"), `
+[default_limits]
+memory = "4G"
+cpu    = "200%"
+pids   = 512
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "tight.toml"), `
+name = "tight"
+[entrypoint]
+cmd = "/bin/sh"
+interactive = true
+[sandbox.limits]
+memory = "512M"
+pids   = 64
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("tight")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if rc.Limits.Memory != "512M" {
+		t.Errorf("Memory = %q, want 512M (profile override)", rc.Limits.Memory)
+	}
+	if rc.Limits.CPU != "200%" {
+		t.Errorf("CPU = %q, want 200%% (global, not in profile)", rc.Limits.CPU)
+	}
+	if rc.Limits.Pids != 64 {
+		t.Errorf("Pids = %d, want 64 (profile override)", rc.Limits.Pids)
+	}
+}

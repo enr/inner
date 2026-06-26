@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/enr/inner/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +24,8 @@ func (a *App) newConfigCmd() *cobra.Command {
 
 // ── Business logic (testable) ─────────────────────────────────────────────────
 
-// configShow writes all config sections (user + project) to w.
+// configShow writes all config sections (user + project) to w, followed by
+// the resolved (effective) resource limits derived from the merged config.
 func (a *App) configShow(w io.Writer) error {
 	globalPath := a.loader.GlobalConfigPath()
 	if err := showConfigSection(w, "Global", globalPath); err != nil {
@@ -31,6 +33,8 @@ func (a *App) configShow(w io.Writer) error {
 	}
 
 	if a.loader.WorkDir == "" {
+		fmt.Fprintln(w)
+		showResolvedLimits(w, a.loader)
 		return nil
 	}
 
@@ -43,20 +47,61 @@ func (a *App) configShow(w io.Writer) error {
 				return err
 			}
 		}
-		return nil
+	} else {
+		for _, path := range projectFiles {
+			fmt.Fprintln(w)
+			label := "Local"
+			if rel, err := filepath.Rel(a.loader.WorkDir, path); err == nil {
+				label = "Local: " + rel
+			}
+			if err := showConfigSection(w, label, path); err != nil {
+				return err
+			}
+		}
 	}
 
-	for _, path := range projectFiles {
-		fmt.Fprintln(w)
-		label := "Local"
-		if rel, err := filepath.Rel(a.loader.WorkDir, path); err == nil {
-			label = "Local: " + rel
-		}
-		if err := showConfigSection(w, label, path); err != nil {
-			return err
-		}
-	}
+	fmt.Fprintln(w)
+	showResolvedLimits(w, a.loader)
 	return nil
+}
+
+// showResolvedLimits prints the effective resource limits derived from the
+// merged global+project config (before profile and CLI-flag overrides).
+func showResolvedLimits(w io.Writer, loader *config.Loader) {
+	// Use a synthetic empty profile so we see only global-config defaults.
+	emptyProfile := &config.Profile{}
+	g, err := loader.LoadEffectiveGlobal()
+	if err != nil {
+		fmt.Fprintf(w, "# Resolved limits: (error loading config: %v)\n", err)
+		return
+	}
+	limits := config.ResolveResourceLimits(g, emptyProfile)
+	auto := config.AutoLimits()
+
+	fmt.Fprintln(w, "# Resolved default limits (global+project config, before profile/CLI override):")
+	printLimitLine(w, "memory", limits.Memory, auto.Memory)
+	printLimitLine(w, "cpu   ", limits.CPU, auto.CPU)
+	if limits.Pids > 0 {
+		marker := ""
+		if limits.Pids == auto.Pids {
+			marker = "  # (auto-detected)"
+		}
+		fmt.Fprintf(w, "#   pids:   %d%s\n", limits.Pids, marker)
+	} else {
+		fmt.Fprintln(w, "#   pids:   (none)")
+	}
+}
+
+func printLimitLine(w io.Writer, label, value, autoValue string) {
+	if value == "" {
+		fmt.Fprintf(w, "#   %s: (none)\n", label)
+		return
+	}
+	marker := ""
+	if value == autoValue {
+		marker = "  # (auto-detected)"
+	}
+	fmt.Fprintf(w, "#   %s: %s%s\n", label, value, marker)
 }
 
 // showConfigSection prints a labelled config file section to w.

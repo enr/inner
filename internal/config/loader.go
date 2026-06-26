@@ -241,10 +241,18 @@ func (l *Loader) LoadLocal() (*GlobalConfig, error) {
 	return result, nil
 }
 
-// loadEffectiveGlobal loads and merges all config sources in precedence order:
+// LoadEffectiveGlobal loads and merges all config sources in precedence order:
 //  1. System config (/etc/inner/config.toml)
 //  2. User config (~/.config/inner/config.toml)
 //  3. Project config files (root → WorkDir traversal, 4 files per directory)
+//
+// Exported so that commands outside this package (e.g. cmd_config.go) can
+// display the resolved settings without building a full RunConfig.
+func (l *Loader) LoadEffectiveGlobal() (*GlobalConfig, error) {
+	return l.loadEffectiveGlobal()
+}
+
+// loadEffectiveGlobal is the unexported implementation used internally.
 func (l *Loader) loadEffectiveGlobal() (*GlobalConfig, error) {
 	cfg := &GlobalConfig{}
 
@@ -600,7 +608,52 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 	}
 	cfg.LogDir = ExpandPath(logDir)
 
+	// Resource limits: resolved from the priority chain
+	// auto-detect < global DefaultLimits < profile [sandbox.limits].
+	// CLI flag overrides happen later in applyOverrides.
+	cfg.Limits = resolveResourceLimits(global, p)
+
 	return cfg, nil
+}
+
+// ResolveResourceLimits builds the effective ResourceLimits for a run.
+// Priority (lowest → highest): auto-detection → GlobalConfig.DefaultLimits
+// → Profile [sandbox.limits]. CLI flags are applied later in applyOverrides.
+// Exported so callers outside the package (e.g. cmd_config.go) can display
+// the resolved limits without executing a run.
+func ResolveResourceLimits(global *GlobalConfig, p *Profile) ResourceLimits {
+	return resolveResourceLimits(global, p)
+}
+
+// resolveResourceLimits is the unexported implementation.
+func resolveResourceLimits(global *GlobalConfig, p *Profile) ResourceLimits {
+	result := AutoLimits()
+
+	if g := global.DefaultLimits; g != nil {
+		if g.Memory != "" {
+			result.Memory = g.Memory
+		}
+		if g.CPU != "" {
+			result.CPU = g.CPU
+		}
+		if g.Pids > 0 {
+			result.Pids = g.Pids
+		}
+	}
+
+	if l := p.Sandbox.Limits; l != nil {
+		if l.Memory != "" {
+			result.Memory = l.Memory
+		}
+		if l.CPU != "" {
+			result.CPU = l.CPU
+		}
+		if l.Pids > 0 {
+			result.Pids = l.Pids
+		}
+	}
+
+	return result
 }
 
 // loadRaw decodes a profile TOML file without resolving extends.

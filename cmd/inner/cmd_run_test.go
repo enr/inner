@@ -757,3 +757,124 @@ func TestPrepareNestedUserNs_missingSeparator(t *testing.T) {
 		t.Fatalf("ExtraFiles = %d, want 0 (cmd must not be mutated on error)", len(cmd.ExtraFiles))
 	}
 }
+
+// ── wrapWithLimits tests ──────────────────────────────────────────────────────
+
+func TestWrapWithLimits_zeroLimits(t *testing.T) {
+	// Zero limits → cmd is returned unchanged.
+	orig := exec.Command("bwrap", "--ro-bind", "/", "/", "--", "/bin/sh")
+	got, err := wrapWithLimits(io.Discard, orig, config.ResourceLimits{}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != orig {
+		t.Error("expected same cmd pointer when limits are zero")
+	}
+}
+
+func TestWrapWithLimits_nestedUserNs_skipsWrapping(t *testing.T) {
+	// nestedUserNs=true → no systemd-run wrapping (warning printed, cmd unchanged).
+	limits := config.ResourceLimits{Memory: "2G", CPU: "200%", Pids: 256}
+	orig := exec.Command("bwrap", "--", "/bin/sh")
+	var buf bytes.Buffer
+	got, err := wrapWithLimits(&buf, orig, limits, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != orig {
+		t.Error("expected same cmd pointer when nestedUserNs is true")
+	}
+	if !strings.Contains(buf.String(), "nested-user-ns") {
+		t.Errorf("expected warning about nested-user-ns, got: %q", buf.String())
+	}
+}
+
+func TestWrapWithLimits_noSystemdRun(t *testing.T) {
+	// systemd-run not in PATH → warning, cmd returned unchanged.
+	origPATH := os.Getenv("PATH")
+	t.Setenv("PATH", t.TempDir()) // empty PATH → systemd-run not found
+	defer os.Setenv("PATH", origPATH)
+
+	limits := config.ResourceLimits{Memory: "2G"}
+	orig := exec.Command("bwrap", "--", "/bin/sh")
+	var buf bytes.Buffer
+	got, err := wrapWithLimits(&buf, orig, limits, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != orig {
+		t.Error("expected same cmd pointer when systemd-run is absent")
+	}
+	if !strings.Contains(buf.String(), "systemd-run not found") {
+		t.Errorf("expected warning about systemd-run, got: %q", buf.String())
+	}
+}
+
+func TestWrapWithLimits_wrapsCorrectly(t *testing.T) {
+	// Simulate an active systemd user session.
+	orig := systemdUserSessionAvailableFn
+	systemdUserSessionAvailableFn = func() bool { return true }
+	t.Cleanup(func() { systemdUserSessionAvailableFn = orig })
+
+	// Create a fake systemd-run in a temp dir.
+	fakeDir := t.TempDir()
+	fakeBin := filepath.Join(fakeDir, "systemd-run")
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/sh\nexec \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+":"+os.Getenv("PATH"))
+
+	limits := config.ResourceLimits{Memory: "4G", CPU: "200%", Pids: 512}
+	bwrapArgs := []string{"bwrap", "--ro-bind", "/", "/", "--", "/bin/sh"}
+	bwrapCmd := exec.Command(bwrapArgs[0], bwrapArgs[1:]...)
+
+	got, err := wrapWithLimits(io.Discard, bwrapCmd, limits, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == bwrapCmd {
+		t.Fatal("expected a new wrapped cmd")
+	}
+	args := got.Args
+	if !strings.HasSuffix(args[0], "systemd-run") {
+		t.Errorf("args[0] = %q, want systemd-run", args[0])
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"--user",
+		"--scope",
+		"--property=MemoryMax=4G",
+		"--property=CPUQuota=200%",
+		"--property=TasksMax=512",
+		"-- bwrap",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args missing %q in: %s", want, joined)
+		}
+	}
+}
+
+func TestWrapWithLimits_cpuNormalization(t *testing.T) {
+	// "2.0" cores should become "200%" in the systemd-run arg.
+	orig := systemdUserSessionAvailableFn
+	systemdUserSessionAvailableFn = func() bool { return true }
+	t.Cleanup(func() { systemdUserSessionAvailableFn = orig })
+
+	fakeDir := t.TempDir()
+	fakeBin := filepath.Join(fakeDir, "systemd-run")
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+":"+os.Getenv("PATH"))
+
+	limits := config.ResourceLimits{CPU: "2.0"}
+	bwrapCmd := exec.Command("bwrap", "--", "/bin/sh")
+	got, err := wrapWithLimits(io.Discard, bwrapCmd, limits, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(got.Args, " ")
+	if !strings.Contains(joined, "CPUQuota=200%") {
+		t.Errorf("expected CPUQuota=200%%, got args: %s", joined)
+	}
+}

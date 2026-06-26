@@ -49,6 +49,10 @@ type runCLIFlags struct {
 	timeout       int
 	dryRun        bool
 	yes           bool
+	// Resource limit overrides (highest priority in the resolution chain).
+	limitMemory string // e.g. "4G", "512M"
+	limitCPU    string // e.g. "200%" or "2.0" (cores)
+	limitPids   int    // max processes; 0 = no override
 }
 
 // ── Business logic ────────────────────────────────────────────────────────────
@@ -269,11 +273,25 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	//     so we can call newuidmap from outside to give bwrap's namespace the full
 	//     subuid range before execution starts.
 	var postStart func() error
-	if slices.Contains(rc.Allow, "nested-user-ns") {
+	nestedUserNs := slices.Contains(rc.Allow, "nested-user-ns")
+	if nestedUserNs {
 		postStart, err = prepareNestedUserNs(cmd)
 		if err != nil {
 			return fmt.Errorf("preparing nested user namespace: %w", err)
 		}
+	}
+
+	// 13b. Wrap the bwrap command in a systemd-run scope for resource limits.
+	//      Must happen AFTER prepareNestedUserNs: that function inserts
+	//      bwrap-specific flags by scanning for "--" in cmd.Args and wires
+	//      ExtraFiles (fds 3,4). If we wrapped before, the "--" search would
+	//      match the systemd-run/bwrap separator instead. We also skip wrapping
+	//      when nested-user-ns is active because systemd-run closes non-standard
+	//      fds (O_CLOEXEC semantics) before exec'ing bwrap, which would sever
+	//      the block/info pipe pair that prepareNestedUserNs set up.
+	cmd, err = wrapWithLimits(w, cmd, rc.Limits, nestedUserNs)
+	if err != nil {
+		return fmt.Errorf("resource limits: %w", err)
 	}
 
 	// 14. Dry-run: print profile, effective config, and sandbox command.
@@ -379,6 +397,17 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 	// --yes: skip interactive confirmation prompts.
 	if flags.yes {
 		rc.AutoConfirm = true
+	}
+
+	// Resource limit CLI overrides (highest priority).
+	if flags.limitMemory != "" {
+		rc.Limits.Memory = flags.limitMemory
+	}
+	if flags.limitCPU != "" {
+		rc.Limits.CPU = flags.limitCPU
+	}
+	if flags.limitPids > 0 {
+		rc.Limits.Pids = flags.limitPids
 	}
 
 	// Workdir (-w PATH) → mount at the same path rw.
@@ -570,6 +599,28 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 		fmt.Fprintln(w)
 	}
 
+	fmt.Fprintln(w, "resource limits:")
+	if rc.Limits.Memory != "" {
+		fmt.Fprintf(w, "  memory: %s\n", rc.Limits.Memory)
+	} else {
+		fmt.Fprintln(w, "  memory: (none)")
+	}
+	if rc.Limits.CPU != "" {
+		if q, err := config.NormalizeCPUQuota(rc.Limits.CPU); err == nil && q != "" {
+			fmt.Fprintf(w, "  cpu:    %s (systemd CPUQuota)\n", q)
+		} else {
+			fmt.Fprintf(w, "  cpu:    %s\n", rc.Limits.CPU)
+		}
+	} else {
+		fmt.Fprintln(w, "  cpu:    (none)")
+	}
+	if rc.Limits.Pids > 0 {
+		fmt.Fprintf(w, "  pids:   %d\n", rc.Limits.Pids)
+	} else {
+		fmt.Fprintln(w, "  pids:   (none)")
+	}
+	fmt.Fprintln(w)
+
 	fmt.Fprintln(w, "bwrap command:")
 	fmt.Fprintf(w, "  %s\n", strings.Join(cmdArgs, " "))
 }
@@ -709,6 +760,85 @@ func readSubIDRange(path string, id int) (start, count int, err error) {
 	return 0, 0, fmt.Errorf("no entry for %q in %s", idStr, path)
 }
 
+// ── Resource limits ───────────────────────────────────────────────────────────
+
+// wrapWithLimits wraps cmd inside a `systemd-run --user --scope` invocation
+// when any resource limit is set and systemd-run is available on the host.
+// Returns cmd unchanged when:
+//   - all limits are zero (nothing to enforce),
+//   - systemd-run is not found (warning printed to w), or
+//   - nestedUserNs is true — wrapping would sever the block/info pipe pair
+//     wired by prepareNestedUserNs, because systemd-run closes non-standard
+//     fds before exec'ing the command.
+func wrapWithLimits(w io.Writer, cmd *exec.Cmd, limits config.ResourceLimits, nestedUserNs bool) (*exec.Cmd, error) {
+	if limits.IsZero() {
+		return cmd, nil
+	}
+	if nestedUserNs {
+		fmt.Fprintf(w, "%s: resource limits are not applied when nested-user-ns is active (systemd-run cannot safely pass through the userns pipe fds)\n", colorizeW(w, ansiBoldYellow, "warning"))
+		return cmd, nil
+	}
+
+	sdPath, err := exec.LookPath("systemd-run")
+	if err != nil {
+		fmt.Fprintf(w, "%s: resource limits requested but systemd-run not found — limits will not be enforced\n", colorizeW(w, ansiBoldYellow, "warning"))
+		return cmd, nil
+	}
+	if !systemdUserSessionAvailableFn() {
+		fmt.Fprintf(w, "%s: resource limits requested but no systemd user session found — limits will not be enforced\n", colorizeW(w, ansiBoldYellow, "warning"))
+		return cmd, nil
+	}
+
+	var args []string
+	args = append(args, "--user", "--scope")
+
+	if limits.Memory != "" {
+		args = append(args, "--property=MemoryMax="+limits.Memory)
+	}
+	if limits.CPU != "" {
+		quota, err := config.NormalizeCPUQuota(limits.CPU)
+		if err != nil {
+			return nil, err
+		}
+		if quota != "" {
+			args = append(args, "--property=CPUQuota="+quota)
+		}
+	}
+	if limits.Pids > 0 {
+		args = append(args, fmt.Sprintf("--property=TasksMax=%d", limits.Pids))
+	}
+
+	args = append(args, "--")
+	args = append(args, cmd.Args...)
+
+	wrapped := exec.Command(sdPath, args...)
+	wrapped.Env = cmd.Env
+	wrapped.Dir = cmd.Dir
+	// ExtraFiles intentionally NOT copied: no extra fds are present at this
+	// point (nested-user-ns is handled above), and systemd-run in --scope
+	// mode may close non-standard fds before exec'ing its child.
+	return wrapped, nil
+}
+
+// systemdUserSessionAvailableFn is the function used by wrapWithLimits to
+// check whether a systemd user session is active. It is a variable so tests
+// can override it to simulate presence or absence of a session without needing
+// a real D-Bus socket.
+var systemdUserSessionAvailableFn = defaultSystemdUserSessionAvailable
+
+// defaultSystemdUserSessionAvailable is the real implementation: it checks for
+// the D-Bus socket that systemd-logind creates under XDG_RUNTIME_DIR (or the
+// default /run/user/<uid> path). Without an active session, `systemd-run
+// --user --scope` fails immediately with "Failed to connect to bus".
+func defaultSystemdUserSessionAvailable() bool {
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		runtimeDir = fmt.Sprintf("/run/user/%d", os.Getuid())
+	}
+	_, err := os.Stat(filepath.Join(runtimeDir, "bus"))
+	return err == nil
+}
+
 // ── Cobra wiring (thin) ───────────────────────────────────────────────────────
 
 func (a *App) newRunCmd() *cobra.Command {
@@ -743,6 +873,9 @@ to the entrypoint command.`,
 	cmd.Flags().IntVar(&flags.timeout, "timeout", 0, "Timeout in seconds (0 = none)")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Print the sandbox command without executing it")
 	cmd.Flags().BoolVarP(&flags.yes, "yes", "y", false, "Skip interactive confirmation prompts (e.g. keyring unlock)")
+	cmd.Flags().StringVar(&flags.limitMemory, "limit-memory", "", "Override memory limit (e.g. \"4G\", \"512M\")")
+	cmd.Flags().StringVar(&flags.limitCPU, "limit-cpu", "", "Override CPU limit (e.g. \"200%\" or \"2.0\" cores)")
+	cmd.Flags().IntVar(&flags.limitPids, "limit-pids", 0, "Override max process count (0 = no override)")
 
 	_ = cmd.RegisterFlagCompletionFunc("profile", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault

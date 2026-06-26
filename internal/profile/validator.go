@@ -10,6 +10,42 @@ import (
 	"github.com/enr/inner/internal/config"
 )
 
+// validateLimits checks the syntax of [sandbox.limits] fields.
+// Memory must be a positive integer followed by M or G (e.g. "512M", "4G").
+// CPU must be parseable by NormalizeCPUQuota.
+// Pids must be positive.
+func validateLimits(r *Result, l *config.ResourceLimits) {
+	if l == nil {
+		return
+	}
+	if l.Memory != "" {
+		m := strings.ToUpper(strings.TrimSpace(l.Memory))
+		var num string
+		if strings.HasSuffix(m, "G") {
+			num = m[:len(m)-1]
+		} else if strings.HasSuffix(m, "M") {
+			num = m[:len(m)-1]
+		} else {
+			r.addError(fmt.Sprintf("[sandbox.limits] memory %q must end with M or G (e.g. \"512M\", \"4G\")", l.Memory))
+			num = ""
+		}
+		if num != "" {
+			var n int
+			if _, err := fmt.Sscanf(num, "%d", &n); err != nil || n <= 0 {
+				r.addError(fmt.Sprintf("[sandbox.limits] memory %q: numeric part must be a positive integer", l.Memory))
+			}
+		}
+	}
+	if l.CPU != "" {
+		if _, err := config.NormalizeCPUQuota(l.CPU); err != nil {
+			r.addError(fmt.Sprintf("[sandbox.limits] cpu: %v", err))
+		}
+	}
+	if l.Pids < 0 {
+		r.addError(fmt.Sprintf("[sandbox.limits] pids %d must be a non-negative integer (0 = unset)", l.Pids))
+	}
+}
+
 // Level indicates the severity of a validation issue.
 type Level string
 
@@ -128,6 +164,9 @@ func Validate(p *config.Profile, workDir string) Result {
 	if !p.Entrypoint.Interactive && p.Output.TimeoutSeconds == 0 {
 		r.addWarning("entrypoint is non-interactive but no timeout is set (agent may run indefinitely)")
 	}
+
+	// 5b. Validate [sandbox.limits] syntax.
+	validateLimits(&r, p.Sandbox.Limits)
 
 	// 6. Validate capabilities (step 1g).
 	//    Build the set of expanded mount dests for conflict detection.

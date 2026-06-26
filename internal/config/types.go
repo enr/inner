@@ -52,6 +52,27 @@ var CapabilityHostDirs = map[string][]string{
 	"cursor": {"~/.cursor", "~/.config/cursor"},
 }
 
+// ResourceLimits constrains CPU, memory and process count for the sandbox.
+// Empty string / 0 means "not set" (inherit from a lower-priority source or
+// fall back to auto-detection). Fields use string for memory and cpu to allow
+// unit suffixes; pids is an integer for clarity.
+//
+// Accepted formats:
+//   Memory: "512M", "4G", "1024M" — passed to systemd MemoryMax
+//   CPU:    "200%" or "2.0"       — cores as a float or a systemd-style
+//                                   percentage; normalised to "N%" before use
+//   Pids:   positive integer      — max processes+threads; maps to TasksMax
+type ResourceLimits struct {
+	Memory string `toml:"memory"`
+	CPU    string `toml:"cpu"`
+	Pids   int    `toml:"pids"`
+}
+
+// IsZero reports whether all limit fields are unset.
+func (r ResourceLimits) IsZero() bool {
+	return r.Memory == "" && r.CPU == "" && r.Pids == 0
+}
+
 // SandboxConfig controls high-level sandbox capabilities.
 type SandboxConfig struct {
 	Network   bool `toml:"network"`
@@ -73,6 +94,9 @@ type SandboxConfig struct {
 	// Allow lists sensitive resources that are normally hidden but explicitly
 	// permitted in this sandbox. Valid keys are listed in ValidAllowKeys.
 	Allow []string `toml:"allow"`
+	// Limits sets per-run resource caps for this profile. Fields left empty
+	// fall back to GlobalConfig.DefaultLimits, then auto-detection.
+	Limits *ResourceLimits `toml:"limits"`
 }
 
 // NoopConfig controls command shimming inside the sandbox.
@@ -182,4 +206,9 @@ type GlobalConfig struct {
 	// directories are pre-created before running bwrap. Required when any
 	// profile mount uses the ${workspaces_path} token in its dest field.
 	WorkspacesPath string `toml:"workspaces_path"`
+	// DefaultLimits provides fallback resource limits applied to every run
+	// unless overridden by a profile's [sandbox.limits] or a CLI flag.
+	// Set in the user config (~/.config/inner/config.toml) for machine-wide
+	// defaults, or in a project config (.config/inner.toml) for per-repo caps.
+	DefaultLimits *ResourceLimits `toml:"default_limits"`
 }
