@@ -106,6 +106,47 @@ func TestConfigShow_noLocalSection_whenWorkDirUnset(t *testing.T) {
 	}
 }
 
+func TestConfigShow_resolvedLimits_autoDetected(t *testing.T) {
+	// With no [default_limits] in config, the resolved block shows
+	// auto-detected values, annotated as such.
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "config.toml"), `log_dir = "/logs"`)
+
+	var buf bytes.Buffer
+	if err := app.configShow(&buf); err != nil {
+		t.Fatalf("configShow: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Resolved default limits") {
+		t.Errorf("expected resolved limits block, got: %s", out)
+	}
+	if !strings.Contains(out, "(auto-detected)") {
+		t.Errorf("expected auto-detected annotation, got: %s", out)
+	}
+}
+
+func TestConfigShow_resolvedLimits_fromConfig(t *testing.T) {
+	// Explicit [default_limits] values appear without the auto-detected marker.
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "config.toml"), `
+[default_limits]
+memory = "3G"
+cpu    = "150%"
+pids   = 99
+`)
+
+	var buf bytes.Buffer
+	if err := app.configShow(&buf); err != nil {
+		t.Fatalf("configShow: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"memory: 3G", "cpu   : 150%", "pids:   99"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in resolved limits, got: %s", want, out)
+		}
+	}
+}
+
 // ── configEdit ────────────────────────────────────────────────────────────────
 
 func TestConfigEdit_globalCreatesFileIfMissing(t *testing.T) {

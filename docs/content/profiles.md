@@ -199,6 +199,7 @@ Controls top-level sandbox behavior.
 | `clipboard` | bool | `false` | Forward clipboard (requires display server) |
 | `pid_namespace` | bool | `true` | Give the sandbox a private PID namespace (`--unshare-pid`). See below. |
 | `allow` | list | `[]` | Explicitly permit sensitive resources (see below) |
+| `limits` | table | auto-detected | CPU / memory / process-count caps for the run (see [`[sandbox.limits]`](#sandbox-limits-resource-limits)) |
 
 ### `pid_namespace` — process isolation
 
@@ -254,6 +255,83 @@ The two socket entries are distinct because they point to different paths: `dock
 network = true
 allow = ["ssh-keys", "git-credentials"]
 ```
+
+### `[sandbox.limits]` — resource limits {#sandbox-limits-resource-limits}
+
+Cap the CPU, memory, and process count available to the sandbox so that a
+runaway agent (an infinite loop, a fork bomb, a memory leak) cannot saturate
+your machine. Limits are enforced with a cgroup v2 scope via
+`systemd-run --user --scope` — no root and no daemon configuration required.
+
+```toml
+[sandbox.limits]
+memory = "4G"     # MemoryMax: hard memory cap
+cpu    = "200%"   # CPUQuota: 200% = 2 full cores
+pids   = 512      # TasksMax: max processes + threads
+```
+
+| Key | Type | Format | Maps to |
+|-----|------|--------|---------|
+| `memory` | string | positive integer + `M` or `G` (`"512M"`, `"4G"`) | systemd `MemoryMax` |
+| `cpu` | string | systemd percentage (`"200%"`) **or** decimal cores (`"2.0"` → `200%`) | systemd `CPUQuota` |
+| `pids` | int | positive integer | systemd `TasksMax` |
+
+Any field you omit falls back to the next source in the [resolution
+chain](#resource-limit-resolution). A field set to `0` / `""` counts as
+"not set" and inherits; it does not mean "unlimited".
+
+#### Resolution chain {#resource-limit-resolution}
+
+The effective limit for each field (`memory`, `cpu`, `pids` are resolved
+independently) is taken from the highest-priority source that sets it:
+
+| Priority | Source | Where |
+|----------|--------|-------|
+| 1 (highest) | CLI flag | `--limit-memory`, `--limit-cpu`, `--limit-pids` |
+| 2 | Profile | `[sandbox.limits]` in the profile TOML |
+| 3 | Project config | `[default_limits]` in `.config/inner.toml` |
+| 4 | User config | `[default_limits]` in `~/.config/inner/config.toml` |
+| 5 (lowest) | Auto-detection | derived from host resources (see below) |
+
+Because each field resolves independently, a profile that only sets `memory`
+still inherits `cpu` and `pids` from your global `[default_limits]` (or from
+auto-detection).
+
+#### Auto-detection
+
+When no source sets a field, `inner` derives a sensible default from the host:
+
+| Field | Rule |
+|-------|------|
+| `memory` | **half** of total RAM (from `/proc/meminfo`), clamped to **[512M, 8G]**. Falls back to `2G` if `/proc/meminfo` is unavailable. |
+| `cpu` | **50%** of logical CPUs (`runtime.NumCPU` × 50%), minimum `100%` (one full core). |
+| `pids` | `512` (fixed conservative default). |
+
+Examples of the memory rule: 8 GB RAM → `4G`; 16 GB → `8G` (capped);
+4 GB → `2G`; 1 GB → `512M` (floor).
+
+#### When limits are not applied
+
+`inner` degrades gracefully and prints a warning (the run still proceeds
+**without** limits) when:
+
+- `systemd-run` is not installed, or
+- there is no active systemd user session (no D-Bus socket under
+  `$XDG_RUNTIME_DIR`), e.g. some minimal containers and CI runners, or
+- the profile uses `allow = ["nested-user-ns"]` — wrapping in `systemd-run`
+  would sever the user-namespace setup pipe, so limits are skipped for those
+  profiles.
+
+#### Inspecting the effective limits
+
+The resolved limits are shown in both `--dry-run` and `inner config show`:
+
+```bash
+inner run -p claude-interactive --dry-run   # see the limits for this exact run
+inner config show                           # see the resolved global+project defaults
+```
+
+See the `inner config show` command reference for the output format.
 
 ---
 

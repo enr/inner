@@ -38,6 +38,9 @@ inner run [flags] [-- extra-args]
 | `--arg` | `-a` | string | — | Append an argument to the entrypoint command. Repeatable. |
 | `--args-file` | | path | — | Read the file and append its entire content as a single entrypoint argument. |
 | `--timeout` | | int | `0` | Timeout in seconds (`0` = no timeout) |
+| `--limit-memory` | | string | resolved (see profiles) | Override the memory cap (`"512M"`, `"4G"`). Highest-priority source in the [resource-limit chain](profiles.md#sandbox-limits-resource-limits). |
+| `--limit-cpu` | | string | resolved (see profiles) | Override the CPU cap (`"200%"` or `"2.0"` cores). |
+| `--limit-pids` | | int | resolved (see profiles) | Override the max process count (`0` = no override, keep the resolved value). |
 | `--dry-run` | | bool | false | Print the resolved config and `bwrap` command without executing |
 
 ### Extra arguments
@@ -99,6 +102,9 @@ inner run -p claude-one-shot --entrypoint /usr/bin/gemini --arg "explain this co
 # Run a one-shot shell command in a sandbox
 inner run -p shell-oneshot --arg "ls -la ~/project"
 
+# Cap resources for a single run (overrides profile/config defaults)
+inner run -p claude-one-shot --limit-memory 2G --limit-cpu 100% --limit-pids 256
+
 # Preview the resolved config and bwrap command without running
 inner run -p claude-interactive --dry-run
 
@@ -121,9 +127,19 @@ interactive: true
 network:     true
 ...
 
+resource limits:
+  memory: 4G
+  cpu:    200% (systemd CPUQuota)
+  pids:   512
+
 bwrap command:
   bwrap --ro-bind / / ...
 ```
+
+The `resource limits` block shows the **effective** caps for this exact run
+(after the full resolution chain and any `--limit-*` flags). See
+[`[sandbox.limits]`](profiles.md#sandbox-limits-resource-limits) for how the
+values are resolved and auto-detected.
 
 ---
 
@@ -550,9 +566,20 @@ default_profile = "shell"
 
 # Local: /home/alice/projects/myapp/.config/inner.toml
 default_profile = "claude-interactive"
+
+# Resolved default limits (global+project config, before profile/CLI override):
+#   memory: 4G
+#   cpu   : 200%
+#   pids:   512  # (auto-detected)
 ```
 
 When a file is absent a placeholder is shown instead of an error.
+
+The trailing **Resolved default limits** block shows the effective resource
+caps derived from the merged global + project config, *before* any profile
+`[sandbox.limits]` or `--limit-*` flag is applied. Values that come from
+[auto-detection](profiles.md#sandbox-limits-resource-limits) (rather than an
+explicit `[default_limits]` entry) are annotated `# (auto-detected)`.
 
 ### `inner config edit`
 
@@ -578,6 +605,24 @@ inner config edit --local   # opens .config/inner.toml in the current directory
 | `default_profile` | `"default"` | Profile used when `-p` is not specified |
 | `log_dir` | `~/.config/inner/logs/` | Directory where run logs are written |
 | `workspaces_path` | — | Host directory where workspace mount-point directories are pre-created. Required when a profile mount uses `${workspaces_path}` in its `dest` field. Local config overrides global. |
+| `[default_limits]` | auto-detected | Fallback resource limits (`memory`, `cpu`, `pids`) applied to every run unless a profile or `--limit-*` flag overrides them. Project config overrides user config, field by field. See [`[sandbox.limits]`](profiles.md#sandbox-limits-resource-limits). |
+
+**Default resource limits** can be set machine-wide (user config) or
+per-repository (project config):
+
+```toml
+# ~/.config/inner/config.toml  — applies to every project
+[default_limits]
+memory = "4G"
+cpu    = "200%"
+pids   = 512
+```
+
+```toml
+# /my-project/.config/inner.toml  — tighter caps for this repo only
+[default_limits]
+memory = "2G"     # only memory is overridden; cpu and pids keep the user-config values
+```
 
 **Tip:** commit `.config/inner.toml` to a project repository to give all contributors a consistent default profile without touching their personal `~/.config/inner/config.toml`. Use `.config/inner.local.toml` (gitignored) for personal overrides like credentials.
 

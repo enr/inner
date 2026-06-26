@@ -161,6 +161,14 @@ func globalConfigTemplate() string {
 # Directory where run logs are stored.
 # log_dir = "~/.config/inner/logs/"
 
+# Default resource limits applied to every run (a profile's [sandbox.limits]
+# or a --limit-* flag overrides these per run). Any field left unset is
+# auto-detected from host resources.
+# [default_limits]
+# memory = "4G"     # MemoryMax: positive integer + M or G
+# cpu    = "200%"   # CPUQuota: "200%" (2 cores) or a decimal like "2.0"
+# pids   = 512      # TasksMax: max processes + threads
+
 # Aliases expand a short name to a full inner command.
 # Example: "inner review" → "inner run --profile code-review"
 # [aliases]
@@ -177,6 +185,11 @@ func localConfigTemplate() string {
 
 # Profile used by default in this project when -p is not specified.
 # default_profile = "my-project-profile"
+
+# Per-project resource limits (override the user config field by field).
+# [default_limits]
+# memory = "2G"
+# pids   = 256
 
 # Aliases expand a short name to a full inner command (project overrides global).
 # [aliases]
