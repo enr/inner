@@ -86,6 +86,9 @@ func TestCheck_usrReadonly_fail_when_writable(t *testing.T) {
 }
 
 func TestCheck_usrReadonly_pass_when_readonly(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses filesystem permission bits; test requires non-root user")
+	}
 	ch, _ := newChecker(t)
 	roDir := t.TempDir()
 	if err := os.Chmod(roDir, 0o555); err != nil {
