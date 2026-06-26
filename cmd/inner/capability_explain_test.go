@@ -71,6 +71,41 @@ func TestGeminiExplain_mountIsGeminiHome(t *testing.T) {
 	}
 }
 
+func TestOpencodeExplain_hasTwoMounts(t *testing.T) {
+	e := opencodeExplain()
+	if len(e.Mounts) != 2 {
+		t.Errorf("opencodeExplain().Mounts: want 2 entries, got %d", len(e.Mounts))
+	}
+}
+
+func TestOpencodeExplain_hasConfigMount(t *testing.T) {
+	e := opencodeExplain()
+	found := false
+	for _, m := range e.Mounts {
+		if m.Src == "~/.config/opencode" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("opencodeExplain().Mounts has no entry with Src=~/.config/opencode")
+	}
+}
+
+func TestOpencodeExplain_hasDataMount(t *testing.T) {
+	e := opencodeExplain()
+	found := false
+	for _, m := range e.Mounts {
+		if m.Src == "~/.local/share/opencode" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("opencodeExplain().Mounts has no entry with Src=~/.local/share/opencode")
+	}
+}
+
 func TestCursorExplain_hasTwoMounts(t *testing.T) {
 	e := cursorExplain()
 	if len(e.Mounts) != 2 {

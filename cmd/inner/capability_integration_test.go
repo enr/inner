@@ -252,6 +252,112 @@ cmd = "cursor-agent"
 	}
 }
 
+// TestPipeline_OpencodeProfile_HasBothOpencodeMounts verifies that both
+// ~/.config/opencode and ~/.local/share/opencode are sandboxed by the pipeline,
+// with the user config and auth token copied into throwaway temp dirs.
+func TestPipeline_OpencodeProfile_HasBothOpencodeMounts(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	t.Setenv("XDG_CONFIG_HOME", "") // fall back to ~/.config
+	t.Setenv("XDG_DATA_HOME", "")   // fall back to ~/.local/share
+
+	cfgDir := filepath.Join(fakeHome, ".config", "opencode")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(`{"theme":"dark"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir := filepath.Join(fakeHome, ".local", "share", "opencode")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "auth.json"), []byte(`{"anthropic":{"type":"oauth"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A stale session must NOT leak into the sandbox.
+	if err := os.MkdirAll(filepath.Join(dataDir, "storage", "session"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "storage", "session", "old.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "opencode.toml"), `
+schema_version = "1"
+name           = "opencode"
+capabilities   = ["opencode"]
+
+[entrypoint]
+cmd = "opencode"
+`)
+
+	rc, cleanup := buildRCAndApply(t, app, "opencode")
+	defer cleanup()
+
+	mCfg := findMount(rc, cfgDir)
+	if mCfg == nil {
+		t.Fatalf("expected mount with Dest=%s; mounts: %v", cfgDir, rc.Mounts)
+	}
+	if mCfg.Src == cfgDir {
+		t.Error("~/.config/opencode mount Src should be a sandboxed tmp path")
+	}
+	if _, err := os.Stat(filepath.Join(mCfg.Src, "config.json")); err != nil {
+		t.Error("config.json not found in sandboxed ~/.config/opencode")
+	}
+
+	mData := findMount(rc, dataDir)
+	if mData == nil {
+		t.Fatalf("expected mount with Dest=%s; mounts: %v", dataDir, rc.Mounts)
+	}
+	if mData.Src == dataDir {
+		t.Error("~/.local/share/opencode mount Src should be a sandboxed tmp path")
+	}
+	// auth.json must be copied.
+	if _, err := os.Stat(filepath.Join(mData.Src, "auth.json")); err != nil {
+		t.Error("auth.json not found in sandboxed ~/.local/share/opencode")
+	}
+	// storage/ must exist but be empty — no session cross-contamination.
+	entries, _ := os.ReadDir(filepath.Join(mData.Src, "storage"))
+	if len(entries) != 0 {
+		t.Errorf("storage/ should be empty in sandbox, got %d entries", len(entries))
+	}
+}
+
+// TestPipeline_OpencodeProfile_NoAuthStillSucceeds verifies that a missing
+// auth.json is not fatal: OpenCode also supports env-var provider keys, so the
+// pipeline must still produce both mounts.
+func TestPipeline_OpencodeProfile_NoAuthStillSucceeds(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+
+	// Neither dir has any files; data dir doesn't even exist yet.
+	cfgDir := filepath.Join(fakeHome, ".config", "opencode")
+	dataDir := filepath.Join(fakeHome, ".local", "share", "opencode")
+
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "opencode.toml"), `
+schema_version = "1"
+name           = "opencode"
+capabilities   = ["opencode"]
+
+[entrypoint]
+cmd = "opencode"
+`)
+
+	rc, cleanup := buildRCAndApply(t, app, "opencode")
+	defer cleanup()
+
+	if findMount(rc, cfgDir) == nil {
+		t.Errorf("expected mount with Dest=%s even without auth.json; mounts: %v", cfgDir, rc.Mounts)
+	}
+	if findMount(rc, dataDir) == nil {
+		t.Errorf("expected mount with Dest=%s even without auth.json; mounts: %v", dataDir, rc.Mounts)
+	}
+}
+
 // ── applyCapabilities direct tests ────────────────────────────────────────────
 
 // TestApplyCapabilities_noopForIrrelevantMounts verifies that a RunConfig

@@ -2,6 +2,12 @@ schema_version = "1"
 name        = "opencode"
 description = "Interactive OpenCode agent (network enabled)"
 
+# The "opencode" capability sandboxes ~/.config/opencode and
+# ~/.local/share/opencode at runtime: it copies the user config and auth token
+# into throwaway temp dirs and leaves sessions, logs and storage fresh, so the
+# sandboxed agent cannot read or corrupt previous runs.
+capabilities = ["opencode"]
+
 [sandbox]
 network   = true
 clipboard = false
@@ -11,10 +17,6 @@ clipboard = false
 # OpenCode's Node.js runtime would otherwise find and connect to them,
 # which can cause blocking calls that hang startup.
 "/run/user/$UID" = { dest = "/run/user/$UID", mode = "tmpfs" }
-
-# OpenCode persistent data (auth, sessions, config)
-"~/.config/opencode"  = { dest = "~/.config/opencode",  mode = "rw" }
-"~/.local/share/opencode" = { dest = "~/.local/share/opencode", mode = "rw" }
 
 [env]
 clearenv = true

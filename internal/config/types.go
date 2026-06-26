@@ -41,15 +41,16 @@ var ValidAllowKeys = []string{
 
 // ValidCapabilities is the exhaustive set of named capabilities accepted in
 // the profile capabilities field.
-var ValidCapabilities = []string{"claude", "gemini", "cursor"}
+var ValidCapabilities = []string{"claude", "gemini", "cursor", "opencode"}
 
 // CapabilityHostDirs maps each capability name to the host directories it
 // sandboxes at runtime. Used by the validator to detect missing directories
 // and conflicts with explicit profile mounts.
 var CapabilityHostDirs = map[string][]string{
-	"claude": {"~/.claude"},
-	"gemini": {"~/.gemini"},
-	"cursor": {"~/.cursor", "~/.config/cursor"},
+	"claude":   {"~/.claude"},
+	"gemini":   {"~/.gemini"},
+	"cursor":   {"~/.cursor", "~/.config/cursor"},
+	"opencode": {"~/.config/opencode", "~/.local/share/opencode"},
 }
 
 // ResourceLimits constrains CPU, memory and process count for the sandbox.
@@ -58,10 +59,11 @@ var CapabilityHostDirs = map[string][]string{
 // unit suffixes; pids is an integer for clarity.
 //
 // Accepted formats:
-//   Memory: "512M", "4G", "1024M" — passed to systemd MemoryMax
-//   CPU:    "200%" or "2.0"       — cores as a float or a systemd-style
-//                                   percentage; normalised to "N%" before use
-//   Pids:   positive integer      — max processes+threads; maps to TasksMax
+//
+//	Memory: "512M", "4G", "1024M" — passed to systemd MemoryMax
+//	CPU:    "200%" or "2.0"       — cores as a float or a systemd-style
+//	                                percentage; normalised to "N%" before use
+//	Pids:   positive integer      — max processes+threads; maps to TasksMax
 type ResourceLimits struct {
 	Memory string `toml:"memory"`
 	CPU    string `toml:"cpu"`

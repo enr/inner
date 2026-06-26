@@ -20,9 +20,10 @@ type Capability struct {
 // capabilities = [...]) to their handler. The validator guarantees that only
 // names present here reach Apply, so the map look-up never needs a guard.
 var capabilityRegistry = map[string]Capability{
-	"claude": {Apply: applyClaude, Explain: claudeExplain},
-	"gemini": {Apply: applyGemini, Explain: geminiExplain},
-	"cursor": {Apply: applyCursor, Explain: cursorExplain},
+	"claude":   {Apply: applyClaude, Explain: claudeExplain},
+	"gemini":   {Apply: applyGemini, Explain: geminiExplain},
+	"cursor":   {Apply: applyCursor, Explain: cursorExplain},
+	"opencode": {Apply: applyOpencode, Explain: opencodeExplain},
 }
 
 // CapabilityMount describes a single filesystem mount injected by a capability.
@@ -83,6 +84,30 @@ func geminiExplain() CapabilityExplain {
 				Mode:   "rw",
 				Detail: "copies: settings.json; auth via GEMINI_API_KEY env var",
 			},
+		},
+	}
+}
+
+// opencodeExplain returns the static description of what the "opencode"
+// capability injects at runtime.
+func opencodeExplain() CapabilityExplain {
+	return CapabilityExplain{
+		Mounts: []CapabilityMount{
+			{
+				Src:    "~/.config/opencode",
+				Dest:   "~/.config/opencode",
+				Mode:   "rw",
+				Detail: "copies: config.json, opencode.json, themes/; fresh: everything else",
+			},
+			{
+				Src:    "~/.local/share/opencode",
+				Dest:   "~/.local/share/opencode",
+				Mode:   "rw",
+				Detail: "copies: auth.json (provider credentials, best-effort); fresh: storage/, log/, project/, snapshot/",
+			},
+		},
+		Notes: []string{
+			"OpenCode also supports API-key auth via provider environment variables; a missing auth.json is not an error.",
 		},
 	}
 }

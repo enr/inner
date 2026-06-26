@@ -56,6 +56,7 @@ Additional profiles are available in the [`contrib/profiles/`](https://github.co
 | `claude-containers` | Claude Code agent with Podman rootless support | Podman |
 | `java-maven` | Interactive shell with Java + Maven + Podman | `shell-containers` |
 | `gradle-java` | Interactive shell with Java + Gradle + Podman | `shell-containers` |
+| `opencode` | Interactive OpenCode agent, network enabled | OpenCode |
 
 Install a contrib profile (name is derived from the URL automatically):
 
@@ -649,6 +650,7 @@ capabilities = ["claude"]
 | `claude` | `~/.claude` (sanitized clone) and `~/.claude.json` (copy, if present). Runs `claude auth status` on the host before copying credentials to unlock the OS credential store and refresh any expired OAuth token. |
 | `gemini` | `~/.gemini` (sanitized clone with `settings.json` only) |
 | `cursor` | `~/.cursor` (sanitized clone) and `~/.config/cursor` (sanitized clone) |
+| `opencode` | `~/.config/opencode` (sanitized clone with config only) and `~/.local/share/opencode` (sanitized clone with `auth.json` only) |
 
 Capabilities compose with `extends`: if a base profile declares `capabilities = ["claude"]` every child profile inherits it automatically (union merge, no duplicates).
 
@@ -780,6 +782,76 @@ inner run -p gemini-interactive
 - The agent **cannot read** previous sessions or history from the host.
 - Any data the agent writes **disappears** when the sandbox exits.
 - The host `~/.gemini` stays **pristine** regardless of what the agent does.
+
+---
+
+## OpenCode sandbox (`~/.config/opencode`, `~/.local/share/opencode`)
+
+The `opencode` profile activates the `opencode` capability:
+
+```toml
+capabilities = ["opencode"]
+```
+
+OpenCode splits its state across two XDG directories: configuration lives in
+`~/.config/opencode`, while the auth token and per-session data (storage, logs,
+project state) live in `~/.local/share/opencode`. Like `claude` and `cursor`,
+`inner` **creates a sanitized temporary clone** of each at runtime and binds the
+clones into the sandbox. The real directories are never mounted.
+
+> The sandbox profile does not inherit `XDG_CONFIG_HOME` / `XDG_DATA_HOME`, so
+> inside the sandbox OpenCode always resolves to the default `~/.config/opencode`
+> and `~/.local/share/opencode` paths — matching the mount destinations.
+
+### Authentication
+
+OpenCode stores provider credentials in `~/.local/share/opencode/auth.json`,
+which is copied into the clone **best-effort**. A missing `auth.json` is not an
+error: OpenCode also supports API-key auth via provider environment variables
+(e.g. `ANTHROPIC_API_KEY`), which you can pass through with `env.inherit`.
+
+### What the clones contain
+
+`~/.config/opencode`:
+
+| Path | Source | Why |
+|------|--------|-----|
+| `config.json`, `opencode.json` | copied from `~/.config/opencode` | Optional — user configuration |
+| `themes/` | copied from `~/.config/opencode` | Optional — custom themes |
+| (everything else) | empty | Fresh state for this run |
+
+`~/.local/share/opencode`:
+
+| Path | Source | Why |
+|------|--------|-----|
+| `auth.json` | copied from `~/.local/share/opencode` | Best-effort — provider credentials |
+| `storage/`, `log/`, `project/`, `snapshot/` | created empty | Fresh state for this run |
+
+### Lifecycle
+
+```
+inner run -p opencode
+  └─ applyOpencode()
+       ├─ prepareOpencodeConfig()
+       │    ├─ create /tmp/inner-opencode-config-XXXXXX/
+       │    └─ copy config.json, opencode.json, themes/  (if present)
+       └─ prepareOpencodeData()
+            ├─ create /tmp/inner-opencode-data-XXXXXX/
+            ├─ copy auth.json  (if present)
+            └─ mkdir storage/ log/ project/ snapshot/  (empty)
+  └─ mount /tmp/inner-opencode-config-XXXXXX -> ~/.config/opencode     inside sandbox
+  └─ mount /tmp/inner-opencode-data-XXXXXX   -> ~/.local/share/opencode inside sandbox
+  └─ [agent runs, writes sessions/logs/storage to the clone]
+  └─ sandbox exits -> rm -rf both temp dirs
+     ~/.config/opencode and ~/.local/share/opencode on the host are untouched
+```
+
+### Consequences
+
+- The agent **can authenticate** (via `auth.json` or a provider API-key env var).
+- The agent **cannot read** previous sessions, logs, or project state from the host.
+- Any session data the agent writes **disappears** when the sandbox exits.
+- The host OpenCode directories stay **pristine** regardless of what the agent does.
 
 ---
 

@@ -62,6 +62,7 @@ func TestCapabilityRegistry_explainMatchesExplainFunctions(t *testing.T) {
 		{"claude", 2},
 		{"gemini", 1},
 		{"cursor", 2},
+		{"opencode", 2},
 	}
 	for _, tc := range cases {
 		cap, ok := capabilityRegistry[tc.name]
