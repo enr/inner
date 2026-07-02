@@ -153,6 +153,8 @@ warning; con `INNER_JDK` esportata non stampa nulla.
 
 ## T4 — `[env] inherit`: non inoltrare come stringa vuota le variabili assenti sull'host
 
+**Stato: fatto** (`internal/isolator/bwrap.go`, `internal/isolator/bwrap_test.go`).
+
 **Tipo:** bugfix · **Size:** XS
 
 **Comportamento attuale.** `internal/isolator/bwrap.go:226-228`:

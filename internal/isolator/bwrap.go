@@ -222,9 +222,15 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// host env inheritance (leaks secrets — use sparingly).
 	if !cfg.Env.InheritAll {
 		args = append(args, "--clearenv")
-		// Explicitly forward each whitelisted variable from the host.
+		// Explicitly forward each whitelisted variable from the host. Skip
+		// variables that are unset on the host rather than forwarding an
+		// empty string: with --clearenv the sandbox already treats them as
+		// unset, and some tools (e.g. build toolchains checking JAVA_HOME)
+		// distinguish "unset" from "set but empty".
 		for _, key := range cfg.Env.Inherit {
-			args = append(args, "--setenv", key, os.Getenv(key))
+			if val, ok := os.LookupEnv(key); ok {
+				args = append(args, "--setenv", key, val)
+			}
 		}
 	}
 	// Explicitly set variables override whatever was inherited.

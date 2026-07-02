@@ -349,6 +349,38 @@ func TestBuild_inheritEnv(t *testing.T) {
 	}
 }
 
+func TestBuild_inheritEnv_unsetOnHost_omitted(t *testing.T) {
+	os.Unsetenv("INNER_TEST_UNSET_KEY")
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Env: config.EnvConfig{
+			Clear:   true,
+			Inherit: []string{"INNER_TEST_UNSET_KEY"},
+		},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--setenv" && args[i+1] == "INNER_TEST_UNSET_KEY" {
+			t.Errorf("expected no --setenv for unset host variable, got %v", args)
+		}
+	}
+}
+
+func TestBuild_inheritEnv_setButEmptyOnHost_forwarded(t *testing.T) {
+	t.Setenv("INNER_TEST_EMPTY_KEY", "")
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Env: config.EnvConfig{
+			Clear:   true,
+			Inherit: []string{"INNER_TEST_EMPTY_KEY"},
+		},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if !hasSeq(args, "--setenv", "INNER_TEST_EMPTY_KEY", "") {
+		t.Errorf("expected --setenv INNER_TEST_EMPTY_KEY \"\", got %v", args)
+	}
+}
+
 func TestBuild_setEnv(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{
