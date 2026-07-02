@@ -232,6 +232,40 @@ func TestApplyOverrides_envFlag(t *testing.T) {
 	}
 }
 
+func TestApplyOverrides_envFlag_expandsHostVar(t *testing.T) {
+	t.Setenv("INNER_TEST_VAR", "/opt/jdk/jdk-21")
+	rc := &config.RunConfig{}
+	if err := applyOverrides(rc, runCLIFlags{env: []string{"JAVA_HOME=${INNER_TEST_VAR}"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if rc.Env.Set["JAVA_HOME"] != "/opt/jdk/jdk-21" {
+		t.Errorf("Env.Set[JAVA_HOME] = %q, want /opt/jdk/jdk-21", rc.Env.Set["JAVA_HOME"])
+	}
+}
+
+func TestApplyOverrides_envFlag_plainValueUnchanged(t *testing.T) {
+	rc := &config.RunConfig{}
+	if err := applyOverrides(rc, runCLIFlags{env: []string{"X=plain-value"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if rc.Env.Set["X"] != "plain-value" {
+		t.Errorf("Env.Set[X] = %q, want plain-value", rc.Env.Set["X"])
+	}
+}
+
+func TestApplyOverrides_envFlag_expandsTilde(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	rc := &config.RunConfig{}
+	if err := applyOverrides(rc, runCLIFlags{env: []string{"X=~/dir"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(homeDir, "dir")
+	if rc.Env.Set["X"] != want {
+		t.Errorf("Env.Set[X] = %q, want %q", rc.Env.Set["X"], want)
+	}
+}
+
 func TestApplyOverrides_prompt(t *testing.T) {
 	// --prompt is deprecated but must still work for backward compatibility.
 	rc := &config.RunConfig{}

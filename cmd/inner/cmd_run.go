@@ -436,7 +436,8 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 		rc.Mounts = append(rc.Mounts, mount)
 	}
 
-	// Env overrides (-e KEY=VAL).
+	// Env overrides (-e KEY=VAL). Values are expanded the same way as
+	// profile [env] set values (~, $VAR, ${VAR}, $UID) for consistency.
 	for _, e := range flags.env {
 		k, v, err := parseEnvVar(e)
 		if err != nil {
@@ -445,7 +446,7 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 		if rc.Env.Set == nil {
 			rc.Env.Set = make(map[string]string)
 		}
-		rc.Env.Set[k] = v
+		rc.Env.Set[k] = config.ExpandPath(v)
 	}
 
 	// --entrypoint → replace cmd and reset profile args (same semantics as docker --entrypoint).
@@ -863,7 +864,7 @@ to the entrypoint command.`,
 	cmd.Flags().BoolVarP(&flags.interactive, "interactive", "i", false, "Force interactive mode")
 	cmd.Flags().BoolVar(&flags.noInteractive, "no-interactive", false, "Force non-interactive mode")
 	cmd.Flags().StringArrayVarP(&flags.mounts, "mount", "m", nil, "Additional mount: SRC:DEST[:MODE]")
-	cmd.Flags().StringArrayVarP(&flags.env, "env", "e", nil, "Set env variable: KEY=VAL")
+	cmd.Flags().StringArrayVarP(&flags.env, "env", "e", nil, "Set env variable: KEY=VAL (~, $VAR and ${VAR} are expanded against the host environment)")
 	cmd.Flags().StringVar(&flags.entrypoint, "entrypoint", "", "Override entrypoint command (resets profile args, like docker --entrypoint)")
 	cmd.Flags().StringArrayVarP(&flags.args, "arg", "a", nil, "Append argument to entrypoint (repeatable)")
 	cmd.Flags().StringVar(&flags.argsFile, "args-file", "", "Read file and append its content as a single entrypoint argument")

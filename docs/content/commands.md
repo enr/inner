@@ -33,7 +33,7 @@ inner run [flags] [-- extra-args]
 | `--interactive` | `-i` | bool | profile default | Force interactive mode (connect stdin/stdout directly to the sandbox) |
 | `--no-interactive` | | bool | — | Force non-interactive mode |
 | `--mount` | `-m` | string | — | Additional mount in `SRC:DEST[:MODE]` format (mode: `ro`\|`rw`). Repeatable. |
-| `--env` | `-e` | string | — | Set an environment variable as `KEY=VAL`. Repeatable. |
+| `--env` | `-e` | string | — | Set an environment variable as `KEY=VAL`. `~`, `$VAR` and `${VAR}` in VAL are expanded against the host environment (same rules as profile `[env] set` values). Repeatable. |
 | `--entrypoint` | | string | — | Override the entrypoint command (resets profile args, like `docker --entrypoint`). |
 | `--arg` | `-a` | string | — | Append an argument to the entrypoint command. Repeatable. |
 | `--args-file` | | path | — | Read the file and append its entire content as a single entrypoint argument. |

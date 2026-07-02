@@ -79,6 +79,9 @@ né in `set` né in `inherit` → si usa il default hard-coded; interazione con
 
 ## T2 — Espandere le variabili nei valori di `-e/--env` come nei profili
 
+**Stato: fatto** (`cmd/inner/cmd_run.go`, `cmd/inner/cmd_run_test.go`,
+`docs/content/commands.md`).
+
 **Tipo:** fix di coerenza · **Size:** S
 
 **Comportamento attuale.** I valori di `[env] set` nei profili passano per `config.ExpandPath`
