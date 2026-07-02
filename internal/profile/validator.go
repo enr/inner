@@ -140,6 +140,15 @@ func Validate(p *config.Profile, workDir string) Result {
 		}
 	}
 
+	// Build the set of expanded mount dests once; reused below by the [env] set
+	// path check (2d) and by capability conflict detection (step 6).
+	expandedMountDests := make(map[string]bool, len(p.Mounts))
+	for _, entry := range p.Mounts {
+		if entry.Dest != "" {
+			expandedMountDests[config.ExpandPath(entry.Dest)] = true
+		}
+	}
+
 	// 2b. Warn on [env] set values that reference host environment variables
 	// which are not defined on this machine: ExpandPath (loader.go) silently
 	// resolves undefined references to an empty string, which can produce a
@@ -172,6 +181,44 @@ func Validate(p *config.Profile, workDir string) Result {
 		}
 	}
 
+	// 2d. Warn on [env] set values that look like absolute host paths and do
+	// not exist: catches typos and stale pinned-version paths (e.g. a JDK
+	// that was uninstalled) before they surface as an opaque "command not
+	// found" the first time something runs inside the sandbox.
+	//
+	// A value is only checked if, after ExpandPath, it starts with "/" and
+	// contains no ":" — the latter excludes PATH-like multi-entry values and
+	// URL/socket values such as "unix:///run/..." or "https://...", which
+	// always contain a ":" themselves. Values referencing ${workspaces_path}
+	// or ${workdir} in their original (pre-expansion) form are skipped: those
+	// tokens are not resolved by ExpandPath and only apply to mount fields,
+	// so checking them here would either false-positive or check the wrong
+	// path. Values matching an explicit mount dest are skipped too: they
+	// exist only inside the sandbox, not on the host running this check.
+	{
+		keys := make([]string, 0, len(p.Env.Set))
+		for k := range p.Env.Set {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			v := p.Env.Set[k]
+			if strings.Contains(v, workspacesPathToken) || strings.Contains(v, workdirToken) {
+				continue
+			}
+			expanded := config.ExpandPath(v)
+			if !strings.HasPrefix(expanded, "/") || strings.Contains(expanded, ":") {
+				continue
+			}
+			if expandedMountDests[expanded] {
+				continue
+			}
+			if _, err := os.Stat(expanded); err != nil && os.IsNotExist(err) {
+				r.addWarning(fmt.Sprintf("[env] set %s=%q: path does not exist on host (expanded: %q)", k, v, expanded))
+			}
+		}
+	}
+
 	// 3. Warn on unknown sandbox.allow keys and dangerous known keys.
 	for _, key := range p.Sandbox.Allow {
 		if !slices.Contains(config.ValidAllowKeys, key) {
@@ -200,14 +247,7 @@ func Validate(p *config.Profile, workDir string) Result {
 	// 5b. Validate [sandbox.limits] syntax.
 	validateLimits(&r, p.Sandbox.Limits)
 
-	// 6. Validate capabilities (step 1g).
-	//    Build the set of expanded mount dests for conflict detection.
-	expandedMountDests := make(map[string]bool, len(p.Mounts))
-	for _, entry := range p.Mounts {
-		if entry.Dest != "" {
-			expandedMountDests[config.ExpandPath(entry.Dest)] = true
-		}
-	}
+	// 6. Validate capabilities (step 1g). Reuses expandedMountDests built above.
 	for _, cap := range p.Capabilities {
 		if !slices.Contains(config.ValidCapabilities, cap) {
 			r.addError(fmt.Sprintf("unknown capability %q (valid values: %v)", cap, config.ValidCapabilities))

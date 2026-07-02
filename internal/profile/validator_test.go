@@ -509,7 +509,10 @@ func TestValidate_envSetUndefinedHostVar_warns(t *testing.T) {
 }
 
 func TestValidate_envSetDefinedHostVar_noWarning(t *testing.T) {
-	t.Setenv("INNER_TEST_VALIDATOR_DEFINED", "/opt/jdk/jdk-21")
+	// Use a path that actually exists so this test only exercises the
+	// "undefined host variable" check (T3), not the "path does not exist"
+	// check (T5) — those are covered by their own dedicated tests.
+	t.Setenv("INNER_TEST_VALIDATOR_DEFINED", t.TempDir())
 	p := &config.Profile{
 		Env: config.EnvConfig{
 			Set: map[string]string{"JAVA_HOME": "${INNER_TEST_VALIDATOR_DEFINED}"},
@@ -576,5 +579,113 @@ func TestValidate_pathPrepend_emptyEntry_isError(t *testing.T) {
 	r := Validate(p, "")
 	if !r.HasErrors() {
 		t.Error("expected error for empty path_prepend entry")
+	}
+}
+
+func TestValidate_envSetPath_missingAbsolutePath_warns(t *testing.T) {
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			Set: map[string]string{"JAVA_HOME": "/opt/jdk/jdk-99"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	found := false
+	for _, i := range r.Issues {
+		if i.Level == LevelWarning && strings.Contains(i.Message, "JAVA_HOME") && strings.Contains(i.Message, "/opt/jdk/jdk-99") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning for missing JAVA_HOME path, got: %v", r.Issues)
+	}
+	if r.HasErrors() {
+		t.Errorf("missing [env] set path should be a warning, not an error, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_envSetPath_existingAbsolutePath_noWarning(t *testing.T) {
+	dir := t.TempDir()
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			Set: map[string]string{"JAVA_HOME": dir},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "JAVA_HOME") {
+			t.Errorf("unexpected issue for existing [env] set path: %s", i.Message)
+		}
+	}
+}
+
+func TestValidate_envSetPath_unixSocketURL_noWarning(t *testing.T) {
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			Set: map[string]string{"DOCKER_HOST": "unix:///run/user/1000/podman/podman.sock"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "DOCKER_HOST") {
+			t.Errorf("unexpected issue for unix:// socket value: %s", i.Message)
+		}
+	}
+}
+
+func TestValidate_envSetPath_pathLikeValue_noWarning(t *testing.T) {
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			Set: map[string]string{"MY_PATH": "/nonexistent/a:/nonexistent/b"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "MY_PATH") {
+			t.Errorf("unexpected issue for PATH-like value with ':': %s", i.Message)
+		}
+	}
+}
+
+func TestValidate_envSetPath_matchesMountDest_noWarning(t *testing.T) {
+	src := t.TempDir()
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			src: {Dest: "/workspace", Mode: "rw"},
+		},
+		Env: config.EnvConfig{
+			Set: map[string]string{"APP_HOME": "/workspace"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "APP_HOME") {
+			t.Errorf("unexpected issue for value matching a mount dest: %s", i.Message)
+		}
+	}
+}
+
+func TestValidate_envSetPath_workspacesPathToken_skipped(t *testing.T) {
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			Set: map[string]string{"APP_HOME": "${workspaces_path}/app"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "APP_HOME") {
+			t.Errorf("unexpected issue for ${workspaces_path} token value: %s", i.Message)
+		}
 	}
 }

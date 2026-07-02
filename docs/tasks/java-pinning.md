@@ -214,6 +214,14 @@ for _, key := range cfg.Env.Inherit {
 
 ## T5 — Validator: warning per valori di `[env] set` che sono path assoluti inesistenti
 
+**Stato: fatto** (`internal/profile/validator.go` e relativi test).
+Nota di implementazione: la costruzione di `expandedMountDests` è stata spostata prima
+(subito dopo lo step 2) ed è ora condivisa dal nuovo step 2d e dallo step 6 (capabilities),
+eliminando la duplicazione. Un test preesistente di T3
+(`TestValidate_envSetDefinedHostVar_noWarning`) usava un path fittizio (`/opt/jdk/jdk-21`)
+non presente sulla macchina di test: è stato aggiornato per usare una directory reale
+(`t.TempDir()`), dato che ora quel valore viene correttamente controllato anche da T5.
+
 **Tipo:** feature (validazione) · **Size:** S
 
 **Comportamento attuale.** Il validator (`internal/profile/validator.go`) verifica esistenza
