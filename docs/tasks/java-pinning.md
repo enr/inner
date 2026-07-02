@@ -7,8 +7,9 @@ La root host è già visibile read-only nella sandbox (`--ro-bind / /`, `interna
 quindi i JDK non richiedono mount: il problema è interamente `PATH`/`JAVA_HOME`. I task seguenti
 rimuovono le frizioni individuate nel codice.
 
-Ordine consigliato: **T4 → T2 → T3 → T7 → T1 → T5 → T6** (i primi sono piccoli e indipendenti;
-T6 dipende in parte da T1).
+Ordine consigliato: **T4 → T2 → T3 → T7 → T1 → T5 → T6 → T8 → T9** (i primi sono piccoli e
+indipendenti; T6 dipende in parte da T1; T8 dipende da T6 come modello; T9 integra le doc
+di T6 e T8 e va fatto per ultimo).
 
 ---
 
@@ -300,3 +301,132 @@ il merge è **additivo**: `block` in union, `rewrite` con override per chiave
 
 **Accettazione.** Commento e doc descrivono il comportamento effettivamente implementato in
 `merge.go`; nessun cambiamento di codice eseguibile in questo task.
+
+---
+
+## T8 — Profilo contrib di esempio: Node pinning (`node-22.toml`)
+
+**Tipo:** docs/esempio · **Size:** XS · **Dipendenza:** stesso pattern di T6; usa
+`path_prepend` se T1 è mergiato, altrimenti la variante `${PATH}`.
+
+**Contesto.** Non esiste in `contrib/profiles/` alcun esempio per Node.js, né una guida su
+come fissare una versione precisa quando l'host ha più installazioni Node (es.
+`/opt/node/node-22`, o versioni gestite da nvm/mise sotto `~/.nvm/versions/node/v22.x.x`).
+A differenza di Java, Node introduce due frizioni aggiuntive con il modello della sandbox:
+
+1. `~/.npmrc` è nella lista delle risorse sensibili nascoste di default
+   (`internal/isolator/bwrap.go`, entry `"npmrc"` tra `sensitive`, bind su `/dev/null`).
+   Serve `allow = ["npmrc"]` in `[sandbox]` se il profilo deve autenticarsi su registry privati.
+2. La root è montata `--ro-bind`, quindi `npm install -g` nella posizione di default del
+   pacchetto Node fallisce (permission denied): serve un prefix in area scrivibile.
+
+**Deliverable.** Nuovo file `contrib/profiles/node-22.toml`:
+
+```toml
+schema_version = "1"
+name        = "node-22"
+description = "Node shell pinned to Node 22 (adjust the /opt/node path to your machine)"
+extends     = "shell"
+
+[mounts]
+"~/.npm" = { dest = "~/.npm", mode = "rw" }              # cache di npm
+"~/.npm-global" = { dest = "~/.npm-global", mode = "rw" } # target di `npm install -g`
+
+[env]
+inherit = ["HOME", "USER", "TERM", "LANG", "SHELL"]
+# Con T1 mergiato:
+# path_prepend = ["/opt/node/node-22/bin", "~/.npm-global/bin"]
+# set = { NPM_CONFIG_PREFIX = "~/.npm-global" }
+# Senza T1 (variante attuale — ${PATH} è espanso a load time col PATH dell'host):
+set = { PATH = "/opt/node/node-22/bin:~/.npm-global/bin:${PATH}", NPM_CONFIG_PREFIX = "~/.npm-global" }
+
+[entrypoint]
+history = [
+  "npm install",
+  "npm run dev",
+  "npm test",
+]
+
+[verify.custom]
+checks = [
+  { name = "node resolves to pinned version", cmd = "test \"$(readlink -f \"$(command -v node)\")\" = \"$(readlink -f /opt/node/node-22/bin/node)\"", severity = "critical" },
+  { name = "node major version is 22", cmd = "node --version | grep -q '^v22\\.'", severity = "critical" },
+]
+```
+
+Nel file finale tenere solo UNA delle due varianti `[env]`, secondo lo stato di T1;
+il commento sull'altra va rimosso. Non abilitare `allow = ["npmrc"]` di default: va
+aggiunto solo da chi estende il profilo e ne ha effettivamente bisogno (principio least
+privilege, coerente con gli altri profili contrib).
+
+**Test.** `internal/profile/validator_test.go` (o un test dedicato ai profili contrib, se
+esiste un meccanismo di lint automatico su `contrib/profiles/*.toml`): il profilo deve
+passare `profile.Validate` senza error.
+
+**Doc.** Vedi T9.
+
+**Accettazione.** Su una macchina con `/opt/node/node-22`: `inner run -p node-22` →
+`node --version` riporta `v22.x.x`; `inner verify -p node-22` passa entrambi i check custom;
+`npm install -g <pkg>` funziona e installa in `~/.npm-global`. Il profilo passa
+`inner profile validate`.
+
+---
+
+## T9 — Integrare la documentazione con la guida al multi-runtime pinning
+
+**Tipo:** docs · **Size:** S · **Dipendenza:** dopo T6 e T8 (li referenzia entrambi); se T1
+è mergiato, documentare anche `path_prepend`.
+
+**Contesto.** Con due esempi contrib separati (Java, Node) manca ancora la parte più
+richiesta in pratica: un'app con **più runtime insieme** (es. backend Java 21 + frontend
+Node 22). Comporre due profili esistenti oggi richiede duplicare i contenuti in un terzo
+file, perché `extends` in `internal/config/types.go` (`Profile.Extends string`) accetta un
+solo profilo base, non una lista — questa limitazione va resa esplicita in doc, non
+risolta qui (è materia di un eventuale task successivo su `extends` multiplo/mixin).
+
+**Deliverable.**
+
+1. `docs/content/examples.md`: nuova sezione "Pinning multiple runtimes (Java + Node)" con:
+   - il profilo combinato esplicito (non tramite `extends` multiplo, che non esiste):
+
+     ```toml
+     schema_version = "1"
+     name        = "app-fullstack"
+     description = "JDK 21 backend + Node 22 frontend"
+     extends     = "shell"
+
+     [sandbox]
+     network = true
+
+     [mounts]
+     "~/.m2"         = { dest = "~/.m2",         mode = "rw" }
+     "~/.npm"        = { dest = "~/.npm",        mode = "rw" }
+     "~/.npm-global" = { dest = "~/.npm-global",  mode = "rw" }
+
+     [env]
+     set = {
+       JAVA_HOME = "/opt/jdk/jdk-21",
+       NPM_CONFIG_PREFIX = "~/.npm-global",
+       PATH = "/opt/node/node-22/bin:~/.npm-global/bin:/opt/jdk/jdk-21/bin:${PATH}",
+     }
+     ```
+
+   - nota esplicita: "runtime diversi (Java, Node) non confliggono su PATH — basta
+     anteporre entrambe le `bin/`; un conflitto reale esiste solo tra due versioni dello
+     stesso runtime (es. due JDK), e va risolto a livello di build tool (Maven/Gradle
+     toolchains, `.nvmrc`), non di sandbox."
+   - link ai profili `java-21.toml` (T6) e `node-22.toml` (T8) come building block.
+2. `docs/content/profiles.md`, sezione `[env]`: aggiungere un paragrafo "Combining multiple
+   toolchains" che spiega il limite di `extends` singolo e rimanda a `examples.md` per il
+   pattern del profilo combinato esplicito.
+3. Verificare (grep su `docs/content/`) che non ci siano altri punti che presentano Java o
+   Node come gli unici runtime supportati, e correggerli per coerenza.
+
+**Non incluso in questo task:** implementare `extends` multiplo o una sezione `[runtimes]`
+dichiarativa — sono estensioni possibili ma richiedono un task di design a sé (impatto su
+`merge.go`, rilevamento cicli, e sulla semantica di override); qui ci si limita a
+documentare il pattern che funziona oggi col codice esistente.
+
+**Accettazione.** `docs/content/examples.md` contiene la sezione multi-runtime con un
+profilo copiabile e funzionante; `docs/content/profiles.md` spiega il limite di `extends`
+singolo; nessun cambiamento di codice Go in questo task.
