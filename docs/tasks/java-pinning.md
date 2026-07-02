@@ -348,6 +348,26 @@ il merge è **additivo**: `block` in union, `rewrite` con override per chiave
 
 ## T8 — Profilo contrib di esempio: Node pinning (`node-22.toml`)
 
+**Stato: fatto** (`contrib/profiles/node-22.toml`, `internal/profile/contrib_test.go`).
+Usa `path_prepend` (T1 già mergiato): `["/opt/node/node-22/bin", "~/.npm-global/bin"]`, più
+`NPM_CONFIG_PREFIX = "~/.npm-global"`. `allow = ["npmrc"]` volutamente non abilitato di
+default (least privilege), come da nota nel deliverable.
+
+Aggiunto `internal/profile/contrib_test.go` con un test di regressione permanente
+(`TestContribProfile_node22_validatesCleanly`) che carica il profilo reale da
+`contrib/profiles/node-22.toml`, lo fonde con il profilo built-in `shell`, precrea `~/.npm`
+e `~/.npm-global`, e verifica che `profile.Validate` non produca error (solo warning attesi
+per l'installazione Node non presente sulla macchina di test). Non esisteva alcun
+meccanismo di lint automatico sui profili contrib (verificato con grep prima di procedere,
+come indicato dalla clausola "se esiste" nella sezione Test) — introdotto qui in forma
+minima e mirata, non come framework generico per tutti i profili contrib. Nella stessa
+occasione è stato aggiunto `TestContribProfile_java21_validatesCleanly`, che rende
+permanente la verifica di T6 (in precedenza fatta solo con uno script manuale poi rimosso).
+
+Verificato manualmente anche `RunConfig.Env` dopo `Build`: `NPM_CONFIG_PREFIX` e i due
+elementi di `path_prepend` sono espansi correttamente (`~` risolto), mount mancanti →
+error, installazione Node non presente → warning (mai bloccante).
+
 **Tipo:** docs/esempio · **Size:** XS · **Dipendenza:** stesso pattern di T6; usa
 `path_prepend` se T1 è mergiato, altrimenti la variante `${PATH}`.
 
