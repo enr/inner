@@ -1,0 +1,24 @@
+schema_version = "1"
+name           = "java-21"
+description    = "Interactive shell pinned to JDK 21 (adjust the /opt/jdk path to your machine)"
+extends        = "shell"
+
+[mounts]
+"~/.m2" = { dest = "~/.m2", mode = "rw" }
+
+[env]
+path_prepend = ["/opt/jdk/jdk-21/bin"]
+set          = { JAVA_HOME = "/opt/jdk/jdk-21" }
+
+[entrypoint]
+history = [
+  "java -version",
+  "mvn clean install -DskipTests",
+  "mvn test",
+]
+
+[verify.custom]
+checks = [
+  { name = "java resolves to the pinned JDK", cmd = "test \"$(readlink -f \"$(command -v java)\")\" = \"$(readlink -f /opt/jdk/jdk-21/bin/java)\"", severity = "critical" },
+  { name = "JAVA_HOME matches the pinned JDK", cmd = "test \"$JAVA_HOME\" = /opt/jdk/jdk-21", severity = "high" },
+]

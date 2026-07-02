@@ -56,6 +56,7 @@ Additional profiles are available in the [`contrib/profiles/`](https://github.co
 | `claude-containers` | Claude Code agent with Podman rootless support | Podman |
 | `java-maven` | Interactive shell with Java + Maven + Podman | `shell-containers` |
 | `gradle-java` | Interactive shell with Java + Gradle + Podman | `shell-containers` |
+| `java-21` | Interactive shell pinned to a specific JDK via `path_prepend` (no container runtime) | `shell` |
 | `opencode` | Interactive OpenCode agent, network enabled | OpenCode |
 
 Install a contrib profile (name is derived from the URL automatically):
@@ -72,6 +73,9 @@ inner profile install $BASE/claude-containers.toml
 inner profile install $BASE/shell-containers.toml
 inner profile install $BASE/java-maven.toml
 inner profile install $BASE/gradle-java.toml
+
+# java-21 extends the built-in "shell" profile — no other dependency
+inner profile install $BASE/java-21.toml
 ```
 
 Or use a profile directly without installing it:

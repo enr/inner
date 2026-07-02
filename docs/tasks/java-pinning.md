@@ -259,6 +259,16 @@ stampa il warning; con path esistente non stampa nulla.
 
 ## T6 — Profilo contrib di esempio: JDK pinning (`java-21.toml`)
 
+**Stato: fatto** (`contrib/profiles/java-21.toml`, `docs/content/profiles.md`,
+`docs/content/examples.md`). Usa `path_prepend` (T1 già mergiato). Estende il profilo
+built-in `shell` (non `shell-containers`): non richiede Podman, installabile da sola senza
+altre dipendenze. Verificato manualmente con un loader/validator di prova (rimosso dopo
+l'uso) che: (a) il merge con `shell` produce `Env.Inherit` unito correttamente e
+`Env.PathPrepend`/`Env.Set` espansi come atteso da `toRunConfig`; (b) con `~/.m2` e il JDK
+realmente presenti sull'host, `profile.Validate` non produce alcun issue; (c) con directory
+mancanti produce esattamente i warning/error attesi (error sui mount, warning su
+`path_prepend`/`JAVA_HOME` — mai un errore bloccante per il solo JDK mancante).
+
 **Tipo:** docs/esempio · **Size:** XS · **Dipendenza:** meglio dopo T1 (usa `path_prepend`);
 se T1 non è mergiato, usare la variante `${PATH}` indicata sotto.
 

@@ -188,6 +188,48 @@ inner run -p claude-one-shot \
 
 ---
 
+## Pinning a Specific JDK Version
+
+If the host has multiple JDKs installed side by side (e.g. `/opt/jdk/jdk-21` and `/opt/jdk/jdk-26`), use `[env] path_prepend` to make `java` resolve to one specific installation inside the sandbox, without rewriting the rest of `PATH`:
+
+```toml
+# ~/.config/inner/profiles/java-21.toml
+schema_version = "1"
+name           = "java-21"
+description    = "Java shell pinned to JDK 21"
+extends        = "shell"
+
+[env]
+path_prepend = ["/opt/jdk/jdk-21/bin"]
+set          = { JAVA_HOME = "/opt/jdk/jdk-21" }
+
+[verify.custom]
+checks = [
+  { name = "java resolves to the pinned JDK", cmd = "test \"$(readlink -f \"$(command -v java)\")\" = \"$(readlink -f /opt/jdk/jdk-21/bin/java)\"", severity = "critical" },
+  { name = "JAVA_HOME matches the pinned JDK", cmd = "test \"$JAVA_HOME\" = /opt/jdk/jdk-21", severity = "high" },
+]
+```
+
+```bash
+inner run -p java-21
+# inside the sandbox:
+java -version   # reports 21, regardless of what "java" resolves to on the host
+
+inner verify -p java-21   # confirms both custom checks pass
+```
+
+A ready-to-use version of this profile with a Maven cache mount is available as the `java-21` contrib profile (see [Contrib Profiles](profiles.md#contrib-profiles)).
+
+Switch to a different installed version for a single run without editing the profile, using the `-e`/`--env` flag (values are expanded against the host environment the same way `[env] set` values are):
+
+```bash
+inner run -p java-21 \
+  -e JAVA_HOME=/opt/jdk/jdk-26 \
+  -e "PATH=/opt/jdk/jdk-26/bin:$PATH"
+```
+
+---
+
 ## Dry Run: Inspect the bwrap Command
 
 See exactly what `bwrap` command `inner` would execute, without actually running it:
