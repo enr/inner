@@ -79,6 +79,13 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("env", "inherit") {
 		result.Env.Inherit = mergeUnique(base.Env.Inherit, overlay.Env.Inherit)
 	}
+	if meta.IsDefined("env", "path_prepend") {
+		// Unlike other unioned slices (base first, overlay appended), the
+		// overlay's entries go first: path_prepend controls PATH priority,
+		// and a child profile pinning a toolchain must win PATH resolution
+		// over whatever the base profile already prepended.
+		result.Env.PathPrepend = mergeUnique(overlay.Env.PathPrepend, base.Env.PathPrepend)
+	}
 	if len(overlay.Env.Set) > 0 {
 		merged := make(map[string]string, len(base.Env.Set)+len(overlay.Env.Set))
 		for k, v := range base.Env.Set {

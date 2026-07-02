@@ -1,0 +1,26 @@
+schema_version = "1"
+name           = "node-22"
+description    = "Interactive shell pinned to Node 22 (adjust the /opt/node path to your machine)"
+extends        = "shell"
+
+[mounts]
+"~/.npm"        = { dest = "~/.npm",        mode = "rw" } # npm cache
+"~/.npm-global" = { dest = "~/.npm-global", mode = "rw" } # target of `npm install -g`
+
+[env]
+path_prepend = ["/opt/node/node-22/bin", "~/.npm-global/bin"]
+set          = { NPM_CONFIG_PREFIX = "~/.npm-global" }
+
+[entrypoint]
+history = [
+  "node --version",
+  "npm install",
+  "npm run dev",
+  "npm test",
+]
+
+[verify.custom]
+checks = [
+  { name = "node resolves to the pinned version", cmd = "test \"$(readlink -f \"$(command -v node)\")\" = \"$(readlink -f /opt/node/node-22/bin/node)\"", severity = "critical" },
+  { name = "node major version is 22", cmd = "node --version | grep -q '^v22\\.'", severity = "critical" },
+]

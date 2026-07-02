@@ -104,7 +104,10 @@ type SandboxConfig struct {
 // NoopConfig controls command shimming inside the sandbox.
 // Block replaces a binary with a script that prints an error and exits 1.
 // Rewrite replaces a binary with a script that delegates to another command.
-// A user-declared [noop] section replaces the built-in defaults entirely.
+// There are no built-in noop defaults: shims are generated only from what a
+// profile declares. With extends, Block lists are unioned across the chain
+// and Rewrite maps are merged per key, with the child profile overriding
+// the base on conflicting keys (see merge.go).
 type NoopConfig struct {
 	Block   []string          `toml:"block"`
 	Rewrite map[string]string `toml:"rewrite"`
@@ -150,6 +153,13 @@ type EnvConfig struct {
 	InheritAll bool              `toml:"inherit_all"`
 	Inherit    []string          `toml:"inherit"`
 	Set        map[string]string `toml:"set"`
+	// PathPrepend lists directories to prepend to PATH inside the sandbox,
+	// in the given order (first entry ends up first in PATH, i.e. highest
+	// priority). Use this to pin a specific toolchain (e.g. a JDK under
+	// /opt/jdk/jdk-21/bin) without having to know or repeat the rest of
+	// PATH. Composes with extends: see mergeProfiles for the merge order
+	// (child entries take priority over the base's).
+	PathPrepend []string `toml:"path_prepend"`
 }
 
 // GitConfig describes how the host gitconfig is sanitized before injection.

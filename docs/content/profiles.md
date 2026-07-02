@@ -56,6 +56,7 @@ Additional profiles are available in the [`contrib/profiles/`](https://github.co
 | `claude-containers` | Claude Code agent with Podman rootless support | Podman |
 | `java-maven` | Interactive shell with Java + Maven + Podman | `shell-containers` |
 | `gradle-java` | Interactive shell with Java + Gradle + Podman | `shell-containers` |
+| `java-21` | Interactive shell pinned to a specific JDK via `path_prepend` (no container runtime) | `shell` |
 | `opencode` | Interactive OpenCode agent, network enabled | OpenCode |
 
 Install a contrib profile (name is derived from the URL automatically):
@@ -72,6 +73,9 @@ inner profile install $BASE/claude-containers.toml
 inner profile install $BASE/shell-containers.toml
 inner profile install $BASE/java-maven.toml
 inner profile install $BASE/gradle-java.toml
+
+# java-21 extends the built-in "shell" profile — no other dependency
+inner profile install $BASE/java-21.toml
 ```
 
 Or use a profile directly without installing it:
@@ -134,6 +138,7 @@ extends = "~/my-base.toml"  # explicit file path (~ and absolute paths supported
 |------|-----------|
 | Scalar (`bool`, `string`, `int`) | Child wins only when the key is explicitly present in the child file. A missing key keeps the base value, including `false` booleans. |
 | Slice (`allow`, `capabilities`, `env.inherit`, `noop.block`, `git.strip_sections`) | Union: base items first, then any new items from the child. Duplicates are removed. |
+| Slice (`env.path_prepend`) | Union, but in **reverse** order from the other slices: child items first, then any new items from the base. This makes the child (the more specific profile) win PATH resolution. Duplicates are removed. |
 | Map (`mounts`, `env.set`, `noop.rewrite`, `git.overrides`) | Merge: all base entries kept; child entries added or override matching keys. |
 | `verify.custom.checks` | Append: base checks first, child checks after. |
 
@@ -476,6 +481,7 @@ Controls environment variable inheritance and injection.
 | `inherit_all` | bool | `false` | Inherit the full host environment (opt-in; leaks secrets) |
 | `inherit` | list | `[]` | Variables to pass through from the host |
 | `set` | table | `{}` | Variables to set explicitly in the sandbox |
+| `path_prepend` | list | `[]` | Directories to prepend to `PATH` inside the sandbox, in order (first entry = highest priority) |
 
 ```toml
 [env]
@@ -485,7 +491,32 @@ set      = { "CI" = "true", "LOG_LEVEL" = "debug" }
 
 The host environment is cleared by default. Set `inherit_all = true` to inherit all host variables (not recommended — leaks secrets such as `AWS_*`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK`). Use `inherit` to selectively pass through individual variables.
 
+`inherit` only forwards variables that are actually set on the host; a variable named in `inherit` but unset on the host is left unset inside the sandbox rather than forwarded as an empty string.
+
 > **Note:** the legacy `clearenv` TOML key is accepted for backward compatibility but has no effect; clearing is always the default.
+
+### Values are expanded against the host environment
+
+`set` values and `path_prepend` entries are expanded the same way as mount paths: `~` (leading), `$VAR` / `${VAR}` (resolved against the host process environment), and `$UID` / `${UID}` (always the current numeric UID). A reference to a host variable that is not defined expands to an empty string; `inner profile validate` warns when this happens in `set`. The `-e`/`--env` CLI flag applies the same expansion to its `KEY=VAL` arguments.
+
+### `path_prepend` — pinning a specific toolchain version
+
+Use `path_prepend` to make `java`, `node`, or any other command resolve to one specific installation, without having to know or repeat the rest of `PATH`:
+
+```toml
+[env]
+inherit      = ["HOME", "USER", "TERM", "LANG", "SHELL", "PATH"]
+path_prepend = ["/opt/jdk/jdk-21/bin"]
+set          = { JAVA_HOME = "/opt/jdk/jdk-21" }
+```
+
+`command -v java` inside the sandbox now resolves to `/opt/jdk/jdk-21/bin/java`, while the rest of the inherited `PATH` is preserved after it. `path_prepend` composes with `extends`: a child profile's entries are prepended before the base profile's (see the merge semantics table above), and a `[noop]` shim dir — if the profile uses one — always takes precedence over both.
+
+### Combining multiple toolchains
+
+Different runtimes (Java, Node, …) don't conflict on `PATH`: list multiple directories in `path_prepend` and each command resolves to its own installation — see [Pinning Multiple Runtimes](examples.md#pinning-multiple-runtimes) for a worked Java + Node example. A real conflict only exists between two versions of the *same* runtime, and is a build-tool concern (Maven/Gradle toolchains, `.nvmrc`), not a sandbox one.
+
+`extends` accepts a single base profile name or path (`Profile.Extends` is a `string`, not a list), so there is currently no way to compose two independently pinned-toolchain profiles (e.g. `java-21` and `node-22`) by extending both at once. Combining toolchains today means writing one profile that declares everything it needs directly, using the individual pinned profiles as a reference for what each one requires.
 
 ---
 
