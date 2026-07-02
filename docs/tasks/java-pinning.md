@@ -291,6 +291,11 @@ Il profilo passa `inner profile validate`.
 
 ## T7 — Correggere il commento fuorviante su `[noop]` in `types.go`
 
+**Stato: fatto** (`internal/config/types.go`). Verificato che `docs/content/profiles.md`
+non riportava l'affermazione errata: la tabella di merge (righe 136-137) già descrive
+correttamente `noop.block` come union e `noop.rewrite` come merge per chiave — nessuna
+modifica necessaria lì.
+
 **Tipo:** docs/chore · **Size:** XS
 
 **Comportamento attuale.** `internal/config/types.go:107`:

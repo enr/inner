@@ -104,7 +104,10 @@ type SandboxConfig struct {
 // NoopConfig controls command shimming inside the sandbox.
 // Block replaces a binary with a script that prints an error and exits 1.
 // Rewrite replaces a binary with a script that delegates to another command.
-// A user-declared [noop] section replaces the built-in defaults entirely.
+// There are no built-in noop defaults: shims are generated only from what a
+// profile declares. With extends, Block lists are unioned across the chain
+// and Rewrite maps are merged per key, with the child profile overriding
+// the base on conflicting keys (see merge.go).
 type NoopConfig struct {
 	Block   []string          `toml:"block"`
 	Rewrite map[string]string `toml:"rewrite"`
