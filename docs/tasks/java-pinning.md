@@ -113,6 +113,12 @@ non gestito con escaping.
 
 ## T3 — Validator: warning su riferimenti a variabili host non definite in `[env] set`
 
+**Stato: fatto** (`internal/config/expand.go`, `internal/profile/validator.go` e relativi test).
+Nota di implementazione: `UndefinedVarRefs` non riporta mai `UID`, `workdir` e
+`workspaces_path` — i primi due sono token risolti altrove (non da `os.Getenv`), il terzo
+non è mai sostituito nei valori di `[env] set` oggi, quindi segnalarlo come "variabile host
+non definita" sarebbe fuorviante.
+
 **Tipo:** feature (validazione) · **Size:** S/M
 
 **Comportamento attuale.** `ExpandPath` (`internal/config/expand.go:13`) usa `os.Getenv`

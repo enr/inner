@@ -481,3 +481,46 @@ func TestValidate_knownCapability_dirExists_noIssues(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_envSetUndefinedHostVar_warns(t *testing.T) {
+	os.Unsetenv("INNER_TEST_VALIDATOR_UNDEF")
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			Set: map[string]string{"JAVA_HOME": "${INNER_TEST_VALIDATOR_UNDEF}"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	found := false
+	for _, i := range r.Issues {
+		if i.Level == LevelWarning &&
+			strings.Contains(i.Message, "JAVA_HOME") &&
+			strings.Contains(i.Message, "INNER_TEST_VALIDATOR_UNDEF") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning naming JAVA_HOME and INNER_TEST_VALIDATOR_UNDEF, got: %v", r.Issues)
+	}
+	if r.HasErrors() {
+		t.Errorf("undefined host var in [env] set should be a warning, not an error, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_envSetDefinedHostVar_noWarning(t *testing.T) {
+	t.Setenv("INNER_TEST_VALIDATOR_DEFINED", "/opt/jdk/jdk-21")
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			Set: map[string]string{"JAVA_HOME": "${INNER_TEST_VALIDATOR_DEFINED}"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "JAVA_HOME") {
+			t.Errorf("unexpected issue for defined host var: %s", i.Message)
+		}
+	}
+}

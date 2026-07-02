@@ -140,6 +140,23 @@ func Validate(p *config.Profile, workDir string) Result {
 		}
 	}
 
+	// 2b. Warn on [env] set values that reference host environment variables
+	// which are not defined on this machine: ExpandPath (loader.go) silently
+	// resolves undefined references to an empty string, which can produce a
+	// working-looking but broken value (e.g. JAVA_HOME="").
+	{
+		keys := make([]string, 0, len(p.Env.Set))
+		for k := range p.Env.Set {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			for _, name := range config.UndefinedVarRefs(p.Env.Set[k]) {
+				r.addWarning(fmt.Sprintf("[env] set %s references undefined host variable $%s (expands to empty string)", k, name))
+			}
+		}
+	}
+
 	// 3. Warn on unknown sandbox.allow keys and dangerous known keys.
 	for _, key := range p.Sandbox.Allow {
 		if !slices.Contains(config.ValidAllowKeys, key) {
