@@ -512,6 +512,12 @@ set          = { JAVA_HOME = "/opt/jdk/jdk-21" }
 
 `command -v java` inside the sandbox now resolves to `/opt/jdk/jdk-21/bin/java`, while the rest of the inherited `PATH` is preserved after it. `path_prepend` composes with `extends`: a child profile's entries are prepended before the base profile's (see the merge semantics table above), and a `[noop]` shim dir — if the profile uses one — always takes precedence over both.
 
+### Combining multiple toolchains
+
+Different runtimes (Java, Node, …) don't conflict on `PATH`: list multiple directories in `path_prepend` and each command resolves to its own installation — see [Pinning Multiple Runtimes](examples.md#pinning-multiple-runtimes) for a worked Java + Node example. A real conflict only exists between two versions of the *same* runtime, and is a build-tool concern (Maven/Gradle toolchains, `.nvmrc`), not a sandbox one.
+
+`extends` accepts a single base profile name or path (`Profile.Extends` is a `string`, not a list), so there is currently no way to compose two independently pinned-toolchain profiles (e.g. `java-21` and `node-22`) by extending both at once. Combining toolchains today means writing one profile that declares everything it needs directly, using the individual pinned profiles as a reference for what each one requires.
+
 ---
 
 ## `[git]`

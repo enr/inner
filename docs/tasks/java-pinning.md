@@ -11,6 +11,9 @@ Ordine consigliato: **T4 → T2 → T3 → T7 → T1 → T5 → T6 → T8 → T9
 indipendenti; T6 dipende in parte da T1; T8 dipende da T6 come modello; T9 integra le doc
 di T6 e T8 e va fatto per ultimo).
 
+**Stato: tutti i task (T1–T9) completati.** Vedi le note "Stato: fatto" sotto ogni sezione
+per i file toccati e i dettagli di implementazione/verifica di ciascuno.
+
 ---
 
 ## T1 — `[env] path_prepend`: meccanismo first-class per anteporre directory al PATH della sandbox
@@ -435,6 +438,24 @@ passare `profile.Validate` senza error.
 ---
 
 ## T9 — Integrare la documentazione con la guida al multi-runtime pinning
+
+**Stato: fatto** (`docs/content/examples.md`, `docs/content/profiles.md`).
+Nota di implementazione: l'esempio di profilo combinato usa `path_prepend` (T1 già
+mergiato) invece della concatenazione manuale di `PATH` mostrata nella bozza originale del
+task — dimostra meglio il valore di `path_prepend` proprio nel caso che ne beneficia di
+più (più directory da comporre). Verificato con lo stesso metodo di T6/T8 (loader/validator
+di prova, rimosso dopo l'uso): con `~/.m2`, `~/.npm`, `~/.npm-global` realmente presenti,
+`profile.Validate` produce solo warning attesi (installazioni JDK/Node non presenti sulla
+macchina di verifica), zero error.
+
+Il titolo scelto per la nuova sezione in `examples.md` è "Pinning Multiple Runtimes" (senza
+"(Java + Node)" nel titolo): `hugo`/`goldmark` non sono disponibili in questo ambiente per
+verificare con certezza come vengono generati gli anchor per caratteri come `+` e le
+parentesi, quindi si è preferito un titolo di sole parole per un anchor
+(`#pinning-multiple-runtimes`) inequivocabile sotto qualunque algoritmo di slugging
+ragionevole, usato dal link incrociato aggiunto in `profiles.md`. Punto 3 del deliverable
+(verifica che nessun'altra pagina presenti Java o Node come unico runtime supportato):
+controllato con grep su `docs/content/`, nessun riscontro da correggere.
 
 **Tipo:** docs · **Size:** S · **Dipendenza:** dopo T6 e T8 (li referenzia entrambi); se T1
 è mergiato, documentare anche `path_prepend`.

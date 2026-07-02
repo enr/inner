@@ -230,6 +230,43 @@ inner run -p java-21 \
 
 ---
 
+## Pinning Multiple Runtimes
+
+A full-stack app — a Java backend and a Node frontend — needs both toolchains pinned in the same sandbox. Different runtimes don't conflict on `PATH`: prepend both `bin/` directories and each command (`java`, `node`) resolves to its own installation. A real conflict only exists between **two versions of the same runtime** (e.g. two JDKs for two different backend services); that is a build-tool concern (Maven/Gradle toolchains, `.nvmrc`), not a sandbox one — the sandbox can only pin one `JAVA_HOME` / one `java` on `PATH` per profile.
+
+There is currently no way to `extends` from two base profiles at once (`extends` in a profile TOML takes a single name or path — see [Combining multiple toolchains](profiles.md#combining-multiple-toolchains)), so combining two pinned-toolchain profiles means writing one profile that declares both, rather than composing `java-21` and `node-22` directly:
+
+```toml
+# ~/.config/inner/profiles/app-fullstack.toml
+schema_version = "1"
+name           = "app-fullstack"
+description    = "JDK 21 backend + Node 22 frontend"
+extends        = "shell"
+
+[sandbox]
+network = true
+
+[mounts]
+"~/.m2"         = { dest = "~/.m2",         mode = "rw" }
+"~/.npm"        = { dest = "~/.npm",        mode = "rw" }
+"~/.npm-global" = { dest = "~/.npm-global", mode = "rw" }
+
+[env]
+path_prepend = ["/opt/node/node-22/bin", "~/.npm-global/bin", "/opt/jdk/jdk-21/bin"]
+set          = { JAVA_HOME = "/opt/jdk/jdk-21", NPM_CONFIG_PREFIX = "~/.npm-global" }
+```
+
+```bash
+inner run -p app-fullstack
+# inside the sandbox:
+java -version   # reports 21
+node --version  # reports v22.x.x
+```
+
+This profile is the [`java-21`](#pinning-a-specific-jdk-version) and `node-22` (see [Contrib Profiles](profiles.md#contrib-profiles)) profiles merged by hand: same `[env]` fields, same mounts, combined into one file. Use those two profiles individually as a reference for what each toolchain needs on its own.
+
+---
+
 ## Dry Run: Inspect the bwrap Command
 
 See exactly what `bwrap` command `inner` would execute, without actually running it:
