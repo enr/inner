@@ -518,6 +518,13 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 			expandedEnv.Set[k] = ExpandPath(v)
 		}
 	}
+	// Expand ~ and ${VAR} in path_prepend entries (e.g. a JDK bin dir under ~/.sdkman).
+	if len(p.Env.PathPrepend) > 0 {
+		expandedEnv.PathPrepend = make([]string, len(p.Env.PathPrepend))
+		for i, v := range p.Env.PathPrepend {
+			expandedEnv.PathPrepend[i] = ExpandPath(v)
+		}
+	}
 
 	// Resolve effective workspaces_path: profile takes precedence over global.
 	workspacesPath := p.WorkspacesPath

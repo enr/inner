@@ -15,6 +15,14 @@ di T6 e T8 e va fatto per ultimo).
 
 ## T1 — `[env] path_prepend`: meccanismo first-class per anteporre directory al PATH della sandbox
 
+**Stato: fatto** (`internal/config/types.go`, `merge.go`, `loader.go`, `internal/isolator/bwrap.go`,
+`internal/profile/validator.go`, `docs/content/profiles.md`, e relativi test).
+Nota di implementazione: il calcolo del PATH base è stato estratto in due funzioni condivise
+in `bwrap.go` — `basePathValue` (priorità: `set["PATH"]` presente anche se vuota →
+PATH host se `PATH` è in `inherit`/`inherit_all` → default hard-coded) e
+`sandboxPathBeforeShim` (applica `path_prepend` sopra la base), usate sia per l'emissione
+standalone di `--setenv PATH` sia dal blocco shim, che vi antepone `/tmp/inner-shims:`.
+
 **Tipo:** feature · **Size:** M
 
 **Contesto.** Oggi per fissare una toolchain (es. un JDK preciso) bisogna riscrivere l'intero

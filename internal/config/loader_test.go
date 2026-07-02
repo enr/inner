@@ -669,6 +669,59 @@ rewrite = { "docker-compose" = "podman-compose" }
 	}
 }
 
+func TestLoadProfile_extends_pathPrepend_overlayFirst(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[env]
+path_prepend = ["/base/bin", "/shared/bin"]
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "base"
+
+[env]
+path_prepend = ["/child/bin", "/shared/bin"]  # /shared/bin is duplicate
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+
+	want := []string{"/child/bin", "/shared/bin", "/base/bin"}
+	if len(p.Env.PathPrepend) != len(want) {
+		t.Fatalf("PathPrepend = %v, want %v", p.Env.PathPrepend, want)
+	}
+	for i, v := range want {
+		if p.Env.PathPrepend[i] != v {
+			t.Errorf("PathPrepend[%d] = %q, want %q (full: %v)", i, p.Env.PathPrepend[i], v, p.Env.PathPrepend)
+		}
+	}
+}
+
+func TestLoadProfile_extends_pathPrepend_childOnly(t *testing.T) {
+	// A child that declares path_prepend without a base value should not error
+	// or need the key defined in the base profile.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[entrypoint]
+cmd = "bash"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "base"
+
+[env]
+path_prepend = ["/opt/jdk/jdk-21/bin"]
+`)
+	l := NewLoader(dir)
+	p, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if len(p.Env.PathPrepend) != 1 || p.Env.PathPrepend[0] != "/opt/jdk/jdk-21/bin" {
+		t.Errorf("PathPrepend = %v, want [/opt/jdk/jdk-21/bin]", p.Env.PathPrepend)
+	}
+}
+
 func TestLoadProfile_extends_verifyChecksAppend(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
@@ -930,6 +983,36 @@ timeout_seconds = 60
 	wantAllow := []string{"ssh-keys", "docker-socket"}
 	if len(rc.Allow) != len(wantAllow) {
 		t.Errorf("Allow = %v, want %v", rc.Allow, wantAllow)
+	}
+}
+
+func TestBuild_pathPrependExpanded(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("INNER_TEST_JDK_ROOT", "/opt/jdk/jdk-21")
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "java.toml"), `
+[entrypoint]
+cmd = "bash"
+
+[env]
+path_prepend = ["~/custom/bin", "${INNER_TEST_JDK_ROOT}/bin"]
+`)
+	l := NewLoader(dir)
+	rc, err := l.Build("java")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	want := []string{filepath.Join(homeDir, "custom/bin"), "/opt/jdk/jdk-21/bin"}
+	if len(rc.Env.PathPrepend) != len(want) {
+		t.Fatalf("Env.PathPrepend = %v, want %v", rc.Env.PathPrepend, want)
+	}
+	for i, v := range want {
+		if rc.Env.PathPrepend[i] != v {
+			t.Errorf("Env.PathPrepend[%d] = %q, want %q", i, rc.Env.PathPrepend[i], v)
+		}
 	}
 }
 

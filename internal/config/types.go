@@ -153,6 +153,13 @@ type EnvConfig struct {
 	InheritAll bool              `toml:"inherit_all"`
 	Inherit    []string          `toml:"inherit"`
 	Set        map[string]string `toml:"set"`
+	// PathPrepend lists directories to prepend to PATH inside the sandbox,
+	// in the given order (first entry ends up first in PATH, i.e. highest
+	// priority). Use this to pin a specific toolchain (e.g. a JDK under
+	// /opt/jdk/jdk-21/bin) without having to know or repeat the rest of
+	// PATH. Composes with extends: see mergeProfiles for the merge order
+	// (child entries take priority over the base's).
+	PathPrepend []string `toml:"path_prepend"`
 }
 
 // GitConfig describes how the host gitconfig is sanitized before injection.

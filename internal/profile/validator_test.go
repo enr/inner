@@ -524,3 +524,57 @@ func TestValidate_envSetDefinedHostVar_noWarning(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_pathPrepend_missingDir_warns(t *testing.T) {
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			PathPrepend: []string{"/nonexistent/jdk-99/bin"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	found := false
+	for _, i := range r.Issues {
+		if i.Level == LevelWarning && strings.Contains(i.Message, "/nonexistent/jdk-99/bin") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning for missing path_prepend dir, got: %v", r.Issues)
+	}
+	if r.HasErrors() {
+		t.Errorf("missing path_prepend dir should be a warning, not an error, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_pathPrepend_existingDir_noIssue(t *testing.T) {
+	dir := t.TempDir()
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			PathPrepend: []string{dir},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "path_prepend") {
+			t.Errorf("unexpected issue for existing path_prepend dir: %s", i.Message)
+		}
+	}
+}
+
+func TestValidate_pathPrepend_emptyEntry_isError(t *testing.T) {
+	p := &config.Profile{
+		Env: config.EnvConfig{
+			PathPrepend: []string{""},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+
+	r := Validate(p, "")
+	if !r.HasErrors() {
+		t.Error("expected error for empty path_prepend entry")
+	}
+}

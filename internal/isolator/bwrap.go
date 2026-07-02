@@ -52,6 +52,37 @@ func isUnderTmpfs(mounts []config.Mount, path string) bool {
 	return false
 }
 
+// basePathValue resolves the PATH value to build on top of, before any
+// path_prepend or shim-dir adjustment. Priority:
+//  1. an explicit [env] set PATH — honoured even if empty, since the profile
+//     asked for it explicitly;
+//  2. the host PATH, but only if the profile opted into it via
+//     [env] inherit = [..., "PATH", ...] or inherit_all = true — a profile
+//     that clears the environment and never asks for PATH should not
+//     silently inherit the host's;
+//  3. a conservative hard default.
+func basePathValue(cfg config.RunConfig) string {
+	if v, ok := cfg.Env.Set["PATH"]; ok {
+		return v
+	}
+	if cfg.Env.InheritAll || slices.Contains(cfg.Env.Inherit, "PATH") {
+		return os.Getenv("PATH")
+	}
+	return "/usr/local/bin:/usr/bin:/bin"
+}
+
+// sandboxPathBeforeShim resolves the PATH that will be active inside the
+// sandbox, applying [env] path_prepend on top of basePathValue, but before
+// the /tmp/inner-shims prefix (added separately by the shim-dir block so
+// shims always take precedence over path_prepend).
+func sandboxPathBeforeShim(cfg config.RunConfig) string {
+	base := basePathValue(cfg)
+	if len(cfg.Env.PathPrepend) == 0 {
+		return base
+	}
+	return strings.Join(cfg.Env.PathPrepend, ":") + ":" + base
+}
+
 // NewBwrapIsolator creates a BwrapIsolator after verifying that bwrap is
 // available on the host.
 func NewBwrapIsolator() (*BwrapIsolator, error) {
@@ -243,6 +274,14 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		args = append(args, "--setenv", key, cfg.Env.Set[key])
 	}
 
+	// path_prepend anteposes directories to PATH (e.g. to pin a specific JDK)
+	// without requiring the profile to know or repeat the rest of PATH. Emitted
+	// after the [env] set loop above so it wins when both are declared: bwrap
+	// uses the last --setenv for a given key.
+	if len(cfg.Env.PathPrepend) > 0 {
+		args = append(args, "--setenv", "PATH", sandboxPathBeforeShim(cfg))
+	}
+
 	// ── Clipboard / display server ───────────────────────────────────────────
 	if cfg.Clipboard {
 		switch b.info.Display {
@@ -345,16 +384,9 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		args = append(args, "--dir", shimMount)
 		args = append(args, "--ro-bind", cfg.ShimDir, shimMount)
 
-		// Determine the PATH that will be active inside the sandbox.
-		// Priority: explicitly set in profile → inherited from host → hard default.
-		sandboxPath := cfg.Env.Set["PATH"]
-		if sandboxPath == "" {
-			sandboxPath = os.Getenv("PATH")
-		}
-		if sandboxPath == "" {
-			sandboxPath = "/usr/local/bin:/usr/bin:/bin"
-		}
-		args = append(args, "--setenv", "PATH", shimMount+":"+sandboxPath)
+		// Shims must win over everything else, including path_prepend, so the
+		// shim mount is prefixed onto the same effective PATH computed above.
+		args = append(args, "--setenv", "PATH", shimMount+":"+sandboxPathBeforeShim(cfg))
 	}
 
 	// ── Git config injection ─────────────────────────────────────────────────

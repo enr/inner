@@ -157,6 +157,21 @@ func Validate(p *config.Profile, workDir string) Result {
 		}
 	}
 
+	// 2c. Validate [env] path_prepend entries: reject empty strings (they
+	// would collapse to an empty PATH component, e.g. "::"), and warn when a
+	// directory does not exist on the host. Warning rather than error because
+	// the directory may only exist inside the sandbox via a profile mount.
+	for _, entry := range p.Env.PathPrepend {
+		if entry == "" {
+			r.addError("[env] path_prepend contains an empty entry")
+			continue
+		}
+		expanded := config.ExpandPath(entry)
+		if _, err := os.Stat(expanded); err != nil && os.IsNotExist(err) {
+			r.addWarning(fmt.Sprintf("[env] path_prepend %q does not exist on host (expanded: %q)", entry, expanded))
+		}
+	}
+
 	// 3. Warn on unknown sandbox.allow keys and dangerous known keys.
 	for _, key := range p.Sandbox.Allow {
 		if !slices.Contains(config.ValidAllowKeys, key) {
