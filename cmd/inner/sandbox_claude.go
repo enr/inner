@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/enr/inner/internal/config"
@@ -336,6 +337,26 @@ func prepareClaude(src string) (string, func(), error) {
 // applyClaude prints a warning so the user knows to plan for re-authentication.
 const tokenNearExpiryThreshold = 30 * time.Minute
 
+// dbusSocketPath extracts the filesystem socket path from a
+// DBUS_SESSION_BUS_ADDRESS value. It handles the common form
+//
+//	unix:path=/run/user/1000/bus[,guid=...]
+//
+// and returns the path with any trailing ,key=value pairs stripped.
+// Returns "" for every other form (unix:abstract=..., tcp:..., empty):
+// those either need no filesystem bind or are not bindable at all.
+func dbusSocketPath(addr string) string {
+	const prefix = "unix:path="
+	if !strings.HasPrefix(addr, prefix) {
+		return ""
+	}
+	path := addr[len(prefix):]
+	if i := strings.IndexByte(path, ','); i >= 0 {
+		path = path[:i]
+	}
+	return path
+}
+
 // applyClaude injects the claude sandbox mounts into rc.
 // It creates a sandboxed temporary clone of ~/.claude and — when ~/.claude.json
 // exists on the host — a temporary copy of that file, then appends both mounts
@@ -394,11 +415,30 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 	// Claude's libsecret cannot locate the keyring daemon and cannot refresh
 	// an expired OAuth token mid-session, causing a 401 after long sessions.
 	// We inherit only this one variable (not XDG_RUNTIME_DIR) to minimise the
-	// attack surface: the D-Bus socket is already reachable via the ro-bind of
-	// /, and connect(2) on a Unix socket does not require write permission on
-	// the socket file itself.
+	// attack surface.
+	//
+	// Inheriting the variable is not enough on its own: the default claude
+	// profiles mount a tmpfs over /run/user/$UID (to hide the other host
+	// runtime sockets that hang Node.js at startup), which also erases the
+	// session bus socket the variable points at. So when the address is the
+	// common unix:path=... form, bind just that one socket file back into the
+	// sandbox — the bind is emitted after the tmpfs by the isolator, so it
+	// lands inside it. Mode rw because connect(2) on a Unix socket requires
+	// write permission on the socket inode; the bind exposes only the bus
+	// socket, nothing else. Abstract-socket addresses (unix:abstract=...)
+	// need no filesystem bind: the claude profiles keep the host network
+	// namespace (network = true), so those stay reachable via the env var.
 	if v := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); v != "" {
 		rc.Env.Inherit = append(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS")
+		if sock := dbusSocketPath(v); sock != "" {
+			if _, err := os.Stat(sock); err == nil {
+				rc.Mounts = append(rc.Mounts, config.Mount{
+					Src:  sock,
+					Dest: sock,
+					Mode: "rw",
+				})
+			}
+		}
 	}
 
 	var cleanups []func()

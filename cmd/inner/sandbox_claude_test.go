@@ -735,3 +735,92 @@ func TestNormaliseTimestamp(t *testing.T) {
 		})
 	}
 }
+
+// ── dbusSocketPath ────────────────────────────────────────────────────────────
+
+func TestDbusSocketPath(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain unix path", "unix:path=/run/user/1000/bus", "/run/user/1000/bus"},
+		{"unix path with guid suffix", "unix:path=/run/user/1000/bus,guid=abc123", "/run/user/1000/bus"},
+		{"abstract socket", "unix:abstract=/tmp/dbus-abc,guid=def", ""},
+		{"tcp address", "tcp:host=localhost,port=1234", ""},
+		{"empty", "", ""},
+		{"garbage", "not-an-address", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dbusSocketPath(tc.in); got != tc.want {
+				t.Errorf("dbusSocketPath(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyClaude_bindsDbusSocket(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	makeClaudeHome(t, filepath.Join(fakeHome, ".claude"), map[string]string{
+		".credentials.json": `{}`,
+	})
+
+	// A regular file stands in for the bus socket: applyClaude only stats it.
+	sock := filepath.Join(t.TempDir(), "bus")
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatalf("creating fake bus socket: %v", err)
+	}
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+sock+",guid=abc123")
+
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
+	if err != nil {
+		t.Fatalf("applyClaude: %v", err)
+	}
+	defer cleanup()
+
+	found := false
+	for _, m := range rc.Mounts {
+		if m.Src == sock && m.Dest == sock && m.Mode == "rw" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected rw bind of bus socket %s; mounts: %v", sock, rc.Mounts)
+	}
+	inherited := false
+	for _, k := range rc.Env.Inherit {
+		if k == "DBUS_SESSION_BUS_ADDRESS" {
+			inherited = true
+			break
+		}
+	}
+	if !inherited {
+		t.Error("expected DBUS_SESSION_BUS_ADDRESS in Env.Inherit")
+	}
+}
+
+func TestApplyClaude_noDbusBindWhenSocketMissing(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	makeClaudeHome(t, filepath.Join(fakeHome, ".claude"), map[string]string{
+		".credentials.json": `{}`,
+	})
+
+	missing := filepath.Join(t.TempDir(), "no-such-bus")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+missing)
+
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
+	if err != nil {
+		t.Fatalf("applyClaude: %v", err)
+	}
+	defer cleanup()
+
+	for _, m := range rc.Mounts {
+		if m.Src == missing {
+			t.Errorf("unexpected bind of nonexistent socket: %v", m)
+		}
+	}
+}
