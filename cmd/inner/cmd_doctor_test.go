@@ -15,7 +15,7 @@ func TestDoctor_outputCoversAllChecks(t *testing.T) {
 	}
 
 	out := buf.String()
-	checks := []string{"bwrap", "user namespaces", "profiles", "logs", "ANTHROPIC_API_KEY", "claude", "display"}
+	checks := []string{"bwrap", "user namespaces", "profiles", "logs", "claude auth", "claude", "display"}
 	for _, check := range checks {
 		if !strings.Contains(out, check) {
 			t.Errorf("expected %q in doctor output, got:\n%s", check, out)
