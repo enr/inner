@@ -71,9 +71,9 @@ func (l *Loader) LocalProfilesDir() string {
 	return filepath.Join(l.WorkDir, ".config", "inner", "profiles")
 }
 
-// validateProfileName rejects names that could escape the profiles directory
+// ValidateProfileName rejects names that could escape the profiles directory
 // via path-traversal sequences.
-func validateProfileName(name string) error {
+func ValidateProfileName(name string) error {
 	if strings.ContainsAny(name, "/\\") {
 		return fmt.Errorf("invalid profile name %q: must not contain path separators", name)
 	}
@@ -103,7 +103,7 @@ func (l *Loader) ProfilesDir() string {
 }
 
 // ProfileNames returns the names of all available profiles.
-// Local profiles (WorkDir/.inner/profiles) are listed first and shadow global ones.
+// Local profiles (WorkDir/.config/inner/profiles) are listed first and shadow global ones.
 func (l *Loader) ProfileNames() []string {
 	seen := make(map[string]bool)
 	var names []string
@@ -297,44 +297,11 @@ func (l *Loader) ProjectConfigFiles() []string {
 	return collectProjectConfigFiles(l.WorkDir)
 }
 
-// LegacyWarnings returns warning messages if the old ~/.inner config paths are
-// found. These files are NOT loaded by the current version.
-func (l *Loader) LegacyWarnings() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-	var warnings []string
-	if p := filepath.Join(home, ".inner", "config.toml"); fileExists(p) {
-		warnings = append(warnings, fmt.Sprintf(
-			"WARNING: legacy config found at %s — move it to %s (this file is NOT loaded)",
-			p, l.GlobalConfigPath(),
-		))
-	}
-	if p := filepath.Join(home, ".inner", "profiles"); dirExists(p) {
-		warnings = append(warnings, fmt.Sprintf(
-			"WARNING: legacy profiles dir found at %s — move it to %s (these profiles are NOT loaded)",
-			p, l.ProfilesDir(),
-		))
-	}
-	return warnings
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
 // LoadProfile reads a named profile file.
-// Local profile (WorkDir/.inner/profiles) takes precedence over global (~/.inner/profiles).
+// Local profile (WorkDir/.config/inner/profiles) takes precedence over global (~/.config/inner/profiles).
 // Returns an error if the profile is not found in either location.
 func (l *Loader) LoadProfile(name string) (*Profile, error) {
-	if err := validateProfileName(name); err != nil {
+	if err := ValidateProfileName(name); err != nil {
 		return nil, err
 	}
 	// Local profile takes precedence over global.
@@ -683,7 +650,7 @@ func (l *Loader) resolveExtendsPath(val string) string {
 	if filepath.IsAbs(val) || strings.ContainsRune(val, '/') || strings.HasPrefix(val, "~") {
 		return ExpandPath(val)
 	}
-	if validateProfileName(val) != nil {
+	if ValidateProfileName(val) != nil {
 		return ""
 	}
 	return l.ProfilePath(val)

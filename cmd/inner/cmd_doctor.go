@@ -90,10 +90,19 @@ func (a *App) doctor(w io.Writer) error {
 	}
 
 	// ── Claude ───────────────────────────────────────────────────────────────
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		okLine("ANTHROPIC_API_KEY: set")
-	} else {
-		warnLine("ANTHROPIC_API_KEY: not set (required for Claude agents)")
+	// The claude capability authenticates primarily via OAuth credentials in
+	// ~/.claude/.credentials.json; ANTHROPIC_API_KEY is only an alternative.
+	// Only warn when neither is available.
+	home, _ := os.UserHomeDir()
+	claudeCreds := filepath.Join(home, ".claude", ".credentials.json")
+	credInfo, credErr := os.Stat(claudeCreds)
+	switch {
+	case credErr == nil && credInfo.Size() > 0:
+		okLine("claude auth: OAuth credentials present (~/.claude/.credentials.json)")
+	case os.Getenv("ANTHROPIC_API_KEY") != "":
+		okLine("claude auth: ANTHROPIC_API_KEY set")
+	default:
+		warnLine("claude auth: no OAuth credentials or ANTHROPIC_API_KEY (run 'claude' on the host to authenticate)")
 	}
 	if claudePath, err := exec.LookPath("claude"); err == nil {
 		okLine(fmt.Sprintf("claude: %s", claudePath))

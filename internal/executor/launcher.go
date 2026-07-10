@@ -78,9 +78,12 @@ func (l *Launcher) Run(cmd *exec.Cmd, opts RunOptions) (RunResult, error) {
 		runID = GenerateRunID()
 	}
 
+	// Interactive sessions connect the child directly to the host terminal and
+	// cannot be tee'd to a log (see runInteractive), so creating a log file would
+	// only leave an empty 0-byte artifact behind. Skip it entirely.
 	var logFile *os.File
 	logPath := ""
-	if opts.LogDir != "" {
+	if opts.LogDir != "" && !opts.Interactive {
 		if err := os.MkdirAll(opts.LogDir, 0o755); err != nil {
 			return RunResult{}, fmt.Errorf("creating log dir: %w", err)
 		}

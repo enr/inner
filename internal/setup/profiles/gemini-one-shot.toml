@@ -18,7 +18,7 @@ interactive = false
 
 [output]
 summary         = true
-log             = "~/.inner/logs/"
+log             = "~/.config/inner/logs/"
 timeout_seconds = 1800  # 30 minutes
 
 [noop]

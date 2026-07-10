@@ -163,11 +163,16 @@ type Checker struct {
 	Allow          []string
 	Custom         []config.CustomCheck
 	NetworkEnabled bool // if true, network-policy check is skipped (network intentionally open)
+	// ShimsExpected is true when the profile declares [noop] block/rewrite
+	// entries, meaning a shim directory should be mounted and active in PATH.
+	// When false the shims-active check passes unconditionally: a profile with
+	// no noop config is not expected to have shims, so their absence is correct.
+	ShimsExpected bool
 
 	// Injectable for tests.
 	HomeDir       string                                                                 // defaults to os.UserHomeDir()
 	UsrDir        string                                                                 // defaults to "/usr"
-	ShimMountPath string                                                                 // defaults to "/run/inner-shims"
+	ShimMountPath string                                                                 // defaults to "/tmp/inner-shims"
 	dialFn        func(network, address string, timeout time.Duration) (net.Conn, error) // defaults to net.DialTimeout
 }
 
@@ -392,6 +397,11 @@ func (c *Checker) checkNetrc() CheckResult {
 
 func (c *Checker) checkShimsActive() CheckResult {
 	r := CheckResult{ID: "shims-active", Name: "shims active in PATH", Severity: SeverityMedium}
+	if !c.ShimsExpected {
+		r.Passed = true
+		r.Detail = "no command shims configured for this profile"
+		return r
+	}
 	shimPath := c.shimMountPath()
 	if !strings.HasPrefix(os.Getenv("PATH"), shimPath) {
 		r.Passed = false

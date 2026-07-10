@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/enr/inner/internal/config"
@@ -36,7 +37,7 @@ var claudeAutoConfirmDelay = 1 * time.Second
 // prepareInteractiveShell injects `--init-file` into bash entrypoints so our
 // sandbox PS1 wins even after ~/.bashrc runs.
 //
-// It writes ~/.inner/shell-init.sh (accessible inside the sandbox via the root
+// It writes <innerDir>/shell-init.sh (accessible inside the sandbox via the root
 // ro-bind, no extra mounts needed), then prepends ["--init-file", path] to the
 // entrypoint args. It is a no-op for non-bash or non-interactive configs.
 func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
@@ -336,6 +337,26 @@ func prepareClaude(src string) (string, func(), error) {
 // applyClaude prints a warning so the user knows to plan for re-authentication.
 const tokenNearExpiryThreshold = 30 * time.Minute
 
+// dbusSocketPath extracts the filesystem socket path from a
+// DBUS_SESSION_BUS_ADDRESS value. It handles the common form
+//
+//	unix:path=/run/user/1000/bus[,guid=...]
+//
+// and returns the path with any trailing ,key=value pairs stripped.
+// Returns "" for every other form (unix:abstract=..., tcp:..., empty):
+// those either need no filesystem bind or are not bindable at all.
+func dbusSocketPath(addr string) string {
+	const prefix = "unix:path="
+	if !strings.HasPrefix(addr, prefix) {
+		return ""
+	}
+	path := addr[len(prefix):]
+	if i := strings.IndexByte(path, ','); i >= 0 {
+		path = path[:i]
+	}
+	return path
+}
+
 // applyClaude injects the claude sandbox mounts into rc.
 // It creates a sandboxed temporary clone of ~/.claude and — when ~/.claude.json
 // exists on the host — a temporary copy of that file, then appends both mounts
@@ -386,8 +407,7 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		// fails for any reason, Claude will return 401.
 		fmt.Fprintf(w, "inner: claude: token expires soon (%s) — consider relaunching after renewal if the session is expected to run past expiry\n", expiry)
 	default:
-		// Token is fresh — skip unlock entirely.
-		fmt.Fprintf(w, "inner: claude: token valid (expires %s) — skipping unlock\n", expiry)
+		// Token is fresh — skip unlock entirely (silent on the happy path).
 	}
 
 	// ── D-Bus passthrough for mid-session token refresh ───────────────────────
@@ -395,21 +415,38 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 	// Claude's libsecret cannot locate the keyring daemon and cannot refresh
 	// an expired OAuth token mid-session, causing a 401 after long sessions.
 	// We inherit only this one variable (not XDG_RUNTIME_DIR) to minimise the
-	// attack surface: the D-Bus socket is already reachable via the ro-bind of
-	// /, and connect(2) on a Unix socket does not require write permission on
-	// the socket file itself.
+	// attack surface.
+	//
+	// Inheriting the variable is not enough on its own: the default claude
+	// profiles mount a tmpfs over /run/user/$UID (to hide the other host
+	// runtime sockets that hang Node.js at startup), which also erases the
+	// session bus socket the variable points at. So when the address is the
+	// common unix:path=... form, bind just that one socket file back into the
+	// sandbox — the bind is emitted after the tmpfs by the isolator, so it
+	// lands inside it. Mode rw because connect(2) on a Unix socket requires
+	// write permission on the socket inode; the bind exposes only the bus
+	// socket, nothing else. Abstract-socket addresses (unix:abstract=...)
+	// need no filesystem bind: the claude profiles keep the host network
+	// namespace (network = true), so those stay reachable via the env var.
 	if v := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); v != "" {
 		rc.Env.Inherit = append(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS")
+		if sock := dbusSocketPath(v); sock != "" {
+			if _, err := os.Stat(sock); err == nil {
+				rc.Mounts = append(rc.Mounts, config.Mount{
+					Src:  sock,
+					Dest: sock,
+					Mode: "rw",
+				})
+			}
+		}
 	}
 
 	var cleanups []func()
 
-	fmt.Fprintf(w, "inner: claude: preparing sandbox clone of %s\n", claudeDir)
 	sandboxed, cleanup, err := prepareClaude(claudeDir)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(w, "inner: claude: sandbox dir: %s\n", sandboxed)
 	cleanups = append(cleanups, cleanup)
 	rc.Mounts = append(rc.Mounts, config.Mount{
 		Src:  sandboxed,
@@ -445,12 +482,8 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 			Dest: claudeJsonPath,
 			Mode: "rw",
 		})
-		fmt.Fprintf(w, "inner: claude: mounted .claude.json (temp copy: %s)\n", tmpJsonPath)
-	} else {
-		fmt.Fprintln(w, "inner: claude: .claude.json not found on host — skipping mount")
 	}
 
-	fmt.Fprintln(w, "inner: claude: sandbox ready — launching")
 	return func() {
 		for _, fn := range cleanups {
 			fn()
@@ -475,7 +508,9 @@ func copyFile(src, dst string) error {
 // copySettingsStripped copies src to dst as JSON with keys that would start
 // external processes (enabledPlugins, mcpServers) removed. These cause MCP
 // servers to be launched at interactive startup, which hangs inside the sandbox.
-// If src doesn't exist or can't be parsed, dst is left as a minimal empty object.
+// If src doesn't exist or can't be parsed, no dst is written and the error is
+// returned; callers ignore it, leaving the clone without settings.json, which
+// is a valid fresh state (claude recreates its defaults).
 func copySettingsStripped(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {

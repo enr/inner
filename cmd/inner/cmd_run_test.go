@@ -912,3 +912,32 @@ func TestWrapWithLimits_cpuNormalization(t *testing.T) {
 		t.Errorf("expected CPUQuota=200%%, got args: %s", joined)
 	}
 }
+
+// ── workdirCoversHome ─────────────────────────────────────────────────────────
+
+func TestWorkdirCoversHome(t *testing.T) {
+	const home = "/home/user"
+	tests := []struct {
+		name    string
+		workdir string
+		want    bool
+	}{
+		{"workdir is home", "/home/user", true},
+		{"workdir is parent of home", "/home", true},
+		{"workdir is filesystem root", "/", true},
+		{"workdir is subdirectory of home", "/home/user/project", false},
+		{"unrelated path", "/srv/data", false},
+		{"sibling with common prefix", "/home/username", false},
+		{"empty workdir", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workdirCoversHome(tc.workdir, home); got != tc.want {
+				t.Errorf("workdirCoversHome(%q, %q) = %v, want %v", tc.workdir, home, got, tc.want)
+			}
+		})
+	}
+	if workdirCoversHome("/home/user", "") {
+		t.Error("empty home must never be covered")
+	}
+}

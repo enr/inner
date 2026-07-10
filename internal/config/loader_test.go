@@ -1770,34 +1770,6 @@ func TestLoadEffectiveGlobal_traversalPicksUpAncestorConfig(t *testing.T) {
 	}
 }
 
-func TestLegacyWarnings_noLegacyFiles(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-	l := NewLoader(t.TempDir())
-	warnings := l.LegacyWarnings()
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings, got %v", warnings)
-	}
-}
-
-func TestLegacyWarnings_legacyConfigFound(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-	writeFile(t, filepath.Join(homeDir, ".inner", "config.toml"), `default_profile = "old"`)
-
-	l := NewLoader(filepath.Join(homeDir, ".config", "inner"))
-	warnings := l.LegacyWarnings()
-	if len(warnings) == 0 {
-		t.Fatal("expected a warning for legacy config.toml")
-	}
-	if !strings.Contains(warnings[0], ".inner") {
-		t.Errorf("warning should mention .inner path, got: %s", warnings[0])
-	}
-	if !strings.Contains(warnings[0], "NOT loaded") {
-		t.Errorf("warning should mention 'NOT loaded', got: %s", warnings[0])
-	}
-}
-
 // ── Resource limit resolution tests ───────────────────────────────────────────
 
 func TestResolveResourceLimits_autoFallback(t *testing.T) {

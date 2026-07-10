@@ -332,6 +332,9 @@ func (a *App) profileValidate(w io.Writer, names []string) (anyError bool, err e
 
 // profileNew creates a new profile from the default template and opens it.
 func (a *App) profileNew(w io.Writer, name string) error {
+	if err := config.ValidateProfileName(name); err != nil {
+		return err
+	}
 	path := a.loader.ProfilePath(name)
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("profile %q already exists at %s", name, path)
@@ -360,6 +363,12 @@ func (a *App) profileEdit(_ io.Writer, name string) error {
 
 // profileClone copies a profile to a new name.
 func (a *App) profileClone(w io.Writer, src, dst string) error {
+	if err := config.ValidateProfileName(src); err != nil {
+		return err
+	}
+	if err := config.ValidateProfileName(dst); err != nil {
+		return err
+	}
 	srcPath := a.loader.ProfilePath(src)
 	dstPath := a.loader.ProfilePath(dst)
 

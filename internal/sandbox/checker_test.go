@@ -256,6 +256,7 @@ func TestCheck_netrc_fail_when_present(t *testing.T) {
 
 func TestCheck_shimsActive_fail_without_shims(t *testing.T) {
 	ch, _ := newChecker(t)
+	ch.ShimsExpected = true
 	// PATH does not start with ShimMountPath → should fail.
 	t.Setenv("PATH", "/usr/bin:/bin")
 	r := ch.checkShimsActive()
@@ -267,11 +268,23 @@ func TestCheck_shimsActive_fail_without_shims(t *testing.T) {
 func TestCheck_shimsActive_pass_with_shims_in_path(t *testing.T) {
 	shimDir := t.TempDir()
 	ch, _ := newChecker(t)
+	ch.ShimsExpected = true
 	ch.ShimMountPath = shimDir
 	t.Setenv("PATH", shimDir+":/usr/bin:/bin")
 	r := ch.checkShimsActive()
 	if !r.Passed {
 		t.Errorf("expected shims-active to pass, got: %s", r.Detail)
+	}
+}
+
+func TestCheck_shimsActive_pass_when_no_shims_expected(t *testing.T) {
+	ch, _ := newChecker(t)
+	// ShimsExpected defaults to false: a profile with no [noop] config is not
+	// expected to have shims, so their absence must not fail the check.
+	t.Setenv("PATH", "/usr/bin:/bin")
+	r := ch.checkShimsActive()
+	if !r.Passed {
+		t.Errorf("expected shims-active to pass when no shims are configured, got: %s", r.Detail)
 	}
 }
 

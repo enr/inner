@@ -100,11 +100,15 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 
 	// 3. Resolve effective workdir (priority: --workdir flag > profile workdir > cwd).
 	// applyOverrides is a pure function (no I/O), so we resolve the cwd here.
+	// workdirImplicit records that the workdir came from the cwd fallback (the
+	// user never chose it); the home-coverage guard below prompts in that case.
+	workdirImplicit := false
 	if flags.workdir == "" {
 		if rc.Workdir != "" {
 			flags.workdir = rc.Workdir // profile entrypoint.workdir takes over
 		} else if cwd, err := os.Getwd(); err == nil {
 			flags.workdir = cwd
+			workdirImplicit = true
 		}
 	}
 
@@ -132,6 +136,29 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 			}
 			if strings.HasPrefix(m.Dest+"/", rc.Workdir+"/") {
 				fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": mount %q is declared ro but is under workdir %q — the ro constraint will not be enforced\n", m.Dest, rc.Workdir)
+			}
+		}
+	}
+
+	// 5a-bis. Guard against mounting the entire home directory read-write.
+	// The workdir is bind-mounted rw; when it is $HOME (or an ancestor of it)
+	// every dotfile (.bashrc, .profile, .config/…) becomes writable by the
+	// sandboxed process — a persistence vector for an agent. Sensitive
+	// resources (~/.ssh, credentials, …) stay hidden by the isolator either
+	// way. Always warn; when the workdir was picked up implicitly from the
+	// cwd (the user never chose it), also require confirmation unless --yes
+	// or --dry-run.
+	if rc.Workdir != "" {
+		if home, err := os.UserHomeDir(); err == nil && workdirCoversHome(rc.Workdir, home) {
+			fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": workdir %q covers your home directory — all dotfiles (.bashrc, .profile, .config/…) will be writable inside the sandbox\n", rc.Workdir)
+			if workdirImplicit && !flags.dryRun && !rc.AutoConfirm {
+				fmt.Fprintln(w, "         (workdir defaulted to the current directory; pass -w PATH to scope the mount, or --yes to skip this prompt)")
+				fmt.Fprint(w, "continue? [y/N] ")
+				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+					fmt.Fprintln(w, "aborted.")
+					return nil
+				}
 			}
 		}
 	}
@@ -494,6 +521,23 @@ func loadArgsFile(w io.Writer, path string) (string, error) {
 		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": args file %q is large (%d bytes); consider passing the file path as a mount instead\n", path, size)
 	}
 	return string(data), nil
+}
+
+// workdirCoversHome reports whether mounting workdir read-write exposes the
+// entire home directory: true when workdir is home itself or an ancestor of
+// it (e.g. /home or /). Both paths are expected to be absolute and cleaned
+// (the workdir has been through ExpandPath + filepath.Abs in applyOverrides).
+func workdirCoversHome(workdir, home string) bool {
+	if workdir == "" || home == "" {
+		return false
+	}
+	// Ancestor check: home falls under workdir. Append the separator only
+	// when missing so that workdir "/" ("prefix "/") still matches.
+	prefix := workdir
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	return workdir == home || strings.HasPrefix(home+"/", prefix)
 }
 
 // parseMount parses "src:dest[:mode]" into a Mount.
