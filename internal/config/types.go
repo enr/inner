@@ -1,6 +1,6 @@
 package config
 
-// Profile represents a loaded .toml profile file from ~/.inner/profiles/<name>.toml.
+// Profile represents a loaded .toml profile file from ~/.config/inner/profiles/<name>.toml.
 type Profile struct {
 	SchemaVersion string `toml:"schema_version"`
 	Name          string `toml:"name"`
@@ -31,12 +31,22 @@ type Profile struct {
 }
 
 // ValidAllowKeys is the exhaustive set of keys accepted in [sandbox].allow.
+//
+// Most keys are resource-hiding keys: listing one keeps the corresponding
+// sensitive path visible inside the sandbox (see the isolator's sensitive
+// table). A few keys have no hide action and only downgrade the matching
+// `inner verify` check to INFO ("verify-only" keys, e.g. env-secrets,
+// shims-active, network-policy); "nested-user-ns" likewise has no hide action
+// (it grants caps in the namespace block). The critical host-integrity checks
+// (no-root, usr-readonly) are intentionally NOT declassifiable.
 var ValidAllowKeys = []string{
 	"ssh-keys", "git-credentials", "gpg-keys",
 	"docker-socket", "podman-socket", "nested-user-ns", "netrc",
 	"aws-credentials", "gcloud-credentials", "kube-config", "azure-credentials",
 	"docker-config", "npmrc", "pypirc", "cargo-credentials",
 	"password-store",
+	// Verify-only declassification keys (no filesystem hide action).
+	"env-secrets", "shims-active", "network-policy",
 }
 
 // ValidCapabilities is the exhaustive set of named capabilities accepted in

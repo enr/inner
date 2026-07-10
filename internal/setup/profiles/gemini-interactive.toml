@@ -22,7 +22,7 @@ tui         = true
 
 [output]
 summary         = false
-log             = "~/.inner/logs/"
+log             = "~/.config/inner/logs/"
 timeout_seconds = 0
 
 [noop]

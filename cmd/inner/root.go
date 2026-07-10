@@ -112,6 +112,52 @@ func expandAliases(root *cobra.Command, app *App) {
 	if !ok || strings.TrimSpace(expansion) == "" {
 		return
 	}
-	expanded := strings.Fields(expansion)
+	expanded := splitArgs(expansion)
 	root.SetArgs(append(expanded, os.Args[2:]...))
+}
+
+// splitArgs splits a command string into arguments, honouring single and
+// double quotes so an alias expansion can carry arguments that contain spaces
+// (e.g. `--arg "fix the bug"`). A backslash escapes the next character except
+// inside single quotes. Unterminated quotes run to the end of the string.
+// It is a small shell-like tokenizer, not a full POSIX word splitter.
+func splitArgs(s string) []string {
+	var args []string
+	var cur strings.Builder
+	inArg := false
+	var quote rune // 0, '\'' or '"'
+	escaped := false
+	for _, r := range s {
+		switch {
+		case escaped:
+			cur.WriteRune(r)
+			inArg = true
+			escaped = false
+		case r == '\\' && quote != '\'':
+			escaped = true
+			inArg = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+			inArg = true
+		case r == ' ' || r == '\t' || r == '\n':
+			if inArg {
+				args = append(args, cur.String())
+				cur.Reset()
+				inArg = false
+			}
+		default:
+			cur.WriteRune(r)
+			inArg = true
+		}
+	}
+	if inArg {
+		args = append(args, cur.String())
+	}
+	return args
 }

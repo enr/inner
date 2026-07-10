@@ -50,11 +50,11 @@ inner run -p claude-one-shot -w ~/my-project --prompt "add docstrings to all exp
 
 | Page | Description |
 |------|-------------|
-| [Getting Started](docs/getting-started.md) | Install, first run, environment check |
-| [Commands](docs/commands.md) | Full command and flag reference |
-| [Profiles](docs/profiles.md) | Profile TOML configuration reference |
-| [Examples](docs/examples.md) | Common usage patterns |
-| [Development](docs/development.md) | Build, test, release |
+| [Getting Started](docs/content/getting-started.md) | Install, first run, environment check |
+| [Commands](docs/content/commands.md) | Full command and flag reference |
+| [Profiles](docs/content/profiles.md) | Profile TOML configuration reference |
+| [Examples](docs/content/examples.md) | Common usage patterns |
+| [Development](docs/content/development.md) | Build, test, release |
 
 ## License
 

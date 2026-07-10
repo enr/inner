@@ -81,7 +81,7 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 		return err
 	}
 	if result.ExitCode != 0 {
-		os.Exit(result.ExitCode)
+		return exitCodeError{code: result.ExitCode}
 	}
 	return nil
 }
@@ -95,6 +95,7 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 	var allow []string
 	var custom []config.CustomCheck
 	networkEnabled := false
+	shimsExpected := false
 
 	profileName := os.Getenv("INNER_VERIFY_PROFILE")
 	if profileName == "" {
@@ -104,19 +105,21 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 		allow = p.Sandbox.Allow
 		custom = p.Verify.Custom.Checks
 		networkEnabled = p.Sandbox.Network
+		shimsExpected = len(p.Noop.Block) > 0 || len(p.Noop.Rewrite) > 0
 	}
 
 	checker := &sandbox.Checker{
 		Allow:          allow,
 		Custom:         custom,
 		NetworkEnabled: networkEnabled,
+		ShimsExpected:  shimsExpected,
 	}
 
 	report := checker.Run()
 	report.Render(w, suggest)
 
 	if !report.Conformant() {
-		os.Exit(1)
+		return exitCodeError{code: 1}
 	}
 	return nil
 }

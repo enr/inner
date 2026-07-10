@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// reset_ overwrites the built-in default profiles in ~/.inner/profiles/ with
+// reset_ overwrites the built-in default profiles in ~/.config/inner/profiles/ with
 // the versions embedded in the binary. Only files whose name matches an
 // embedded profile are touched; user-created profiles are left untouched.
 func (a *App) reset_(w io.Writer, force bool) error {

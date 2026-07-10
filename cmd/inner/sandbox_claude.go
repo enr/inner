@@ -36,7 +36,7 @@ var claudeAutoConfirmDelay = 1 * time.Second
 // prepareInteractiveShell injects `--init-file` into bash entrypoints so our
 // sandbox PS1 wins even after ~/.bashrc runs.
 //
-// It writes ~/.inner/shell-init.sh (accessible inside the sandbox via the root
+// It writes <innerDir>/shell-init.sh (accessible inside the sandbox via the root
 // ro-bind, no extra mounts needed), then prepends ["--init-file", path] to the
 // entrypoint args. It is a no-op for non-bash or non-interactive configs.
 func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
@@ -386,8 +386,7 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		// fails for any reason, Claude will return 401.
 		fmt.Fprintf(w, "inner: claude: token expires soon (%s) — consider relaunching after renewal if the session is expected to run past expiry\n", expiry)
 	default:
-		// Token is fresh — skip unlock entirely.
-		fmt.Fprintf(w, "inner: claude: token valid (expires %s) — skipping unlock\n", expiry)
+		// Token is fresh — skip unlock entirely (silent on the happy path).
 	}
 
 	// ── D-Bus passthrough for mid-session token refresh ───────────────────────
@@ -404,12 +403,10 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 
 	var cleanups []func()
 
-	fmt.Fprintf(w, "inner: claude: preparing sandbox clone of %s\n", claudeDir)
 	sandboxed, cleanup, err := prepareClaude(claudeDir)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(w, "inner: claude: sandbox dir: %s\n", sandboxed)
 	cleanups = append(cleanups, cleanup)
 	rc.Mounts = append(rc.Mounts, config.Mount{
 		Src:  sandboxed,
@@ -445,12 +442,8 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 			Dest: claudeJsonPath,
 			Mode: "rw",
 		})
-		fmt.Fprintf(w, "inner: claude: mounted .claude.json (temp copy: %s)\n", tmpJsonPath)
-	} else {
-		fmt.Fprintln(w, "inner: claude: .claude.json not found on host — skipping mount")
 	}
 
-	fmt.Fprintln(w, "inner: claude: sandbox ready — launching")
 	return func() {
 		for _, fn := range cleanups {
 			fn()
@@ -475,7 +468,9 @@ func copyFile(src, dst string) error {
 // copySettingsStripped copies src to dst as JSON with keys that would start
 // external processes (enabledPlugins, mcpServers) removed. These cause MCP
 // servers to be launched at interactive startup, which hangs inside the sandbox.
-// If src doesn't exist or can't be parsed, dst is left as a minimal empty object.
+// If src doesn't exist or can't be parsed, no dst is written and the error is
+// returned; callers ignore it, leaving the clone without settings.json, which
+// is a valid fresh state (claude recreates its defaults).
 func copySettingsStripped(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
