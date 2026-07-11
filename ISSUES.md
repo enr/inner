@@ -51,7 +51,7 @@ mismatch; (c) rifiuto di `inherit_all` da sorgente remota salvo opt-in separato.
 *Acceptance:* test che un profilo remoto con `inherit_all`/`network=true` non
 parte senza consenso esplicito; test che il mismatch di checksum interrompe il run.
 
-### ISS-02 · `safe-rw` e copie delle capability seguono i symlink
+### ISS-02 · `safe-rw` e copie delle capability seguono i symlink ✅ DONE
 `security` `bug` · **P0** · Size S · Fonte: SECURITY_REVIEW #3
 
 `copyFile` (`cmd/inner/sandbox_claude.go`) usa `os.ReadFile` che dereferenzia i
@@ -62,6 +62,25 @@ Fix: `Lstat` su ogni entry; i symlink si saltano (o si ricreano con
 
 *Acceptance:* test con symlink verso un file fuori dall'albero sorgente: il
 contenuto non deve comparire nella copia.
+
+> **Analisi controindicazioni (verificata empiricamente).** Il comportamento
+> *pre-fix* era il pericoloso: symlink→file veniva dereferenziato per intero
+> (`os.ReadFile` carica tutto in RAM, poi copia in /tmp — un target da GB
+> esplode memoria e tmpfs); symlink→directory e link rotti abortivano l'intero
+> run (EISDIR/ENOENT). Lo *skip silenzioso* era la vera controindicazione:
+> avrebbe rotto i setup dotfile-manager (stow/chezmoi) che symlinkano file in
+> `~/.claude`. Strategia scelta: **ricreare il link verbatim** — zero byte
+> copiati, la risoluzione avviene *dentro* la sandbox dove i path sensibili
+> sono nascosti (chiude la falla), i link legittimi restano leggibili.
+> Regressione residua documentata: la scrittura attraverso un link out-of-tree
+> fallisce (root ro).
+>
+> **Fatto.** `copyDir` ricrea i symlink con `Readlink`+`Symlink` e rifiuta una
+> root symlink con errore esplicito; `copyFile` resta dereferenziante SOLO per
+> i chiamanti diretti su file top-level noti (contratto documentato). Test:
+> `TestCopyDir_symlinkToFile_notDereferenced`, `_symlinkToDir_recreatedAndWalkContinues`,
+> `_danglingSymlink_nonFatal`, `_relativeSymlinkPreserved`, `_rootSymlink_rejected`,
+> `TestApplyGenericSafeMounts_symlinkContentNotCopied` (acceptance e2e).
 
 ### ISS-03 · Estendere la denylist dei path sensibili + test di regressione ✅ DONE
 `security` · **P0** · Size S · Fonte: SECURITY_REVIEW #1 (mitigazione a breve termine)
@@ -359,7 +378,7 @@ che in file leggibili dall'agente.
 
 | Priorità | Issue |
 |---|---|
-| **P0** | ISS-01 remote profile trust ✅ · ISS-02 symlink nelle copie · ISS-03 estensione denylist ✅ |
+| **P0** | ISS-01 remote profile trust ✅ · ISS-02 symlink nelle copie ✅ · ISS-03 estensione denylist ✅ |
 | **P1** | ISS-04 home isolata · ISS-05 proxy rete allowlist · ISS-06 credential injection · ISS-07 sign-off TUI/PID-ns · ISS-08 run-ID + `--json` |
 | **P2** | ISS-09 parseMount · ISS-10 rollback workspace · ISS-11 extractExpiresAt · ISS-12 checkUsrReadonly · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ISS-17 profile explain · ISS-18 triage bwrap |
 | **P3** | ISS-19…ISS-30 |

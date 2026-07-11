@@ -20,6 +20,23 @@ Status of items already handled:
   `--unshare-pid` for all runs by default (opt out with
   `[sandbox] pid_namespace = false`). See issue **#9** below for the manual
   TUI verification that still has to be performed on a real terminal.
+- ✅ **[FIXED] #2 Remote profiles fully trusted** — remote (URL) profiles now
+  support `--sha256` content pinning, refuse `inherit_all` unless
+  `--allow-remote`, and gate network/allow escalations behind a blocking
+  confirmation that `--yes` does not auto-accept. (`cmd/inner/cmd_run.go`,
+  `confirmRemoteProfile`)
+- ✅ **[FIXED] #3 Symlink-following in copies** — `copyDir` now recreates
+  symlinks verbatim (`Readlink`+`Symlink`) instead of dereferencing, and
+  refuses a symlinked root. This closes the read primitive, stops unbounded
+  RAM/tmp copies of large targets, and makes symlink-to-dir / dangling links
+  non-fatal. `copyFile` still dereferences by design for its direct callers
+  (well-known top-level files). Regression tests in
+  `cmd/inner/sandbox_safe_test.go`.
+- ✅ **[MITIGATED] #1 (short-term option 1)** — the sensitive denylist now
+  covers `~/.config/gh`, `~/.terraform.d`, `~/.config/helm`,
+  `~/.m2/settings.xml`, `~/.local/share/keyrings` and browser profiles, with
+  a regression test (`TestBuild_hidesKnownSensitivePaths`) that fails when a
+  known path is uncovered. The proper allowlist-home fix remains open below.
 
 ---
 

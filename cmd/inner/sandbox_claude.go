@@ -493,6 +493,13 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 
 // ── File / dir copy helpers ───────────────────────────────────────────────────
 
+// copyFile copies a single file, FOLLOWING symlinks (os.ReadFile dereferences).
+// This is intentional for its direct callers, which copy well-known top-level
+// files chosen by inner itself (.credentials.json, settings.json, auth.json):
+// dotfile-manager setups commonly symlink those, and the sandbox needs a
+// writable copy of the content. Do NOT call it on attacker-influenceable tree
+// entries — that is copyDir's job, which recreates symlinks instead (see ISS-02
+// in SECURITY_REVIEW.md #3).
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
@@ -529,7 +536,25 @@ func copySettingsStripped(src, dst string) error {
 	return os.WriteFile(dst, out, 0o644)
 }
 
+// copyDir copies the tree at src into dst.
+//
+// Symlinks are recreated verbatim (os.Readlink + os.Symlink), NEVER
+// dereferenced. Dereferencing would read the target on the HOST, before the
+// sandbox hides sensitive paths — a symlink planted inside a copied tree
+// (e.g. ~/.claude/skills/evil -> ~/.ssh/id_rsa) would smuggle the target's
+// content into the sandbox. It would also copy arbitrarily large targets
+// (os.ReadFile loads the whole file in RAM) and abort the run on directory
+// or dangling targets. A recreated link instead resolves INSIDE the sandbox,
+// where the mount table hides sensitive paths, so legitimate dotfile-manager
+// links keep working (read-only) while planted ones resolve to nothing.
+//
+// The root src itself must not be a symlink: the destination directory
+// already exists, so it cannot be replaced by a link; callers should pass
+// the resolved path if they intend to follow it.
 func copyDir(src, dst string) error {
+	if info, err := os.Lstat(src); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("copy %s: source is a symlink; refusing to follow it — use the resolved path instead", src)
+	}
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -538,6 +563,13 @@ func copyDir(src, dst string) error {
 		dstPath := filepath.Join(dst, rel)
 		if d.IsDir() {
 			return os.MkdirAll(dstPath, 0o755)
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(target, dstPath)
 		}
 		return copyFile(path, dstPath)
 	})
