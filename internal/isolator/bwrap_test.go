@@ -802,6 +802,47 @@ func TestBuild_sensitiveResources_nonexistentSkipped(t *testing.T) {
 	}
 }
 
+// TestBuild_hidesKnownSensitivePaths is the regression guard for ISS-03: it
+// asserts that every well-known secret path inner is expected to hide is in
+// fact hidden by the isolator. Removing an entry from the `sensitive` table in
+// bwrap.go (or letting the list rot as new tools appear) fails this test.
+func TestBuild_hidesKnownSensitivePaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	// Directories hidden with an empty --tmpfs overlay.
+	dirs := []string{
+		".ssh", ".gnupg",
+		".aws", ".config/gcloud", ".kube", ".azure",
+		".password-store", ".local/share/keyrings",
+		".config/gh", ".terraform.d", ".config/helm",
+		".mozilla", ".config/google-chrome", ".config/chromium", ".config/BraveSoftware",
+	}
+	for _, rel := range dirs {
+		p := filepath.Join(home, rel)
+		if !hasSeq(args, "--tmpfs", p) {
+			t.Errorf("expected sensitive dir ~/%s to be hidden with --tmpfs %s", rel, p)
+		}
+	}
+
+	// Files hidden by binding /dev/null over them.
+	files := []string{
+		".git-credentials", ".netrc", ".bash_history", ".zsh_history",
+		".docker/config.json", ".npmrc", ".pypirc", ".cargo/credentials", ".m2/settings.xml",
+	}
+	for _, rel := range files {
+		p := filepath.Join(home, rel)
+		if !hasSeq(args, "--bind", "/dev/null", p) {
+			t.Errorf("expected sensitive file ~/%s to be hidden with --bind /dev/null %s", rel, p)
+		}
+	}
+}
+
 func TestBuild_brokenSymlink_failsClosed(t *testing.T) {
 	// A sensitive path that exists as a broken symlink: Lstat succeeds but
 	// EvalSymlinks fails. Before the fix, Build silently used the unresolved

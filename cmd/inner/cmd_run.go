@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,6 +51,9 @@ type runCLIFlags struct {
 	timeout       int
 	dryRun        bool
 	yes           bool
+	// Remote-profile trust (only meaningful when the profile is an https URL).
+	sha256      string // expected SHA-256 of the downloaded profile; abort on mismatch
+	allowRemote bool   // acknowledge a remote profile's elevated access without an interactive prompt
 	// Resource limit overrides (highest priority in the resolution chain).
 	limitMemory string // e.g. "4G", "512M"
 	limitCPU    string // e.g. "200%" or "2.0" (cores)
@@ -73,10 +78,23 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		profileName = a.loader.DefaultProfileName()
 	}
 	// If the profile is a URL, download it to a temp file and use that path.
-	if config.IsURL(profileName) {
+	// A remote profile is untrusted input: it controls the whole sandbox
+	// (network, env inheritance, allow keys, entrypoint), so it is checksum-
+	// verified (if --sha256 is given) and gated by an explicit consent prompt
+	// before it can run with elevated access (see confirmRemoteProfile).
+	remoteProfile := config.IsURL(profileName)
+	if remoteProfile {
 		data, fetchErr := fetchRunProfileURL(profileName)
 		if fetchErr != nil {
 			return fmt.Errorf("downloading profile: %w", fetchErr)
+		}
+		if flags.sha256 != "" {
+			sum := sha256.Sum256(data)
+			got := hex.EncodeToString(sum[:])
+			want := strings.ToLower(strings.TrimSpace(flags.sha256))
+			if got != want {
+				return fmt.Errorf("remote profile checksum mismatch: expected %s, got %s", want, got)
+			}
 		}
 		tmp, tmpErr := os.CreateTemp("", "inner-profile-*.toml")
 		if tmpErr != nil {
@@ -89,6 +107,8 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		}
 		tmp.Close()
 		profileName = tmp.Name()
+	} else if flags.sha256 != "" {
+		fmt.Fprint(w, colorizeW(w, ansiBoldYellow, "warning")+": --sha256 is ignored for local profiles (only remote https profiles are checksum-verified)\n")
 	}
 	rc, err := a.loader.Build(profileName)
 	if err != nil {
@@ -124,6 +144,17 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	// 5. Apply CLI overrides.
 	if err := applyOverrides(rc, flags, extraArgs); err != nil {
 		return err
+	}
+
+	// 5-remote. Gate a remote (URL) profile that requests elevated access.
+	// Evaluated on the effective config so that user overrides (e.g.
+	// --no-network) can neutralise a danger and skip the prompt. --yes does
+	// NOT auto-accept this: remote code is a separate trust decision from the
+	// keyring-unlock confirmation that --yes covers.
+	if remoteProfile {
+		if err := confirmRemoteProfile(w, os.Stdin, rc, flags.allowRemote, flags.dryRun, stdinIsTerminal()); err != nil {
+			return err
+		}
 	}
 
 	// 5a. Warn if a declared ro mount is a subpath of the workdir.
@@ -495,6 +526,73 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 		rc.Entrypoint.Args = append(rc.Entrypoint.Args, flags.prompt)
 	}
 
+	return nil
+}
+
+// stdinIsTerminal reports whether stdin is an interactive terminal, so the
+// remote-profile gate knows whether it can prompt. A variable so tests can
+// override it.
+var stdinIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// confirmRemoteProfile gates a profile downloaded from a URL. Such a profile is
+// untrusted input that fully controls the sandbox, so it must not silently run
+// with elevated access.
+//
+// Rules:
+//   - inherit_all = true forwards the entire host environment (every secret) —
+//     it is refused outright unless --allow-remote is passed.
+//   - Any other escalation (network on, non-empty allow) triggers a summary and
+//     a blocking y/N prompt. --allow-remote pre-accepts; --dry-run only prints;
+//     a non-interactive stdin without --allow-remote is refused (fail closed).
+//   - A fully contained remote profile (no network, cleared env, nothing
+//     allowed) needs no confirmation: the sandbox contains the entrypoint.
+func confirmRemoteProfile(w io.Writer, in io.Reader, rc *config.RunConfig, allowRemote, dryRun, interactive bool) error {
+	// --dry-run only previews the resolved config and never executes anything,
+	// so there is nothing to gate.
+	if dryRun {
+		return nil
+	}
+	if rc.Env.InheritAll && !allowRemote {
+		return fmt.Errorf("remote profile requests inherit_all = true, forwarding ALL host environment variables (including secrets like AWS_*, GITHUB_TOKEN) into the sandbox; refused by default — review the source and pass --allow-remote to run it")
+	}
+
+	var dangers []string
+	if rc.Network {
+		dangers = append(dangers, "network access enabled (can reach any host)")
+	}
+	if rc.Env.InheritAll {
+		dangers = append(dangers, "inherit_all = true (full host environment forwarded)")
+	}
+	if len(rc.Allow) > 0 {
+		dangers = append(dangers, "allow = ["+strings.Join(rc.Allow, ", ")+"] (sensitive resources un-hidden)")
+	}
+	if len(dangers) == 0 {
+		return nil
+	}
+
+	fmt.Fprintln(w, colorizeW(w, ansiBoldYellow, "warning")+": this profile was downloaded from a URL and requests elevated access:")
+	for _, d := range dangers {
+		fmt.Fprintf(w, "  - %s\n", d)
+	}
+	entry := strings.TrimSpace(rc.Entrypoint.Cmd + " " + strings.Join(rc.Entrypoint.Args, " "))
+	if entry != "" {
+		fmt.Fprintf(w, "  entrypoint: %s\n", entry)
+	}
+
+	if allowRemote {
+		fmt.Fprintln(w, "proceeding because --allow-remote was passed.")
+		return nil
+	}
+	if !interactive {
+		return fmt.Errorf("remote profile requests elevated access and stdin is not a terminal; refused without confirmation — review the source and pass --allow-remote to run it")
+	}
+	fmt.Fprint(w, "continue? [y/N] ")
+	answer, _ := bufio.NewReader(in).ReadString('\n')
+	if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+		return fmt.Errorf("aborted: remote profile not confirmed")
+	}
 	return nil
 }
 
@@ -918,6 +1016,8 @@ to the entrypoint command.`,
 	cmd.Flags().IntVar(&flags.timeout, "timeout", 0, "Timeout in seconds (0 = none)")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Print the sandbox command without executing it")
 	cmd.Flags().BoolVarP(&flags.yes, "yes", "y", false, "Skip interactive confirmation prompts (e.g. keyring unlock)")
+	cmd.Flags().StringVar(&flags.sha256, "sha256", "", "Expected SHA-256 of a remote (https) profile; abort if it does not match")
+	cmd.Flags().BoolVar(&flags.allowRemote, "allow-remote", false, "Acknowledge a remote profile's elevated access (network, inherit_all, allow) without an interactive prompt")
 	cmd.Flags().StringVar(&flags.limitMemory, "limit-memory", "", "Override memory limit (e.g. \"4G\", \"512M\")")
 	cmd.Flags().StringVar(&flags.limitCPU, "limit-cpu", "", "Override CPU limit (e.g. \"200%\" or \"2.0\" cores)")
 	cmd.Flags().IntVar(&flags.limitPids, "limit-pids", 0, "Override max process count (0 = no override)")

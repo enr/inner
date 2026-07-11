@@ -228,6 +228,7 @@ func (c *Checker) Run() Report {
 		c.checkShimsActive(),
 		c.checkNetworkPolicy(),
 	}
+	results = append(results, c.checkExtraSensitive()...)
 	for _, cc := range c.Custom {
 		results = append(results, c.runCustomCheck(cc))
 	}
@@ -433,6 +434,52 @@ func (c *Checker) checkNetworkPolicy() CheckResult {
 	r.Passed = false
 	r.Detail = "TCP connection to 8.8.8.8:53 succeeded"
 	return r
+}
+
+// extraSensitiveChecks lists the home-relative sensitive resources hidden by
+// the isolator (see internal/isolator/bwrap.go). Each row produces a verify
+// check whose ID equals its [sandbox.allow] key, so declassification in Run()
+// works with no special-casing. Kept in sync with the isolator's sensitive
+// table by TestBuild_hidesKnownSensitivePaths.
+var extraSensitiveChecks = []struct {
+	id       string
+	name     string
+	rel      []string // home-relative paths; any present & non-empty → fail
+	dir      bool
+	severity Severity
+}{
+	{"gh-config", "~/.config/gh not accessible", []string{".config/gh"}, true, SeverityHigh},
+	{"terraform-credentials", "~/.terraform.d not accessible", []string{".terraform.d"}, true, SeverityHigh},
+	{"keyrings", "~/.local/share/keyrings not accessible", []string{".local/share/keyrings"}, true, SeverityHigh},
+	{"maven-settings", "~/.m2/settings.xml not accessible", []string{".m2/settings.xml"}, false, SeverityMedium},
+	{"helm-config", "~/.config/helm not accessible", []string{".config/helm"}, true, SeverityMedium},
+	{"browser-profiles", "browser profiles not accessible", []string{".mozilla", ".config/google-chrome", ".config/chromium", ".config/BraveSoftware"}, true, SeverityMedium},
+}
+
+// checkExtraSensitive runs the data-driven sensitive-path checks. A directory
+// fails when it exists and is non-empty; a file fails when it exists and is
+// non-empty. Missing or empty paths pass (nothing to leak).
+func (c *Checker) checkExtraSensitive() []CheckResult {
+	out := make([]CheckResult, 0, len(extraSensitiveChecks))
+	for _, e := range extraSensitiveChecks {
+		r := CheckResult{ID: e.id, Name: e.name, Severity: e.severity, Suggest: suggestAllow(e.id), Passed: true}
+		for _, rel := range e.rel {
+			path := filepath.Join(c.homeDir(), rel)
+			if e.dir {
+				if entries, err := os.ReadDir(path); err == nil && len(entries) > 0 {
+					r.Passed = false
+					r.Detail = "~/" + rel + " not empty"
+					break
+				}
+			} else if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+				r.Passed = false
+				r.Detail = "~/" + rel + " found"
+				break
+			}
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // ── Custom checks ─────────────────────────────────────────────────────────────

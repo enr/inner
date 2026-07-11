@@ -171,6 +171,21 @@ The following resources are hidden by default:
 | `podman-socket` | `/run/user/<uid>/podman/podman.sock` | `--bind /dev/null` |
 | `bash-history` | `~/.bash_history` | `--bind /dev/null` |
 | `zsh-history` | `~/.zsh_history` | `--bind /dev/null` |
+| `aws-credentials` | `~/.aws` | `--tmpfs` (empty dir) |
+| `gcloud-credentials` | `~/.config/gcloud` | `--tmpfs` (empty dir) |
+| `kube-config` | `~/.kube` | `--tmpfs` (empty dir) |
+| `azure-credentials` | `~/.azure` | `--tmpfs` (empty dir) |
+| `docker-config` | `~/.docker/config.json` | `--bind /dev/null` |
+| `npmrc` | `~/.npmrc` | `--bind /dev/null` |
+| `pypirc` | `~/.pypirc` | `--bind /dev/null` |
+| `cargo-credentials` | `~/.cargo/credentials` | `--bind /dev/null` |
+| `maven-settings` | `~/.m2/settings.xml` | `--bind /dev/null` |
+| `gh-config` | `~/.config/gh` | `--tmpfs` (empty dir) |
+| `terraform-credentials` | `~/.terraform.d` | `--tmpfs` (empty dir) |
+| `helm-config` | `~/.config/helm` | `--tmpfs` (empty dir) |
+| `password-store` | `~/.password-store` | `--tmpfs` (empty dir) |
+| `keyrings` | `~/.local/share/keyrings` | `--tmpfs` (empty dir) |
+| `browser-profiles` | `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware` | `--tmpfs` (empty dir) |
 
 Each entry is skipped when:
 

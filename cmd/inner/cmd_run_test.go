@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -752,6 +754,160 @@ func TestRunSandbox_URLProfile_fetchError(t *testing.T) {
 		t.Fatal("expected error for 404 URL profile, got nil")
 	}
 	if !strings.Contains(err.Error(), "downloading profile") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ── Remote profile trust (ISS-01) ─────────────────────────────────────────────
+
+func TestConfirmRemoteProfile(t *testing.T) {
+	rcWith := func(f func(*config.RunConfig)) *config.RunConfig {
+		rc := &config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "/bin/sh"}}
+		f(rc)
+		return rc
+	}
+
+	tests := []struct {
+		name        string
+		rc          *config.RunConfig
+		allowRemote bool
+		dryRun      bool
+		interactive bool
+		input       string
+		wantErr     string // substring; "" means expect success
+	}{
+		{
+			name: "no escalation passes",
+			rc:   rcWith(func(*config.RunConfig) {}),
+		},
+		{
+			name:    "inherit_all refused without allow-remote",
+			rc:      rcWith(func(rc *config.RunConfig) { rc.Env.InheritAll = true }),
+			wantErr: "inherit_all",
+		},
+		{
+			name:        "inherit_all accepted with allow-remote",
+			rc:          rcWith(func(rc *config.RunConfig) { rc.Env.InheritAll = true }),
+			allowRemote: true,
+		},
+		{
+			name:        "inherit_all refused even in interactive (hard block)",
+			rc:          rcWith(func(rc *config.RunConfig) { rc.Env.InheritAll = true }),
+			interactive: true,
+			input:       "y\n",
+			wantErr:     "inherit_all",
+		},
+		{
+			name:        "network accepted with allow-remote",
+			rc:          rcWith(func(rc *config.RunConfig) { rc.Network = true }),
+			allowRemote: true,
+		},
+		{
+			name:   "network passes in dry-run",
+			rc:     rcWith(func(rc *config.RunConfig) { rc.Network = true }),
+			dryRun: true,
+		},
+		{
+			name:    "network refused when non-interactive",
+			rc:      rcWith(func(rc *config.RunConfig) { rc.Network = true }),
+			wantErr: "not a terminal",
+		},
+		{
+			name:        "network confirmed interactively with y",
+			rc:          rcWith(func(rc *config.RunConfig) { rc.Network = true }),
+			interactive: true,
+			input:       "y\n",
+		},
+		{
+			name:        "network declined interactively with n",
+			rc:          rcWith(func(rc *config.RunConfig) { rc.Network = true }),
+			interactive: true,
+			input:       "n\n",
+			wantErr:     "aborted",
+		},
+		{
+			name:    "allow keys trigger the gate",
+			rc:      rcWith(func(rc *config.RunConfig) { rc.Allow = []string{"ssh-keys"} }),
+			wantErr: "not a terminal",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := confirmRemoteProfile(&buf, strings.NewReader(tt.input), tt.rc, tt.allowRemote, tt.dryRun, tt.interactive)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRunSandbox_URLProfile_sha256Match(t *testing.T) {
+	srv := newRunProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(urlProfileTOML))
+	}))
+	sum := sha256.Sum256([]byte(urlProfileTOML))
+	hash := hex.EncodeToString(sum[:])
+
+	app, _ := newRunTestApp(t)
+	if err := app.runSandbox(&bytes.Buffer{}, runCLIFlags{dryRun: true, profile: srv.URL + "/p.toml", sha256: hash}, nil); err != nil {
+		t.Fatalf("runSandbox with matching sha256: %v", err)
+	}
+}
+
+func TestRunSandbox_URLProfile_sha256Mismatch(t *testing.T) {
+	srv := newRunProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(urlProfileTOML))
+	}))
+
+	app, _ := newRunTestApp(t)
+	err := app.runSandbox(&bytes.Buffer{}, runCLIFlags{dryRun: true, profile: srv.URL + "/p.toml", sha256: strings.Repeat("0", 64)}, nil)
+	if err == nil {
+		t.Fatal("expected checksum mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRunSandbox_URLProfile_inheritAllRefused(t *testing.T) {
+	const profileTOML = `schema_version = "1"
+name = "evil"
+
+[sandbox]
+network = true
+
+[env]
+inherit_all = true
+
+[entrypoint]
+cmd = "/bin/sh"
+interactive = false
+`
+	srv := newRunProfileTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(profileTOML))
+	}))
+
+	app, _ := newRunTestApp(t)
+	// Not a dry-run, no --allow-remote: the gate must refuse before launch.
+	err := app.runSandbox(&bytes.Buffer{}, runCLIFlags{profile: srv.URL + "/evil.toml"}, nil)
+	if err == nil {
+		t.Fatal("expected inherit_all refusal, got nil")
+	}
+	if !strings.Contains(err.Error(), "inherit_all") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

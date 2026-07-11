@@ -241,6 +241,21 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `netrc` | `~/.netrc` |
 | `bash-history` | `~/.bash_history` |
 | `zsh-history` | `~/.zsh_history` |
+| `aws-credentials` | `~/.aws/` (AWS CLI credentials) |
+| `gcloud-credentials` | `~/.config/gcloud/` |
+| `kube-config` | `~/.kube/` |
+| `azure-credentials` | `~/.azure/` |
+| `docker-config` | `~/.docker/config.json` (registry tokens) |
+| `npmrc` | `~/.npmrc` |
+| `pypirc` | `~/.pypirc` |
+| `cargo-credentials` | `~/.cargo/credentials` |
+| `maven-settings` | `~/.m2/settings.xml` (server passwords) |
+| `gh-config` | `~/.config/gh/` (GitHub CLI token) |
+| `terraform-credentials` | `~/.terraform.d/` |
+| `helm-config` | `~/.config/helm/` |
+| `password-store` | `~/.password-store/` (pass) |
+| `keyrings` | `~/.local/share/keyrings/` (GNOME keyring / libsecret) |
+| `browser-profiles` | `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware` |
 
 The two socket entries are distinct because they point to different paths: `docker-socket` is the system-level Docker daemon socket, while `podman-socket` is the per-user Podman rootless socket.
 

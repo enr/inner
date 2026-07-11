@@ -42,9 +42,11 @@ type Profile struct {
 var ValidAllowKeys = []string{
 	"ssh-keys", "git-credentials", "gpg-keys",
 	"docker-socket", "podman-socket", "nested-user-ns", "netrc",
+	"bash-history", "zsh-history",
 	"aws-credentials", "gcloud-credentials", "kube-config", "azure-credentials",
-	"docker-config", "npmrc", "pypirc", "cargo-credentials",
-	"password-store",
+	"docker-config", "npmrc", "pypirc", "cargo-credentials", "maven-settings",
+	"gh-config", "terraform-credentials", "helm-config",
+	"password-store", "keyrings", "browser-profiles",
 	// Verify-only declassification keys (no filesystem hide action).
 	"env-secrets", "shims-active", "network-policy",
 }

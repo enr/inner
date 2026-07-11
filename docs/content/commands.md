@@ -42,6 +42,8 @@ inner run [flags] [-- extra-args]
 | `--limit-cpu` | | string | resolved (see profiles) | Override the CPU cap (`"200%"` or `"2.0"` cores). |
 | `--limit-pids` | | int | resolved (see profiles) | Override the max process count (`0` = no override, keep the resolved value). |
 | `--dry-run` | | bool | false | Print the resolved config and `bwrap` command without executing |
+| `--sha256` | | string | — | Expected SHA-256 of a remote (`https://…`) profile. The download is aborted if the content hash does not match. Ignored for local profiles. |
+| `--allow-remote` | | bool | false | Acknowledge that a remote profile may request elevated access (`network`, `inherit_all`, `allow`) and run it without the interactive confirmation prompt. |
 
 ### Extra arguments
 
@@ -110,7 +112,22 @@ inner run -p claude-interactive --dry-run
 
 # Use a profile from a URL (downloaded for this run only, not saved)
 inner run -p https://raw.githubusercontent.com/acme/profiles/main/claude-restricted.toml
+
+# Pin the exact content and run unattended (CI): mismatch aborts, no prompt
+inner run -p https://acme.example/claude.toml --sha256 <hash> --allow-remote
 ```
+
+> **Remote profiles are untrusted input.** A downloaded profile controls the
+> whole sandbox — `network`, environment inheritance, `allow` keys, and the
+> entrypoint — so `inner` treats it defensively:
+>
+> - `inherit_all = true` from a remote source is **refused** unless you pass
+>   `--allow-remote` (it would forward every host secret into the sandbox).
+> - Any other elevated request (`network`, non-empty `allow`) prints a summary
+>   and asks for confirmation before running. `--yes` does **not** auto-accept
+>   this — remote code is a separate trust decision. Use `--allow-remote` to
+>   pre-accept in scripts, or `--sha256 <hash>` to pin the exact content so it
+>   cannot change between runs.
 
 `--dry-run` prints the resolved profile, config file paths, effective sandbox settings, and the
 `bwrap` command that would be executed. The local config line is always shown so you can confirm

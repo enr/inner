@@ -331,8 +331,20 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			{"npmrc", filepath.Join(home, ".npmrc"), false},
 			{"pypirc", filepath.Join(home, ".pypirc"), false},
 			{"cargo-credentials", filepath.Join(home, ".cargo", "credentials"), false},
-			// Password managers.
+			{"maven-settings", filepath.Join(home, ".m2", "settings.xml"), false},
+			// Infra / CLI tool credentials.
+			{"gh-config", filepath.Join(home, ".config", "gh"), true},
+			{"terraform-credentials", filepath.Join(home, ".terraform.d"), true},
+			{"helm-config", filepath.Join(home, ".config", "helm"), true},
+			// Password managers / OS keyrings.
 			{"password-store", filepath.Join(home, ".password-store"), true},
+			{"keyrings", filepath.Join(home, ".local", "share", "keyrings"), true},
+			// Browser profiles (cookies, saved sessions, stored tokens). All map
+			// to the single "browser-profiles" allow key.
+			{"browser-profiles", filepath.Join(home, ".mozilla"), true},
+			{"browser-profiles", filepath.Join(home, ".config", "google-chrome"), true},
+			{"browser-profiles", filepath.Join(home, ".config", "chromium"), true},
+			{"browser-profiles", filepath.Join(home, ".config", "BraveSoftware"), true},
 		}
 
 		for _, r := range sensitive {

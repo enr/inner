@@ -29,8 +29,17 @@ sbloccano credenziali, audit e rollback.
 
 ## P0 — Sicurezza e correttezza da sistemare subito
 
-### ISS-01 · Remote profiles: blocking consent + `--sha256` pinning
+### ISS-01 · Remote profiles: blocking consent + `--sha256` pinning ✅ DONE
 `security` · **P0** · Size M · Fonti: SECURITY_REVIEW #2, NONO_COMPARISON S5 · **Enabler** per ISS-23, ISS-27
+
+> **Fatto.** `cmd/inner/cmd_run.go`: flag `--sha256` (verifica dell'hash del
+> profilo remoto, abort su mismatch) e `--allow-remote`; nuova
+> `confirmRemoteProfile` che rifiuta `inherit_all` da sorgente remota salvo
+> `--allow-remote`, e per `network`/`allow` mostra un riepilogo e richiede
+> conferma bloccante (non auto-accettata da `--yes`; fail-closed se stdin non è
+> un terminale; il `--dry-run` resta solo anteprima). Test:
+> `TestConfirmRemoteProfile`, `TestRunSandbox_URLProfile_sha256Match/Mismatch`,
+> `TestRunSandbox_URLProfile_inheritAllRefused`. Doc: `commands.md`.
 
 Un profilo TOML scaricato da URL controlla l'intera sandbox (`network`,
 `inherit_all`, `allow`, entrypoint) senza conferma né verifica di integrità:
@@ -54,8 +63,18 @@ Fix: `Lstat` su ogni entry; i symlink si saltano (o si ricreano con
 *Acceptance:* test con symlink verso un file fuori dall'albero sorgente: il
 contenuto non deve comparire nella copia.
 
-### ISS-03 · Estendere la denylist dei path sensibili + test di regressione
+### ISS-03 · Estendere la denylist dei path sensibili + test di regressione ✅ DONE
 `security` · **P0** · Size S · Fonte: SECURITY_REVIEW #1 (mitigazione a breve termine)
+
+> **Fatto.** `internal/isolator/bwrap.go`: aggiunti alla tabella `sensitive`
+> `~/.config/gh`, `~/.terraform.d`, `~/.config/helm`, `~/.m2/settings.xml`,
+> `~/.local/share/keyrings` e i profili browser (`~/.mozilla`,
+> `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware`,
+> chiave unica `browser-profiles`). Nuove chiavi in `config.ValidAllowKeys`
+> (incluse `bash-history`/`zsh-history`, prima mancanti). Check di `inner
+> verify` data-driven in `internal/sandbox/checker.go` (`checkExtraSensitive`).
+> Test di regressione `TestBuild_hidesKnownSensitivePaths` che fallisce se un
+> path noto non è coperto. Doc: `profiles.md`, `internals.md`.
 
 Quick win in attesa di ISS-04: aggiungere alla tabella `sensitive` di
 `internal/isolator/bwrap.go` i path noti mancanti (`~/.config/gh`,
@@ -340,7 +359,7 @@ che in file leggibili dall'agente.
 
 | Priorità | Issue |
 |---|---|
-| **P0** | ISS-01 remote profile trust · ISS-02 symlink nelle copie · ISS-03 estensione denylist |
+| **P0** | ISS-01 remote profile trust ✅ · ISS-02 symlink nelle copie · ISS-03 estensione denylist ✅ |
 | **P1** | ISS-04 home isolata · ISS-05 proxy rete allowlist · ISS-06 credential injection · ISS-07 sign-off TUI/PID-ns · ISS-08 run-ID + `--json` |
 | **P2** | ISS-09 parseMount · ISS-10 rollback workspace · ISS-11 extractExpiresAt · ISS-12 checkUsrReadonly · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ISS-17 profile explain · ISS-18 triage bwrap |
 | **P3** | ISS-19…ISS-30 |
