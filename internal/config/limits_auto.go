@@ -15,9 +15,10 @@ import (
 // by per-profile [sandbox.limits] and CLI flags.
 //
 // Algorithm:
-//   Memory: half of total RAM, capped at [512M, 8G].
-//   CPU:    50 % of logical CPUs (minimum 100 %).
-//   Pids:   512 (conservative default for agent workloads).
+//
+//	Memory: half of total RAM, capped at [512M, 8G].
+//	CPU:    50 % of logical CPUs (minimum 100 %).
+//	Pids:   512 (conservative default for agent workloads).
 func AutoLimits() ResourceLimits {
 	return ResourceLimits{
 		Memory: autoMemory(),

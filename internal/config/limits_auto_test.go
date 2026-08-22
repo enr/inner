@@ -33,8 +33,8 @@ func TestMemoryStringFromTotalKB(t *testing.T) {
 		want    string
 	}{
 		// below 512 MB half → clamp to "512M"
-		{256 * 1024, "512M"},      // 256 MB total → half 128 MB → clamped
-		{800 * 1024, "512M"},      // 800 MB total → half 400 MB → clamped
+		{256 * 1024, "512M"}, // 256 MB total → half 128 MB → clamped
+		{800 * 1024, "512M"}, // 800 MB total → half 400 MB → clamped
 		// exactly 512 MB half (1 GB total) → "512M"
 		{1024 * 1024, "512M"},
 		// 1 GB half → "1G"
