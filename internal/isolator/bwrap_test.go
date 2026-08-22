@@ -51,6 +51,17 @@ func hasFlag(args []string, flag string) bool {
 	return slices.Contains(args, flag)
 }
 
+// lastIndexOfSeq returns the index of the last occurrence of the subsequence
+// needle in args, or -1 if absent.
+func lastIndexOfSeq(args []string, needle ...string) int {
+	for i := len(args) - len(needle); i >= 0; i-- {
+		if slices.Equal(args[i:i+len(needle)], needle) {
+			return i
+		}
+	}
+	return -1
+}
+
 // hasSeq reports whether the subsequence needle appears in args.
 func hasSeq(args []string, needle ...string) bool {
 	for i := 0; i <= len(args)-len(needle); i++ {
@@ -1037,5 +1048,73 @@ func TestAvailable_false(t *testing.T) {
 	}
 	if msg == "" {
 		t.Error("expected non-empty diagnostic message")
+	}
+}
+
+// ── containers.conf override (rootless podman) ───────────────────────────────
+
+func TestBuild_containersConf_boundAndExported(t *testing.T) {
+	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:              []string{"nested-user-ns"},
+		ContainersConfPath: "/tmp/inner-containers-abc/containers.conf",
+		Entrypoint:         config.Entrypoint{Cmd: "sh"},
+	})
+
+	const sandboxPath = "/tmp/inner/containers.conf"
+	if !hasSeq(args, "--ro-bind", "/tmp/inner-containers-abc/containers.conf", sandboxPath) {
+		t.Errorf("expected containers.conf bound at %q, got %v", sandboxPath, args)
+	}
+	if !hasSeq(args, "--setenv", "CONTAINERS_CONF_OVERRIDE", sandboxPath) {
+		t.Errorf("expected CONTAINERS_CONF_OVERRIDE=%q, got %v", sandboxPath, args)
+	}
+	// The host tmp layout must not leak into the sandbox.
+	if hasSeq(args, "--ro-bind", "/tmp/inner-containers-abc/containers.conf", "/tmp/inner-containers-abc/containers.conf") {
+		t.Errorf("containers.conf must not be mounted at its host path, got %v", args)
+	}
+}
+
+// Without nested-user-ns nothing runs containers inside the sandbox, so the
+// override must not be emitted even if a path somehow ended up in the config.
+func TestBuild_containersConf_ignoredWithoutNestedUserNs(t *testing.T) {
+	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		ContainersConfPath: "/tmp/inner-containers-abc/containers.conf",
+		Entrypoint:         config.Entrypoint{Cmd: "sh"},
+	})
+	if hasSeq(args, "--setenv", "CONTAINERS_CONF_OVERRIDE") {
+		t.Errorf("CONTAINERS_CONF_OVERRIDE must not be set without nested-user-ns, got %v", args)
+	}
+}
+
+func TestBuild_containersConf_absentWhenUnset(t *testing.T) {
+	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"nested-user-ns"},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if hasSeq(args, "--setenv", "CONTAINERS_CONF_OVERRIDE") {
+		t.Errorf("no override generated: CONTAINERS_CONF_OVERRIDE must be absent, got %v", args)
+	}
+}
+
+// Regression: bwrap applies --clearenv when it parses it, so a --setenv
+// emitted earlier is wiped. The override must be exported AFTER the
+// environment section.
+func TestBuild_containersConf_setenvAfterClearenv(t *testing.T) {
+	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:              []string{"nested-user-ns"},
+		ContainersConfPath: "/tmp/inner-containers-abc/containers.conf",
+		Entrypoint:         config.Entrypoint{Cmd: "sh"},
+	})
+
+	clearenv := slices.Index(args, "--clearenv")
+	setenv := lastIndexOfSeq(args, "--setenv", "CONTAINERS_CONF_OVERRIDE", "/tmp/inner/containers.conf")
+	if clearenv < 0 || setenv < 0 {
+		t.Fatalf("expected both --clearenv and the override --setenv, got %v", args)
+	}
+	if setenv < clearenv {
+		t.Errorf("--setenv CONTAINERS_CONF_OVERRIDE must come after --clearenv, got %v", args)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/enr/inner/internal/config"
+	"github.com/enr/inner/internal/containers"
 	"github.com/enr/inner/internal/runtime"
 )
 
@@ -387,6 +388,34 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		// Shims must win over everything else, including path_prepend, so the
 		// shim mount is prefixed onto the same effective PATH computed above.
 		args = append(args, "--setenv", "PATH", shimMount+":"+sandboxPathBeforeShim(cfg))
+	}
+
+	// ── containers.conf override (rootless podman) ───────────────────────────
+	// Rootless podman defaults to cgroup_manager = "systemd", which cannot work
+	// inside the sandbox: the transient scope is created through
+	// StartTransientUnit on the user D-Bus, and polkit resolves the caller via
+	// /proc in the HOST pid namespace — the sandbox has its own, so
+	// allow_active never matches and the call is denied ("requires interactive
+	// authentication"). The generated override (see internal/containers)
+	// selects cgroupfs instead; podman merges it on top of the user's own
+	// containers.conf files, which stay untouched.
+	//
+	// Only relevant when nested-user-ns is allowed: nothing else runs
+	// containers from inside the sandbox.
+	//
+	// This block MUST stay after the environment section: bwrap applies
+	// --clearenv when it parses it, wiping any variable set by an earlier
+	// --setenv. A profile that sets CONTAINERS_CONF_OVERRIDE in [env] set
+	// still wins, because in that case cmd_run.go skips the generation
+	// entirely and ContainersConfPath is empty.
+	if cfg.ContainersConfPath != "" && isAllowed(cfg.Allow, "nested-user-ns") {
+		// Mounted at a fixed in-sandbox path rather than the host tmp path so
+		// the host tmp layout is not leaked. /tmp is already a writable tmpfs,
+		// so --dir does not touch the read-only root.
+		const sandboxContainersConf = "/tmp/inner/containers.conf"
+		args = append(args, "--dir", "/tmp/inner")
+		args = append(args, "--ro-bind", cfg.ContainersConfPath, sandboxContainersConf)
+		args = append(args, "--setenv", containers.OverrideEnvVar, sandboxContainersConf)
 	}
 
 	// ── Git config injection ─────────────────────────────────────────────────

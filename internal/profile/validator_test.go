@@ -689,3 +689,57 @@ func TestValidate_envSetPath_workspacesPathToken_skipped(t *testing.T) {
 		}
 	}
 }
+
+// ── [sandbox] cgroup_manager ─────────────────────────────────────────────────
+
+// hasIssue reports whether any issue at the given level mentions substr.
+func hasIssue(r *Result, level Level, substr string) bool {
+	for _, i := range r.Issues {
+		if i.Level == level && strings.Contains(i.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestValidate_cgroupManager_invalidValueIsError(t *testing.T) {
+	p := &config.Profile{
+		Sandbox:    config.SandboxConfig{Allow: []string{"nested-user-ns"}, CgroupManager: "kubelet"},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if !r.HasErrors() {
+		t.Fatalf("invalid cgroup_manager must be an error: %v", r.Issues)
+	}
+	if !hasIssue(&r, LevelError, "invalid cgroup_manager") {
+		t.Errorf("expected error mentioning invalid cgroup_manager, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_cgroupManager_withoutNestedUserNs_warns(t *testing.T) {
+	p := &config.Profile{
+		Sandbox:    config.SandboxConfig{CgroupManager: "cgroupfs"},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if r.HasErrors() {
+		t.Fatalf("expected warning, not error: %v", r.Issues)
+	}
+	if !hasIssue(&r, LevelWarning, "no effect without nested-user-ns") {
+		t.Errorf("expected warning about missing nested-user-ns, got: %v", r.Issues)
+	}
+}
+
+func TestValidate_cgroupManager_systemd_warnsAboutScopeFailure(t *testing.T) {
+	p := &config.Profile{
+		Sandbox:    config.SandboxConfig{Allow: []string{"nested-user-ns"}, CgroupManager: "systemd"},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if r.HasErrors() {
+		t.Fatalf("expected warning, not error: %v", r.Issues)
+	}
+	if !hasIssue(&r, LevelWarning, "transient scope") {
+		t.Errorf("expected warning about the transient scope, got: %v", r.Issues)
+	}
+}

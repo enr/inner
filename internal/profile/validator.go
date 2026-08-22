@@ -232,6 +232,19 @@ func Validate(p *config.Profile, workDir string) Result {
 		}
 	}
 
+	// 3b. Validate [sandbox] cgroup_manager. An unknown value is an error:
+	// silently falling back to the default would hide a typo that only shows
+	// up as an obscure podman failure inside the sandbox.
+	if cm := p.Sandbox.CgroupManager; cm != "" {
+		if !slices.Contains(config.ValidCgroupManagers, cm) {
+			r.addError(fmt.Sprintf("invalid cgroup_manager %q (valid values: %v)", cm, config.ValidCgroupManagers))
+		} else if !slices.Contains(p.Sandbox.Allow, "nested-user-ns") {
+			r.addWarning("cgroup_manager has no effect without nested-user-ns in [sandbox] allow")
+		} else if cm == "systemd" {
+			r.addWarning(`cgroup_manager = "systemd" disables the containers.conf override: rootless podman inside the sandbox will fail to create its transient scope unless the sandbox shares the host PID namespace and can reach the user systemd socket`)
+		}
+	}
+
 	// 4. Verify entrypoint.cmd is reachable in PATH (warning only).
 	if p.Entrypoint.Cmd != "" {
 		if _, err := exec.LookPath(p.Entrypoint.Cmd); err != nil {

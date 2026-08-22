@@ -135,6 +135,28 @@ This key enables rootless container runtimes (podman, docker rootless) to work i
 
 `/var/tmp` is overlaid with a tmpfs because podman uses it as scratch space during image pulls, and the host root is bound read-only. `/dev/net/tun` is bound explicitly because bwrap's minimal devtmpfs omits it, but it is required by pasta (podman's rootless network backend).
 
+#### Cgroup manager: the injected `containers.conf`
+
+Rootless podman defaults to `cgroup_manager = "systemd"`, which asks the user systemd manager over D-Bus to create a transient scope (`StartTransientUnit`) with cgroup delegation. That request always fails inside the sandbox, and the failure is *not* a cgroup error: polkit identifies the D-Bus caller by resolving its PID through `/proc` in the **host** PID namespace, while the sandbox has its own (see [`--unshare-pid`](#process-isolation---unshare-pid)). No local active session is found, so `allow_active` on `org.freedesktop.systemd1.manage-units` does not apply, the call falls back to `auth_admin`, and a non-interactive session gets:
+
+```
+Access denied as the requested operation requires interactive authentication
+```
+
+Two more independent blocks stack on top: profiles that tmpfs `/run/user/<uid>` also hide `systemd/`, so the private `systemctl --user` transport is unavailable; and `/sys/fs/cgroup` arrives read-only from `--ro-bind / /` with no cgroup namespace of our own.
+
+The three ways to make podman's default work are all rejected on security grounds:
+
+| Option | Why not |
+|--------|---------|
+| Share the host PID namespace | Undoes the `/proc/<pid>/environ` protection above |
+| Bind `/run/user/<uid>/systemd/` | The user manager does not consult polkit for same-uid callers, so the sandbox could start arbitrary host units — a full escape |
+| A permissive polkit rule | Changes the **host** security posture to accommodate a sandbox |
+
+So `Build` instead binds a generated `containers.conf` fragment (`internal/containers`) at `/tmp/inner/containers.conf` and exports `CONTAINERS_CONF_OVERRIDE`, which podman merges on top of the user's own files. The generation happens in `applyContainersConf` (`cmd_run.go`, mirrored in `cmd_verify.go`) so `Build` stays side-effect free, matching the shim-dir and gitconfig patterns. The `--setenv` is emitted inside the `nested-user-ns` block, i.e. *before* the `[env] set` loop, so a profile that sets `CONTAINERS_CONF_OVERRIDE` itself still wins (bwrap honours the last `--setenv` for a key).
+
+Consequence: per-container resource limits (`--memory`, `--cpus`, `--pids-limit`) are unavailable inside the sandbox. This is consistent with `wrapWithLimits`, which already skips the `systemd-run --scope` wrapper when `nested-user-ns` is active. `[sandbox] cgroup_manager = "systemd"` opts out of the injection.
+
 ### Environment
 
 ```go

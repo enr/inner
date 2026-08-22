@@ -38,6 +38,14 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 		cleanups = append(cleanups, func() error { return os.RemoveAll(shimDir) })
 	}
 
+	// Generate the containers.conf override for rootless podman inside the
+	// sandbox, so [verify.custom] checks see the same environment as inner run.
+	cleanupContainers, err := applyContainersConf(rc)
+	if err != nil {
+		return fmt.Errorf("containers config: %w", err)
+	}
+	defer cleanupContainers()
+
 	// Resolve the inner binary path so it can be invoked inside the sandbox.
 	// os.Executable() returns the real path; with --ro-bind / / it is accessible
 	// at the same path inside.

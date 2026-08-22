@@ -205,6 +205,7 @@ Controls top-level sandbox behavior.
 | `clipboard` | bool | `false` | Forward clipboard (requires display server) |
 | `pid_namespace` | bool | `true` | Give the sandbox a private PID namespace (`--unshare-pid`). See below. |
 | `allow` | list | `[]` | Explicitly permit sensitive resources (see below) |
+| `cgroup_manager` | string | auto (`cgroupfs`) | Cgroup manager used by rootless Podman **inside** the sandbox. Only meaningful with `nested-user-ns`. See [`cgroup_manager`](#cgroup_manager-rootless-podman-inside-the-sandbox). |
 | `limits` | table | auto-detected | CPU / memory / process-count caps for the run (see [`[sandbox.limits]`](#sandbox-limits-resource-limits)) |
 
 ### `pid_namespace` — process isolation
@@ -260,6 +261,51 @@ The two socket entries are distinct because they point to different paths: `dock
 [sandbox]
 network = true
 allow = ["ssh-keys", "git-credentials"]
+```
+
+### `cgroup_manager` — rootless Podman inside the sandbox {#cgroup_manager-rootless-podman-inside-the-sandbox}
+
+Rootless Podman defaults to `cgroup_manager = "systemd"`: to obtain a writable
+cgroup v2 subtree it asks the user systemd manager, over D-Bus, to create a
+transient scope (`StartTransientUnit`). That call cannot succeed inside an
+`inner` sandbox: polkit identifies the D-Bus caller by resolving its PID
+through `/proc` in the **host** PID namespace, while the sandbox has its own
+(`--unshare-pid`). No local active session is found, `allow_active` does not
+apply, and the call is denied with:
+
+```
+Access denied as the requested operation requires interactive authentication
+```
+
+So whenever `nested-user-ns` is in `allow`, `inner` generates a small
+`containers.conf` fragment selecting `cgroupfs`, mounts it read-only at
+`/tmp/inner/containers.conf` and exports `CONTAINERS_CONF_OVERRIDE`. Podman
+**merges** that file on top of the regular configuration, so
+`~/.config/containers/containers.conf` is left untouched and your interactive
+host session keeps using `systemd` with working resource limits. It also
+applies to Podman invocations made indirectly by other tools inside the
+sandbox (for example a Maven native build with
+`quarkus.native.container-build=true`).
+
+With `cgroupfs` and no resource request Podman does not create a scope at all:
+the container stays in the cgroup of its parent process. The only cost is that
+per-container limits (`--memory`, `--cpus`, `--pids-limit`) are not
+enforceable inside the sandbox — consistent with `inner` already skipping its
+own `systemd-run` scope when `nested-user-ns` is active.
+
+| Value | Effect |
+|-------|--------|
+| unset (default) | Inject the override with `cgroupfs` when `nested-user-ns` is allowed; do nothing otherwise |
+| `"cgroupfs"` | Same as the default, stated explicitly |
+| `"systemd"` | Do **not** inject anything — Podman keeps its own default. Only useful on a sandbox that shares the host PID namespace (`pid_namespace = false`) and can reach the user systemd socket |
+
+A profile that sets `CONTAINERS_CONF_OVERRIDE` itself in `[env] set` always
+wins: `inner` skips the generation entirely and does not override the variable.
+
+```toml
+[sandbox]
+allow = ["podman-socket", "nested-user-ns"]
+# cgroup_manager = "systemd"   # opt out of the injected override
 ```
 
 ### `[sandbox.limits]` — resource limits {#sandbox-limits-resource-limits}

@@ -941,3 +941,81 @@ func TestWorkdirCoversHome(t *testing.T) {
 		t.Error("empty home must never be covered")
 	}
 }
+
+// ── containers.conf override (rootless podman) ───────────────────────────────
+
+func TestApplyContainersConf_generatesForNestedUserNs(t *testing.T) {
+	rc := &config.RunConfig{Allow: []string{"nested-user-ns"}}
+	cleanup, err := applyContainersConf(rc)
+	if err != nil {
+		t.Fatalf("applyContainersConf: %v", err)
+	}
+	defer cleanup()
+
+	if rc.ContainersConfPath == "" {
+		t.Fatal("expected a generated containers.conf path")
+	}
+	b, err := os.ReadFile(rc.ContainersConfPath)
+	if err != nil {
+		t.Fatalf("reading generated file: %v", err)
+	}
+	if !strings.Contains(string(b), `cgroup_manager = "cgroupfs"`) {
+		t.Errorf("expected cgroupfs override, got:\n%s", b)
+	}
+
+	cleanup()
+	if _, err := os.Stat(rc.ContainersConfPath); !os.IsNotExist(err) {
+		t.Errorf("cleanup must remove the generated file, stat err = %v", err)
+	}
+}
+
+func TestApplyContainersConf_noopWithoutNestedUserNs(t *testing.T) {
+	rc := &config.RunConfig{}
+	cleanup, err := applyContainersConf(rc)
+	if err != nil {
+		t.Fatalf("applyContainersConf: %v", err)
+	}
+	defer cleanup()
+	if rc.ContainersConfPath != "" {
+		t.Errorf("expected no override without nested-user-ns, got %q", rc.ContainersConfPath)
+	}
+}
+
+func TestApplyContainersConf_optOutWithSystemd(t *testing.T) {
+	rc := &config.RunConfig{Allow: []string{"nested-user-ns"}, CgroupManager: "systemd"}
+	cleanup, err := applyContainersConf(rc)
+	if err != nil {
+		t.Fatalf("applyContainersConf: %v", err)
+	}
+	defer cleanup()
+	if rc.ContainersConfPath != "" {
+		t.Errorf(`cgroup_manager = "systemd" must skip the override, got %q`, rc.ContainersConfPath)
+	}
+}
+
+func TestApplyContainersConf_profileEnvSetTakesOver(t *testing.T) {
+	rc := &config.RunConfig{
+		Allow: []string{"nested-user-ns"},
+		Env:   config.EnvConfig{Set: map[string]string{"CONTAINERS_CONF_OVERRIDE": "/custom/containers.conf"}},
+	}
+	cleanup, err := applyContainersConf(rc)
+	if err != nil {
+		t.Fatalf("applyContainersConf: %v", err)
+	}
+	defer cleanup()
+	if rc.ContainersConfPath != "" {
+		t.Errorf("profile-provided CONTAINERS_CONF_OVERRIDE must skip generation, got %q", rc.ContainersConfPath)
+	}
+}
+
+func TestApplyContainersConf_explicitCgroupfs(t *testing.T) {
+	rc := &config.RunConfig{Allow: []string{"nested-user-ns"}, CgroupManager: "cgroupfs"}
+	cleanup, err := applyContainersConf(rc)
+	if err != nil {
+		t.Fatalf("applyContainersConf: %v", err)
+	}
+	defer cleanup()
+	if rc.ContainersConfPath == "" {
+		t.Error("expected a generated containers.conf path")
+	}
+}

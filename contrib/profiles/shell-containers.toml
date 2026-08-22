@@ -5,6 +5,10 @@ description = "Interactive bash shell with Podman rootless container support"
 [sandbox]
 network = true
 allow   = ["nested-user-ns", "podman-socket"]
+# nested-user-ns also makes inner inject a containers.conf override selecting
+# cgroup_manager = "cgroupfs": podman's default (systemd) cannot create its
+# transient scope from inside a private PID namespace. Set
+# cgroup_manager = "systemd" here to opt out. See docs: profiles.md#sandbox.
 
 # ${UID} is expanded at load time to the numeric UID of the current user.
 # Requires `podman system service` running on the host before `inner run`.

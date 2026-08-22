@@ -37,6 +37,15 @@ type RunConfig struct {
 	// Capabilities lists the named tool integrations active for this run.
 	// Populated from Profile.Capabilities; inherited via extends.
 	Capabilities []string
+	// CgroupManager is the cgroup manager rootless container runtimes should
+	// use inside the sandbox, as declared in [sandbox] cgroup_manager.
+	// Empty means "auto" (see SandboxConfig.CgroupManager). Only consulted
+	// when "nested-user-ns" is in Allow.
+	CgroupManager string
+	// ContainersConfPath is the path to the generated containers.conf override
+	// injected into the sandbox for rootless podman. Empty when no override is
+	// active. Set by cmd_run.go / cmd_verify.go via applyContainersConf().
+	ContainersConfPath string
 	// ShimDir is the path to the directory containing shim scripts.
 	// Empty if no noop config is active. Set by cmd_run.go after shim.Builder.Build().
 	ShimDir string

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/enr/inner/internal/config"
+	"github.com/enr/inner/internal/containers"
 	"github.com/enr/inner/internal/executor"
 	"github.com/enr/inner/internal/git"
 	"github.com/enr/inner/internal/profile"
@@ -262,6 +263,14 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		cleanups = append(cleanups, func() error { return os.RemoveAll(shimDir) })
 	}
 
+	// 8b. Generate the containers.conf override for rootless podman inside the
+	//     sandbox (no-op unless nested-user-ns is allowed).
+	cleanupContainers, err := applyContainersConf(rc)
+	if err != nil {
+		return fmt.Errorf("containers config: %w", err)
+	}
+	defer cleanupContainers()
+
 	// 9. Sanitize gitconfig if configured.
 	if rc.Git != nil {
 		gitPath, err := git.Sanitize(rc.Git)
@@ -357,6 +366,38 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return exitCodeError{code: result.ExitCode}
 	}
 	return nil
+}
+
+// applyContainersConf generates the containers.conf override that rootless
+// podman needs inside the sandbox and records it on rc. It is a no-op unless
+// "nested-user-ns" is allowed (nothing runs containers inside the sandbox
+// otherwise). It is also a no-op when the profile opts out with
+// [sandbox] cgroup_manager = "systemd", or already sets CONTAINERS_CONF_OVERRIDE
+// in [env] set — in both cases the profile has taken over the decision.
+//
+// Returns a cleanup that removes the generated file; the cleanup is never nil.
+func applyContainersConf(rc *config.RunConfig) (func(), error) {
+	noop := func() {}
+	if !slices.Contains(rc.Allow, "nested-user-ns") {
+		return noop, nil
+	}
+	if rc.CgroupManager == containers.CgroupManagerSystemd {
+		return noop, nil
+	}
+	if _, ok := rc.Env.Set[containers.OverrideEnvVar]; ok {
+		return noop, nil
+	}
+
+	manager := rc.CgroupManager
+	if manager == "" {
+		manager = containers.CgroupManagerCgroupfs // auto
+	}
+	path, err := containers.WriteOverride(manager)
+	if err != nil {
+		return noop, err
+	}
+	rc.ContainersConfPath = path
+	return func() { os.RemoveAll(filepath.Dir(path)) }, nil //nolint:errcheck
 }
 
 // applyCapabilities applies the sandbox transformations for each capability
@@ -593,6 +634,9 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 	}
 	fmt.Fprintf(w, "network:     %v\n", rc.Network)
 	fmt.Fprintf(w, "pid-ns:      %v\n", rc.PidNamespace)
+	if rc.ContainersConfPath != "" {
+		fmt.Fprintf(w, "containers:  cgroup_manager override at %s\n", rc.ContainersConfPath)
+	}
 	fmt.Fprintf(w, "clipboard:   %v\n", rc.Clipboard)
 	if rc.Timeout > 0 {
 		fmt.Fprintf(w, "timeout:     %ds\n", rc.Timeout)

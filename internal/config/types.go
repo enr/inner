@@ -49,6 +49,11 @@ var ValidAllowKeys = []string{
 	"env-secrets", "shims-active", "network-policy",
 }
 
+// ValidCgroupManagers is the exhaustive set of values accepted in
+// [sandbox] cgroup_manager. Empty (unset) means "auto"; see
+// SandboxConfig.CgroupManager.
+var ValidCgroupManagers = []string{"cgroupfs", "systemd"}
+
 // ValidCapabilities is the exhaustive set of named capabilities accepted in
 // the profile capabilities field.
 var ValidCapabilities = []string{"claude", "gemini", "cursor", "opencode"}
@@ -106,6 +111,23 @@ type SandboxConfig struct {
 	// Allow lists sensitive resources that are normally hidden but explicitly
 	// permitted in this sandbox. Valid keys are listed in ValidAllowKeys.
 	Allow []string `toml:"allow"`
+	// CgroupManager selects the cgroup manager used by rootless container
+	// runtimes (podman) started INSIDE the sandbox. Only meaningful when
+	// "nested-user-ns" is in Allow. Valid values are listed in
+	// ValidCgroupManagers; empty means "auto".
+	//
+	// Auto resolves to "cgroupfs", because podman's own default ("systemd")
+	// cannot work inside the sandbox: creating the transient scope goes
+	// through StartTransientUnit on the user D-Bus, and polkit resolves the
+	// caller via /proc in the HOST pid namespace — the sandbox has its own
+	// (bwrap --unshare-pid), so allow_active never matches and the call is
+	// denied. inner injects a containers.conf override (merged on top of the
+	// user's files, which stay untouched) selecting cgroupfs.
+	//
+	// Set cgroup_manager = "systemd" to opt out of the injection entirely,
+	// e.g. on a sandbox that shares the host PID namespace
+	// (pid_namespace = false) and has the user systemd socket available.
+	CgroupManager string `toml:"cgroup_manager"`
 	// Limits sets per-run resource caps for this profile. Fields left empty
 	// fall back to GlobalConfig.DefaultLimits, then auto-detection.
 	Limits *ResourceLimits `toml:"limits"`

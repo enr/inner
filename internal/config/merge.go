@@ -46,6 +46,9 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("sandbox", "allow") {
 		result.Sandbox.Allow = mergeUnique(base.Sandbox.Allow, overlay.Sandbox.Allow)
 	}
+	if meta.IsDefined("sandbox", "cgroup_manager") {
+		result.Sandbox.CgroupManager = overlay.Sandbox.CgroupManager
+	}
 	// [sandbox.limits]: merge field-by-field so a child profile can override
 	// individual sub-fields without resetting the ones it does not mention.
 	if meta.IsDefined("sandbox", "limits") {
