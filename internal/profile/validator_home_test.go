@@ -54,7 +54,7 @@ func TestValidate_homeAllow_withoutIsolatedWarns(t *testing.T) {
 	if r.HasErrors() {
 		t.Fatalf("unexpected errors: %v", r.Issues)
 	}
-	if !issuesContain(r, LevelWarning, "home_allow has no effect") {
+	if !issuesContain(r, LevelWarning, "the list is ignored") {
 		t.Errorf("expected a no-effect warning, got %v", r.Issues)
 	}
 }
@@ -72,7 +72,7 @@ func TestValidate_homeAllow_wholeHomeIsAnError(t *testing.T) {
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
 	r := Validate(p, "")
-	if !issuesContain(r, LevelError, "re-exposes the whole home directory") {
+	if !issuesContain(r, LevelError, "puts the entire home directory back") {
 		t.Errorf("expected an error for allowlisting the whole home, got %v", r.Issues)
 	}
 }

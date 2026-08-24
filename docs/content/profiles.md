@@ -389,6 +389,7 @@ Common breakages and their fix:
 | `command not found` for the agent | CLI installed under `~` | add its directory **and** its symlink target to `home_allow` (`inner run` warns about this before starting) |
 | `Author identity unknown` on commit | `~/.gitconfig` hidden | add a `[git]` section (step 3) |
 | Tool re-authenticates every run | credentials were being read from the host home | use the matching capability, or mount the credential file explicitly |
+| `git push` asks for a password, `gpg` cannot sign | an existing `allow` key (`ssh-keys`, `gpg-keys`, …) is neutralised: the tmpfs removed the directory the key was un-hiding | add that path to `home_allow` — `inner run` warns about this by name |
 | `inner run` aborts on the workdir | workdir is `$HOME` itself | pass `-w` with a directory below the home |
 
 To roll back, set `home = "host-ro"` (or delete the two keys): the profile
@@ -429,6 +430,40 @@ The two socket entries are distinct because they point to different paths: `dock
 network = true
 allow = ["ssh-keys", "git-credentials"]
 ```
+
+### What `inner` refuses, and what it only warns about {#safety-checks}
+
+Every `inner run` validates the effective configuration before building the
+sandbox, and `inner profile validate` / `inner doctor` run the same checks
+without starting anything. Two levels:
+
+**Refused — the run does not start.** These configurations remove the guarantee
+the sandbox exists to provide, and no message would be strong enough:
+
+| Configuration | Why |
+|---|---|
+| A `rw` mount (or `-m SRC:/:rw`) with dest `/` | The whole host filesystem becomes writable from inside the sandbox |
+| `-w /` | The workdir is bind-mounted read-write |
+| A workdir, mount or `home_allow` entry covering `$HOME` while `home = "isolated"` | It is applied *after* the home tmpfs, restoring the host home and cancelling the isolation |
+| An unknown `home` mode, an invalid `cgroup_manager`, a mount source that does not exist | A typo would otherwise produce a sandbox weaker than the profile claims |
+
+**Warned — the run continues.** Legitimate in the right context, but never
+silent, and each message names the fix:
+
+| Configuration | What the message says |
+|---|---|
+| `rw` mount on a system directory (`/usr`, `/etc`, `/var`, …) | Host binaries and configuration become writable, and the changes outlive the run |
+| `rw` mount or workdir covering `$HOME` (under `host-ro`) | Every dotfile becomes writable — a persistence vector. When the workdir came from the current directory rather than an explicit `-w`, `inner` also asks for confirmation |
+| `allow` key neutralised by `home = "isolated"` | The resource was removed with the rest of the home, so the key grants nothing — add the path to `home_allow` or drop the key |
+| Entrypoint binary inside the isolated home, not re-exposed | The sandbox would fail with `command not found`; the message prints the `home_allow` entry to add |
+| `home_allow` without `home = "isolated"` | The list is inert and the whole home is readable |
+| `home_allow` entry covering a hidden credential path | It stays hidden: `allow` is the only switch that declassifies a sensitive resource |
+| `inherit_all = true` | The entire host environment — every exported secret — is handed to the sandbox; with `network = true` it can also leave the machine |
+| `network = true` together with credential `allow` keys | The classic exfiltration setup: the sandbox can read those secrets and send them anywhere |
+| `pid_namespace = false` | Host processes become visible and `/proc/<pid>/environ` readable, defeating the cleared environment |
+
+`--dry-run` prints the same warnings plus the effective mounts, home mode,
+allowlist and the exact bubblewrap command, without executing anything.
 
 ### `cgroup_manager` — rootless Podman inside the sandbox {#cgroup_manager-rootless-podman-inside-the-sandbox}
 

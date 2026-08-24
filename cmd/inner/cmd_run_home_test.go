@@ -10,24 +10,6 @@ import (
 	"github.com/enr/inner/internal/config"
 )
 
-// fakeHomeWithBin creates a temp home containing bin/<name> as an executable,
-// points HOME and PATH at it, and returns (home, binPath).
-func fakeHomeWithBin(t *testing.T, name string) (string, string) {
-	t.Helper()
-	home := t.TempDir()
-	binDir := filepath.Join(home, ".local", "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	binPath := filepath.Join(binDir, name)
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("write bin: %v", err)
-	}
-	t.Setenv("HOME", home)
-	t.Setenv("PATH", binDir)
-	return home, binPath
-}
-
 func TestRunSandbox_isolatedHome_refusesWorkdirCoveringHome(t *testing.T) {
 	app, dir := newRunTestApp(t)
 	home := t.TempDir()
@@ -123,78 +105,163 @@ interactive = false
 	}
 }
 
-func TestWarnIsolatedHomeEntrypoint(t *testing.T) {
-	_, binPath := fakeHomeWithBin(t, "fakeagent")
+// ── guardWorkdir ──────────────────────────────────────────────────────────────
 
-	rc := &config.RunConfig{
-		HomeMode:   config.HomeIsolated,
-		Entrypoint: config.Entrypoint{Cmd: "fakeagent"},
-	}
+func TestGuardWorkdir_refusesFilesystemRoot(t *testing.T) {
+	rc := &config.RunConfig{Workdir: "/"}
 	var buf bytes.Buffer
-	warnIsolatedHomeEntrypoint(&buf, rc)
-	out := buf.String()
-	if !strings.Contains(out, binPath) {
-		t.Fatalf("expected a warning naming %s, got: %q", binPath, out)
+	proceed, err := guardWorkdir(&buf, rc, false, false)
+	if err == nil {
+		t.Fatalf("expected an error for workdir /, output: %s", buf.String())
 	}
-	if !strings.Contains(out, "home_allow") {
-		t.Errorf("warning should name the fix, got: %q", out)
+	if proceed {
+		t.Error("proceed must be false when the workdir is refused")
 	}
-
-	// Covered by the allowlist → silent.
-	rc.HomeAllow = []string{filepath.Dir(binPath)}
-	buf.Reset()
-	warnIsolatedHomeEntrypoint(&buf, rc)
-	if buf.Len() != 0 {
-		t.Errorf("no warning expected when home_allow covers the binary, got: %q", buf.String())
-	}
-
-	// Covered by a mount → silent.
-	rc.HomeAllow = nil
-	rc.Mounts = []config.Mount{{Src: filepath.Dir(binPath), Dest: filepath.Dir(binPath), Mode: "ro"}}
-	buf.Reset()
-	warnIsolatedHomeEntrypoint(&buf, rc)
-	if buf.Len() != 0 {
-		t.Errorf("no warning expected when a mount covers the binary, got: %q", buf.String())
-	}
-
-	// host-ro → the binary is visible through the root bind, nothing to say.
-	rc.Mounts = nil
-	rc.HomeMode = config.HomeHostRO
-	buf.Reset()
-	warnIsolatedHomeEntrypoint(&buf, rc)
-	if buf.Len() != 0 {
-		t.Errorf("no warning expected under host-ro, got: %q", buf.String())
+	// The message has to say why, not just refuse.
+	if !strings.Contains(err.Error(), "modify any file on this machine") {
+		t.Errorf("error should explain the consequence, got: %v", err)
 	}
 }
 
-func TestWarnIsolatedHomeEntrypoint_symlinkTarget(t *testing.T) {
-	home, binPath := fakeHomeWithBin(t, "payload")
-	// Native installers put a link in ~/.local/bin pointing at a versioned
-	// payload elsewhere in the home: allowlisting only the link would leave a
-	// dangling symlink inside the sandbox.
-	payloadDir := filepath.Join(home, ".local", "share", "agent")
-	if err := os.MkdirAll(payloadDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	payload := filepath.Join(payloadDir, "payload")
-	if err := os.WriteFile(payload, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("write payload: %v", err)
-	}
-	if err := os.Remove(binPath); err != nil {
-		t.Fatalf("remove: %v", err)
-	}
-	if err := os.Symlink(payload, binPath); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
-
-	rc := &config.RunConfig{
-		HomeMode:   config.HomeIsolated,
-		HomeAllow:  []string{filepath.Dir(binPath)},
-		Entrypoint: config.Entrypoint{Cmd: "payload"},
-	}
+func TestGuardWorkdir_warnsOnSystemDir(t *testing.T) {
+	rc := &config.RunConfig{Workdir: "/etc"}
 	var buf bytes.Buffer
-	warnIsolatedHomeEntrypoint(&buf, rc)
-	if !strings.Contains(buf.String(), payloadDir) {
-		t.Errorf("expected a warning about the uncovered symlink target, got: %q", buf.String())
+	proceed, err := guardWorkdir(&buf, rc, false, false)
+	if err != nil || !proceed {
+		t.Fatalf("an explicit system workdir is allowed with a warning, got proceed=%v err=%v", proceed, err)
+	}
+	if !strings.Contains(buf.String(), "system directory") {
+		t.Errorf("expected a system-directory warning, got: %q", buf.String())
+	}
+}
+
+func TestGuardWorkdir_ordinaryWorkdirIsSilent(t *testing.T) {
+	rc := &config.RunConfig{Workdir: t.TempDir()}
+	var buf bytes.Buffer
+	proceed, err := guardWorkdir(&buf, rc, true, false)
+	if err != nil || !proceed {
+		t.Fatalf("ordinary workdir rejected: proceed=%v err=%v", proceed, err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("no output expected for an ordinary workdir, got: %q", buf.String())
+	}
+}
+
+func TestGuardWorkdir_isolatedHomeRefusesHomeWorkdir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rc := &config.RunConfig{Workdir: home, HomeMode: config.HomeIsolated}
+	var buf bytes.Buffer
+	proceed, err := guardWorkdir(&buf, rc, false, false)
+	if err == nil || proceed {
+		t.Fatalf("expected a refusal, got proceed=%v err=%v", proceed, err)
+	}
+	if !strings.Contains(err.Error(), "cancel the isolation") {
+		t.Errorf("error should explain what would be undone, got: %v", err)
+	}
+}
+
+func TestGuardWorkdir_hostROHomeWorkdirWarnsAndProceeds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rc := &config.RunConfig{Workdir: home}
+	var buf bytes.Buffer
+	// Explicit (-w) → warning only, no prompt.
+	proceed, err := guardWorkdir(&buf, rc, false, false)
+	if err != nil || !proceed {
+		t.Fatalf("host-ro behaviour changed: proceed=%v err=%v", proceed, err)
+	}
+	if !strings.Contains(buf.String(), "covers your home directory") {
+		t.Errorf("expected the home warning, got: %q", buf.String())
+	}
+	if strings.Contains(buf.String(), "continue?") {
+		t.Errorf("an explicitly chosen workdir must not prompt, got: %q", buf.String())
+	}
+}
+
+func TestGuardWorkdir_dryRunNeverPrompts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rc := &config.RunConfig{Workdir: home}
+	var buf bytes.Buffer
+	proceed, err := guardWorkdir(&buf, rc, true, true)
+	if err != nil || !proceed {
+		t.Fatalf("dry-run must proceed: proceed=%v err=%v", proceed, err)
+	}
+	if strings.Contains(buf.String(), "continue?") {
+		t.Errorf("--dry-run must not prompt, got: %q", buf.String())
+	}
+}
+
+func TestGuardWorkdir_autoConfirmNeverPrompts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rc := &config.RunConfig{Workdir: home, AutoConfirm: true}
+	var buf bytes.Buffer
+	proceed, err := guardWorkdir(&buf, rc, true, false)
+	if err != nil || !proceed {
+		t.Fatalf("--yes must proceed: proceed=%v err=%v", proceed, err)
+	}
+	if strings.Contains(buf.String(), "continue?") {
+		t.Errorf("--yes must not prompt, got: %q", buf.String())
+	}
+}
+
+// ── guardCLIMounts ────────────────────────────────────────────────────────────
+
+func TestGuardCLIMounts_refusesRootReadWrite(t *testing.T) {
+	var buf bytes.Buffer
+	err := guardCLIMounts(&buf, &config.RunConfig{}, []string{"/:/:rw"})
+	if err == nil {
+		t.Fatalf("expected -m /:/:rw to be refused, output: %s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "every file on this machine") {
+		t.Errorf("error should explain the consequence, got: %v", err)
+	}
+}
+
+func TestGuardCLIMounts_refusesHomeUnderIsolatedHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rc := &config.RunConfig{HomeMode: config.HomeIsolated}
+
+	var buf bytes.Buffer
+	// Even read-only: re-binding the host home makes the whole home readable
+	// again, which is exactly what the mode exists to prevent.
+	err := guardCLIMounts(&buf, rc, []string{home + ":" + home})
+	if err == nil {
+		t.Fatalf("expected a home mount to be refused under an isolated home, output: %s", buf.String())
+	}
+	if !strings.Contains(err.Error(), `home = "isolated"`) {
+		t.Errorf("error should name the conflicting setting, got: %v", err)
+	}
+}
+
+func TestGuardCLIMounts_warnsOnSystemDirAndHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var buf bytes.Buffer
+	if err := guardCLIMounts(&buf, &config.RunConfig{}, []string{"/etc:/etc:rw", home + ":" + home + ":rw"}); err != nil {
+		t.Fatalf("host-ro mounts are allowed with a warning, got: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "system directory") {
+		t.Errorf("expected a system-directory warning, got: %q", out)
+	}
+	if !strings.Contains(out, "persistence vector") {
+		t.Errorf("expected a home warning, got: %q", out)
+	}
+}
+
+func TestGuardCLIMounts_ordinaryMountsAreSilent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	src := t.TempDir()
+	var buf bytes.Buffer
+	if err := guardCLIMounts(&buf, &config.RunConfig{}, []string{src + ":" + src + ":rw", "/opt/tools:/opt/tools"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("no output expected for ordinary mounts, got: %q", buf.String())
 	}
 }

@@ -132,6 +132,21 @@ but a remote profile can disable the net.
 `inherit_all = true` / `network = true` is rejected (or requires explicit
 consent) by `runSandbox`, and that a checksum mismatch aborts.
 
+### Partial mitigation shipped (not a fix)
+
+Profile validation now *reports* the dangerous settings a remote profile could
+request, and refuses the outright destructive ones: a `rw` mount of `/` (or of
+a path covering `$HOME` under `home = "isolated"`) is an error that blocks the
+run, while `inherit_all = true`, `network = true` combined with credential
+`allow` keys, `pid_namespace = false` and `rw` mounts of system directories
+produce warnings naming the consequence and the fix. Same checks in
+`inner profile validate` and `inner doctor`, so a downloaded profile can be
+inspected before it is run.
+
+This raises the cost of the footgun but does **not** close the issue: warnings
+do not block, `inner run <url>` still executes the downloaded profile without
+consent, and there is still no checksum pin.
+
 ---
 
 ## #3 — [Medium] `safe-rw` and capability copies follow symlinks

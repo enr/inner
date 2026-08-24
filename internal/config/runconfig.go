@@ -1,7 +1,5 @@
 package config
 
-import "strings"
-
 // RunConfig is the backend-agnostic representation of a sandbox run.
 // It speaks in terms of intent, never backend-specific flags.
 // Produced by the Loader; consumed by the Isolator.
@@ -98,23 +96,21 @@ func (c RunConfig) HomeIsolated() bool {
 // ~/.cargo/credentials), and `inner run`, to warn when the entrypoint binary
 // itself is left outside the allowlist.
 func (c RunConfig) ReexposedInHome(path string) bool {
-	covers := func(prefix string) bool {
-		return prefix != "" && (path == prefix || strings.HasPrefix(path, prefix+"/"))
-	}
-	for _, entry := range c.HomeAllow {
-		if covers(entry) {
-			return true
-		}
-	}
+	return PathCoveredBy(c.homeReexposingPrefixes(), path)
+}
+
+// homeReexposingPrefixes returns every subtree this run puts back inside an
+// isolated home: the allowlist entries and the non-tmpfs mount destinations.
+func (c RunConfig) homeReexposingPrefixes() []string {
+	prefixes := make([]string, 0, len(c.HomeAllow)+len(c.Mounts))
+	prefixes = append(prefixes, c.HomeAllow...)
 	for _, m := range c.Mounts {
 		if m.Mode == "tmpfs" {
-			continue
+			continue // a tmpfs empties a subtree, it never brings host content back
 		}
-		if covers(m.Dest) {
-			return true
-		}
+		prefixes = append(prefixes, m.Dest)
 	}
-	return false
+	return prefixes
 }
 
 // Mount describes a single filesystem bind mount.

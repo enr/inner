@@ -141,36 +141,23 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		}
 	}
 
-	// 5a-bis. Guard against mounting the entire home directory read-write.
-	// The workdir is bind-mounted rw; when it is $HOME (or an ancestor of it)
-	// every dotfile (.bashrc, .profile, .config/…) becomes writable by the
-	// sandboxed process — a persistence vector for an agent. Sensitive
-	// resources (~/.ssh, credentials, …) stay hidden by the isolator either
-	// way. Always warn; when the workdir was picked up implicitly from the
-	// cwd (the user never chose it), also require confirmation unless --yes
-	// or --dry-run.
-	if rc.Workdir != "" {
-		if home, err := os.UserHomeDir(); err == nil && workdirCoversHome(rc.Workdir, home) {
-			// Under home = "isolated" this is not a warning but a contradiction:
-			// the workdir is bind-mounted rw AFTER the home tmpfs, so it would
-			// put the whole host home back — writable — on top of the empty home
-			// and silently undo the isolation the profile asked for.
-			if rc.HomeIsolated() {
-				return fmt.Errorf("workdir %q covers your home directory, but the profile sets home = \"isolated\": "+
-					"the read-write workdir bind would restore the host home on top of the isolated one.\n"+
-					"Pass -w PATH with a directory below your home (e.g. -w ~/projects/foo) or drop home = \"isolated\" from the profile", rc.Workdir)
-			}
-			fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": workdir %q covers your home directory — all dotfiles (.bashrc, .profile, .config/…) will be writable inside the sandbox\n", rc.Workdir)
-			if workdirImplicit && !flags.dryRun && !rc.AutoConfirm {
-				fmt.Fprintln(w, "         (workdir defaulted to the current directory; pass -w PATH to scope the mount, or --yes to skip this prompt)")
-				fmt.Fprint(w, "continue? [y/N] ")
-				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
-					fmt.Fprintln(w, "aborted.")
-					return nil
-				}
-			}
-		}
+	// 5a-bis. Guard the mounts added on the command line. They never go through
+	// the profile validator (which only sees the file), so the same rules are
+	// applied here.
+	if err := guardCLIMounts(w, rc, flags.mounts); err != nil {
+		return err
+	}
+
+	// 5a-ter. Guard against a workdir that hands the sandbox more than a
+	// workspace: the workdir is bind-mounted read-write, so choosing the wrong
+	// one silently undoes what the sandbox is for.
+	proceed, err := guardWorkdir(w, rc, workdirImplicit, flags.dryRun)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		fmt.Fprintln(w, "aborted.")
+		return nil
 	}
 
 	// 5b. For interactive sessions, print which profile is being used.
@@ -303,10 +290,6 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 	defer cleanupSafe()
-
-	// 11d. With an isolated home, warn if the entrypoint binary itself lives in
-	//      the home directory and nothing puts it back inside the sandbox.
-	warnIsolatedHomeEntrypoint(w, rc)
 
 	// 12. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
@@ -594,50 +577,106 @@ func workdirCoversHome(workdir, home string) bool {
 	return workdir == home || strings.HasPrefix(home+"/", prefix)
 }
 
-// warnIsolatedHomeEntrypoint warns when home = "isolated" hides the entrypoint
-// binary itself. Agent CLIs are routinely installed inside the home directory
-// (~/.local/bin from a native installer, ~/.nvm or ~/.npm-global from npm), and
-// the resulting failure inside the sandbox is an opaque "command not found", so
-// the warning names the exact home_allow entry that fixes it.
+// guardCLIMounts applies the dangerous-mount rules of the profile validator to
+// the mounts added with -m on the command line, which the validator never sees.
 //
-// Both the binary and its symlink target are checked: native installers put a
-// small link in ~/.local/bin pointing at a versioned directory elsewhere under
-// the home, and allowlisting only the link produces a dangling symlink.
-//
-// A warning, not an error: PATH inside the sandbox can differ from the host's,
-// so a host lookup is a good hint but not proof.
-func warnIsolatedHomeEntrypoint(w io.Writer, rc *config.RunConfig) {
-	if !rc.HomeIsolated() || rc.Entrypoint.Cmd == "" {
-		return
+// The specs are re-parsed here (applyOverrides has already put the parsed
+// mounts on rc) so that the messages can quote what the user actually typed;
+// parseMount is pure, so the second parse costs nothing and cannot diverge. A
+// spec that fails to parse is skipped: applyOverrides has already rejected it.
+func guardCLIMounts(w io.Writer, rc *config.RunConfig, specs []string) error {
+	if len(specs) == 0 {
+		return nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	home = filepath.Clean(home)
-
-	bin, err := exec.LookPath(rc.Entrypoint.Cmd)
-	if err != nil {
-		return // the validator already reports an unresolvable entrypoint
-	}
-	if abs, err := filepath.Abs(bin); err == nil {
-		bin = abs
-	}
-	candidates := []string{bin}
-	if resolved, err := filepath.EvalSymlinks(bin); err == nil && resolved != bin {
-		candidates = append(candidates, resolved)
+	home := ""
+	if h, err := os.UserHomeDir(); err == nil {
+		home = filepath.Clean(h)
 	}
 
-	for _, path := range candidates {
-		if !strings.HasPrefix(path, home+"/") || rc.ReexposedInHome(path) {
+	for _, spec := range specs {
+		m, err := parseMount(spec)
+		if err != nil {
 			continue
 		}
-		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+
-			": entrypoint %q resolves to %q, which is inside the home directory replaced by home = \"isolated\"\n"+
-			"         nothing re-exposes it, so the sandbox will fail with \"command not found\". Add to the profile:\n"+
-			"           [sandbox]\n           home_allow = [%q]\n",
-			rc.Entrypoint.Cmd, path, filepath.Dir(path))
+		dest := filepath.Clean(m.Dest)
+		writable := m.Mode == "rw"
+
+		if writable && config.IsFilesystemRoot(dest) {
+			return fmt.Errorf("refusing mount %q: mounting the filesystem root read-write makes every file on this machine writable from inside the sandbox — mount the directory the run actually needs", spec)
+		}
+		if home != "" && config.PathCoveredBy([]string{dest}, home) && rc.HomeIsolated() {
+			return fmt.Errorf("refusing mount %q: its destination covers your home directory and the profile sets home = \"isolated\", so the mount would restore the host home on top of the isolated one — mount the specific subdirectory the run needs", spec)
+		}
+		switch {
+		case writable && config.IsSystemDir(dest):
+			fmt.Fprintf(w, "%s: mount %q writes into a host system directory — changes made there persist after the run\n",
+				colorizeW(w, ansiBoldYellow, "warning"), spec)
+		case writable && home != "" && config.PathCoveredBy([]string{dest}, home):
+			fmt.Fprintf(w, "%s: mount %q makes every dotfile in your home directory writable inside the sandbox — a persistence vector for an agent\n",
+				colorizeW(w, ansiBoldYellow, "warning"), spec)
+		}
 	}
+	return nil
+}
+
+// guardWorkdir checks the resolved workdir before the sandbox is built and
+// reports whether the run may proceed.
+//
+// The workdir is bind-mounted read-write at the same path, after every other
+// mount, so it is the single setting that can quietly undo the sandbox:
+//
+//   - "/"                     → the whole host filesystem becomes writable;
+//   - a system directory      → host binaries and configuration become writable,
+//     and the changes survive the run;
+//   - $HOME (or an ancestor)  → every dotfile becomes a persistence vector, and
+//     under home = "isolated" the host home is restored
+//     on top of the tmpfs, cancelling the isolation.
+//
+// The first and the last (under an isolated home) are refused outright: no
+// invocation of an agent sandbox wants them, and a warning would be read as
+// noise. The others warn, and additionally require confirmation when the user
+// never chose the workdir — it came from the current directory — unless --yes
+// or --dry-run was passed.
+func guardWorkdir(w io.Writer, rc *config.RunConfig, implicit, dryRun bool) (proceed bool, err error) {
+	if rc.Workdir == "" {
+		return true, nil
+	}
+
+	if config.IsFilesystemRoot(rc.Workdir) {
+		return false, fmt.Errorf("refusing to run with workdir %q: it is bind-mounted read-write, "+
+			"so the sandboxed process could modify any file on this machine — the sandbox would protect nothing.\n"+
+			"Pass -w PATH with the directory the run should work in", rc.Workdir)
+	}
+
+	home, homeErr := os.UserHomeDir()
+	coversHome := homeErr == nil && workdirCoversHome(rc.Workdir, home)
+
+	if coversHome && rc.HomeIsolated() {
+		return false, fmt.Errorf("refusing to run with workdir %q: it covers your home directory and the profile sets home = \"isolated\".\n"+
+			"The read-write workdir bind is applied after the home tmpfs, so it would restore the host home on top of the isolated one and cancel the isolation.\n"+
+			"Pass -w PATH with a directory below your home (e.g. -w ~/projects/foo), or drop home = \"isolated\" from the profile", rc.Workdir)
+	}
+
+	var warning, hint string
+	switch {
+	case coversHome:
+		warning = fmt.Sprintf("workdir %q covers your home directory — all dotfiles (.bashrc, .profile, .config/…) will be writable inside the sandbox", rc.Workdir)
+		hint = "pass -w PATH to scope the mount to a project directory"
+	case config.IsSystemDir(rc.Workdir):
+		warning = fmt.Sprintf("workdir %q is a system directory — it is mounted read-write, so the sandboxed process can modify host files there and the changes persist after the run", rc.Workdir)
+		hint = "pass -w PATH with a project directory instead"
+	default:
+		return true, nil
+	}
+
+	fmt.Fprintf(w, "%s: %s\n", colorizeW(w, ansiBoldYellow, "warning"), warning)
+	if !implicit || dryRun || rc.AutoConfirm {
+		return true, nil
+	}
+	fmt.Fprintf(w, "         (workdir defaulted to the current directory; %s, or --yes to skip this prompt)\n", hint)
+	fmt.Fprint(w, "continue? [y/N] ")
+	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	return strings.ToLower(strings.TrimSpace(answer)) == "y", nil
 }
 
 // parseMount parses "src:dest[:mode]" into a Mount.
