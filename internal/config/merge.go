@@ -46,6 +46,16 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("sandbox", "allow") {
 		result.Sandbox.Allow = mergeUnique(base.Sandbox.Allow, overlay.Sandbox.Allow)
 	}
+	// home is a scalar: a child profile switching to "isolated" (or back to
+	// "host-ro") always wins over the base.
+	if meta.IsDefined("sandbox", "home") {
+		result.Sandbox.Home = overlay.Sandbox.Home
+	}
+	// home_allow is unioned like the other path lists: a child profile adds the
+	// toolchain paths it needs without having to repeat the base's.
+	if meta.IsDefined("sandbox", "home_allow") {
+		result.Sandbox.HomeAllow = mergeUnique(base.Sandbox.HomeAllow, overlay.Sandbox.HomeAllow)
+	}
 	if meta.IsDefined("sandbox", "cgroup_manager") {
 		result.Sandbox.CgroupManager = overlay.Sandbox.CgroupManager
 	}

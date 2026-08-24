@@ -7,6 +7,28 @@ capabilities = ["gemini"]
 network   = true
 clipboard = false
 
+# ── Home isolation (allowlist model) ──────────────────────────────────────────
+# $HOME is replaced by an empty writable tmpfs: nothing from the real home is
+# visible inside the sandbox unless it is named below, injected by a capability
+# (~/.gemini), or mounted as the workdir. This inverts the old "everything is
+# readable except a hard-coded list of secrets" model, which left browser
+# profiles, ~/.config/gh, .env files and every document readable by the agent.
+#
+# Switch back with home = "host-ro" if a workflow needs the host home.
+home = "isolated"
+# Paths put back read-only, because the agent CLI and its runtime are normally
+# installed inside the home directory. Entries that do not exist on this machine
+# are skipped, so one list covers native-installer, npm, nvm and asdf setups.
+home_allow = [
+  "~/.local/bin",              # native installers put the CLI here
+  "~/.nvm",                    # node via nvm
+  "~/.npm-global",             # npm --global prefix inside the home
+  "~/.volta",
+  "~/.bun",
+  "~/.asdf",
+  "~/.fnm",
+]
+
 [env]
 clearenv = true
 inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL", "GEMINI_API_KEY"]
@@ -15,6 +37,12 @@ inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL", "GEMINI_API_KEY"]
 cmd         = "gemini"
 args        = ["--yolo"]
 interactive = false
+
+[git]
+# The isolated home also hides ~/.gitconfig, so inner injects a sanitized copy
+# (identity and preferences kept; credential helpers stripped — a helper would
+# hand the agent tokens the sandbox is meant to keep out).
+strip_sections = ["credential"]
 
 [output]
 summary         = true

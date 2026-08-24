@@ -36,6 +36,19 @@ func (b *BwrapIsolator) pathExists(path string) bool {
 	return err == nil
 }
 
+// homeDir resolves the user's home directory. Indirected through a package
+// variable so tests can pin it without depending on the ambient environment.
+var homeDir = os.UserHomeDir
+
+// isUnderHome reports whether path is the home directory itself or lives
+// inside it. Both arguments must be absolute; home is expected to be clean.
+func isUnderHome(home, path string) bool {
+	if home == "" {
+		return false
+	}
+	return path == home || strings.HasPrefix(path, home+"/")
+}
+
 // isAllowed reports whether key is present in the allow list.
 func isAllowed(allow []string, key string) bool {
 	return slices.Contains(allow, key)
@@ -138,6 +151,43 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		args = append(args, "--dev-bind", "/dev/ptmx", "/dev/ptmx")
 	}
 	args = append(args, "--tmpfs", "/tmp")
+
+	// ── Home isolation ───────────────────────────────────────────────────────
+	// With home = "isolated" the read side of $HOME is inverted: instead of
+	// leaving the whole host home readable through the root bind and hiding a
+	// fixed list of credential paths on top (a denylist that silently rots as
+	// tools invent new token locations), $HOME is replaced by an empty writable
+	// tmpfs and only what the profile names is put back.
+	//
+	// Emitted here, before every other mount, so that everything that follows —
+	// [sandbox] home_allow, profile [mounts], capability dirs, the workdir bind —
+	// lands INSIDE the tmpfs and is not erased by it. bwrap creates the missing
+	// mount points inside the tmpfs itself, so the destinations do not need to
+	// exist on the host.
+	//
+	// Only $HOME inverts: /usr, /etc, /lib*, /opt and friends stay read-only
+	// bind-mounted from the host so toolchains keep working.
+	if cfg.HomeIsolated() {
+		home, err := homeDir()
+		if err != nil {
+			return nil, fmt.Errorf(`home = "isolated": cannot determine home directory: %w`, err)
+		}
+		if !filepath.IsAbs(home) || filepath.Clean(home) == "/" {
+			return nil, fmt.Errorf(`home = "isolated": refusing to isolate home directory %q`, home)
+		}
+		args = append(args, "--tmpfs", filepath.Clean(home))
+
+		// Allowlisted host paths, re-exposed read-only inside the empty home.
+		// Missing paths are skipped rather than fatal: a profile shared across
+		// machines can list every plausible toolchain location (~/.nvm, ~/.bun,
+		// ~/.local/bin) and only the ones present are mounted.
+		for _, path := range cfg.HomeAllow {
+			if !b.pathExists(path) {
+				continue
+			}
+			args = append(args, "--ro-bind", path, path)
+		}
+	}
 
 	// ── Additional mounts ────────────────────────────────────────────────────
 	// Emission order matters: bwrap processes args left-to-right and later
@@ -302,51 +352,43 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// These resources are hidden by default using tmpfs overlays (directories)
 	// or /dev/null binds (files and sockets). Hiding is skipped when:
 	//   a) the key is listed in cfg.Allow, or
-	//   b) the path does not exist on the host (nothing to hide).
+	//   b) the path does not exist on the host (nothing to hide), or
+	//   c) the path is inside an isolated home and nothing re-exposes it (the
+	//      tmpfs already erased it — see the loop for the mount exception).
 	// "nested-user-ns" is a valid allow key but has no hide action (caps are added above).
 	{
-		home, _ := os.UserHomeDir()
+		home, _ := homeDir()
+		if home != "" {
+			home = filepath.Clean(home)
+		}
+		homeIsolated := cfg.HomeIsolated()
 		uid := strconv.Itoa(os.Getuid())
 
-		type sensitiveEntry struct {
-			key  string
-			path string
-			dir  bool // true → --tmpfs; false → --bind /dev/null
-		}
-		sensitive := []sensitiveEntry{
-			{"ssh-keys", filepath.Join(home, ".ssh"), true},
-			{"gpg-keys", filepath.Join(home, ".gnupg"), true},
-			{"git-credentials", filepath.Join(home, ".git-credentials"), false},
-			{"netrc", filepath.Join(home, ".netrc"), false},
-			{"docker-socket", "/var/run/docker.sock", false},
-			{"podman-socket", "/run/user/" + uid + "/podman/podman.sock", false},
-			{"bash-history", filepath.Join(home, ".bash_history"), false},
-			{"zsh-history", filepath.Join(home, ".zsh_history"), false},
-			// Cloud provider credentials.
-			{"aws-credentials", filepath.Join(home, ".aws"), true},
-			{"gcloud-credentials", filepath.Join(home, ".config", "gcloud"), true},
-			{"kube-config", filepath.Join(home, ".kube"), true},
-			{"azure-credentials", filepath.Join(home, ".azure"), true},
-			// Package manager / registry tokens.
-			{"docker-config", filepath.Join(home, ".docker", "config.json"), false},
-			{"npmrc", filepath.Join(home, ".npmrc"), false},
-			{"pypirc", filepath.Join(home, ".pypirc"), false},
-			{"cargo-credentials", filepath.Join(home, ".cargo", "credentials"), false},
-			// Password managers.
-			{"password-store", filepath.Join(home, ".password-store"), true},
-		}
-
-		for _, r := range sensitive {
-			if isAllowed(cfg.Allow, r.key) {
+		// The table itself lives in the config package so that the profile
+		// validator can reason about the same list (see config.SensitiveResources).
+		for _, r := range config.SensitiveResources(home, uid) {
+			if isAllowed(cfg.Allow, r.Key) {
 				continue
 			}
-			if !b.pathExists(r.path) {
+			if !b.pathExists(r.Path) {
+				continue
+			}
+			// An isolated home already replaced the subtree with an empty tmpfs,
+			// so there is normally nothing left to hide — and materialising an
+			// empty ~/.ssh inside the sandbox would only be misleading noise.
+			//
+			// The exception is a resource carried back in by an explicit mount or
+			// home_allow entry (e.g. a profile mounting "~/.cargo" also brings
+			// ~/.cargo/credentials): there the hide rule must still run, so that
+			// [sandbox] allow stays the single switch governing every sensitive
+			// resource, in both home modes.
+			if homeIsolated && isUnderHome(home, r.Path) && !cfg.ReexposedInHome(r.Path) {
 				continue
 			}
 			// Skip if a profile tmpfs already covers this path: the tmpfs
 			// replaces the entire directory with an empty tree so there is
 			// nothing to hide, and a bind inside the empty tmpfs would fail.
-			if isUnderTmpfs(cfg.Mounts, r.path) {
+			if isUnderTmpfs(cfg.Mounts, r.Path) {
 				continue
 			}
 			// Resolve symlinks so bwrap receives the canonical path. On
@@ -357,16 +399,16 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			if evalSymlinks == nil {
 				evalSymlinks = filepath.EvalSymlinks
 			}
-			bindPath := r.path
-			if resolved, err := evalSymlinks(r.path); err == nil {
+			bindPath := r.Path
+			if resolved, err := evalSymlinks(r.Path); err == nil {
 				bindPath = resolved
 			} else {
-				// r.path exists (checked above) but EvalSymlinks failed — broken
+				// r.Path exists (checked above) but EvalSymlinks failed — broken
 				// symlink. Falling back to the unresolved path would cause bwrap to
 				// silently skip the mount, leaving sensitive content readable.
-				return nil, fmt.Errorf("hide %s: cannot resolve %s: %w", r.key, r.path, err)
+				return nil, fmt.Errorf("hide %s: cannot resolve %s: %w", r.Key, r.Path, err)
 			}
-			if r.dir {
+			if r.Dir {
 				args = append(args, "--tmpfs", bindPath)
 			} else {
 				args = append(args, "--bind", "/dev/null", bindPath)

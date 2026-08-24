@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/enr/inner/internal/config"
@@ -43,6 +45,69 @@ func validateLimits(r *Result, l *config.ResourceLimits) {
 	}
 	if l.Pids < 0 {
 		r.addError(fmt.Sprintf("[sandbox.limits] pids %d must be a non-negative integer (0 = unset)", l.Pids))
+	}
+}
+
+// validateHome checks [sandbox] home and [sandbox] home_allow.
+//
+// An unknown home mode is an error: silently falling back to the permissive
+// default would turn a typo ("isolate", "isolated ") into a sandbox that is
+// weaker than the profile claims.
+func validateHome(r *Result, p *config.Profile) {
+	mode := p.Sandbox.Home
+	if mode != "" && !slices.Contains(config.ValidHomeModes, mode) {
+		r.addError(fmt.Sprintf("invalid [sandbox] home %q (valid values: %v)", mode, config.ValidHomeModes))
+		return
+	}
+
+	if len(p.Sandbox.HomeAllow) == 0 {
+		return
+	}
+	if mode != config.HomeIsolated {
+		r.addWarning(`[sandbox] home_allow has no effect unless home = "isolated"`)
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return // cannot reason about the paths on this machine
+	}
+	home = filepath.Clean(home)
+	// Reuse the isolator's hide list so this warning cannot drift from it.
+	sensitive := config.SensitiveResources(home, strconv.Itoa(os.Getuid()))
+
+	for _, entry := range p.Sandbox.HomeAllow {
+		if entry == "" {
+			r.addError("[sandbox] home_allow contains an empty entry")
+			continue
+		}
+		expanded := filepath.Clean(config.ExpandPath(entry))
+		if expanded == home {
+			r.addError(fmt.Sprintf("[sandbox] home_allow %q re-exposes the whole home directory, defeating home = \"isolated\"", entry))
+			continue
+		}
+		if !strings.HasPrefix(expanded, home+"/") {
+			r.addWarning(fmt.Sprintf("[sandbox] home_allow %q is outside the home directory (expanded: %q) — it is already visible through the read-only root bind; use [mounts] instead", entry, expanded))
+			continue
+		}
+		// A home_allow entry that covers a resource the sandbox hides by default
+		// does not actually re-expose it: the isolator still applies the hide
+		// rule on top (that is what keeps [sandbox] allow the single switch for
+		// sensitive resources). Say so, because the profile clearly expected the
+		// path to be readable.
+		for _, s := range sensitive {
+			if s.Path == expanded || strings.HasPrefix(s.Path, expanded+"/") {
+				if !slices.Contains(p.Sandbox.Allow, s.Key) {
+					r.addWarning(fmt.Sprintf("[sandbox] home_allow %q covers %q, which stays hidden by the %q rule — add allow = [%q] if the run needs it", entry, s.Path, s.Key, s.Key))
+				}
+			}
+		}
+		// Deliberately NOT warned about here: an entry missing on this host.
+		// The lists are meant to cover several install layouts (native, npm,
+		// nvm, asdf) and the isolator skips what is absent, so warning on every
+		// run would be pure noise. `inner run --dry-run` shows which entries are
+		// skipped, and an entrypoint the allowlist fails to cover is reported by
+		// runSandbox before the sandbox starts.
 	}
 }
 
@@ -126,11 +191,36 @@ func Validate(p *config.Profile, workDir string) Result {
 	// 2. Verify mount dest paths exist on the host (after expansion).
 	// Dests using ${workspaces_path} are pre-created by the workspace manager
 	// (os.MkdirAll) before bwrap starts, so they are exempt from this check.
+	// With home = "isolated" a dest under $HOME lands inside the tmpfs, where
+	// bwrap creates the mount point itself, so it is exempt too — unless a
+	// home_allow entry re-binds that subtree read-only, in which case the mount
+	// point must exist on the host exactly as it must under host-ro.
+	homeForDest := ""
+	if p.Sandbox.Home == config.HomeIsolated {
+		if h, err := os.UserHomeDir(); err == nil {
+			homeForDest = filepath.Clean(h)
+		}
+	}
+	insideAllowlistedSubtree := func(dest string) bool {
+		for _, entry := range p.Sandbox.HomeAllow {
+			prefix := filepath.Clean(config.ExpandPath(entry))
+			if prefix != "" && strings.HasPrefix(dest, prefix+"/") {
+				return true
+			}
+		}
+		return false
+	}
 	for _, entry := range p.Mounts {
 		if strings.Contains(entry.Dest, workspacesPathToken) {
 			continue
 		}
 		dest := config.ExpandPath(entry.Dest)
+		if homeForDest != "" {
+			clean := filepath.Clean(dest)
+			if strings.HasPrefix(clean, homeForDest+"/") && !insideAllowlistedSubtree(clean) {
+				continue
+			}
+		}
 		if _, err := os.Stat(dest); err != nil {
 			if os.IsNotExist(err) {
 				r.addError(fmt.Sprintf("mount dest %q does not exist on host (expanded: %q)", entry.Dest, dest))
@@ -231,6 +321,9 @@ func Validate(p *config.Profile, workDir string) Result {
 			r.addWarning("nested-user-ns combined with network access increases privilege-escalation risk; review carefully")
 		}
 	}
+
+	// 3a-bis. Validate [sandbox] home / home_allow.
+	validateHome(&r, p)
 
 	// 3b. Validate [sandbox] cgroup_manager. An unknown value is an error:
 	// silently falling back to the default would hide a typo that only shows

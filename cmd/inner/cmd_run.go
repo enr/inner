@@ -151,6 +151,15 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	// or --dry-run.
 	if rc.Workdir != "" {
 		if home, err := os.UserHomeDir(); err == nil && workdirCoversHome(rc.Workdir, home) {
+			// Under home = "isolated" this is not a warning but a contradiction:
+			// the workdir is bind-mounted rw AFTER the home tmpfs, so it would
+			// put the whole host home back — writable — on top of the empty home
+			// and silently undo the isolation the profile asked for.
+			if rc.HomeIsolated() {
+				return fmt.Errorf("workdir %q covers your home directory, but the profile sets home = \"isolated\": "+
+					"the read-write workdir bind would restore the host home on top of the isolated one.\n"+
+					"Pass -w PATH with a directory below your home (e.g. -w ~/projects/foo) or drop home = \"isolated\" from the profile", rc.Workdir)
+			}
 			fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": workdir %q covers your home directory — all dotfiles (.bashrc, .profile, .config/…) will be writable inside the sandbox\n", rc.Workdir)
 			if workdirImplicit && !flags.dryRun && !rc.AutoConfirm {
 				fmt.Fprintln(w, "         (workdir defaulted to the current directory; pass -w PATH to scope the mount, or --yes to skip this prompt)")
@@ -294,6 +303,10 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 	defer cleanupSafe()
+
+	// 11d. With an isolated home, warn if the entrypoint binary itself lives in
+	//      the home directory and nothing puts it back inside the sandbox.
+	warnIsolatedHomeEntrypoint(w, rc)
 
 	// 12. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
@@ -581,6 +594,52 @@ func workdirCoversHome(workdir, home string) bool {
 	return workdir == home || strings.HasPrefix(home+"/", prefix)
 }
 
+// warnIsolatedHomeEntrypoint warns when home = "isolated" hides the entrypoint
+// binary itself. Agent CLIs are routinely installed inside the home directory
+// (~/.local/bin from a native installer, ~/.nvm or ~/.npm-global from npm), and
+// the resulting failure inside the sandbox is an opaque "command not found", so
+// the warning names the exact home_allow entry that fixes it.
+//
+// Both the binary and its symlink target are checked: native installers put a
+// small link in ~/.local/bin pointing at a versioned directory elsewhere under
+// the home, and allowlisting only the link produces a dangling symlink.
+//
+// A warning, not an error: PATH inside the sandbox can differ from the host's,
+// so a host lookup is a good hint but not proof.
+func warnIsolatedHomeEntrypoint(w io.Writer, rc *config.RunConfig) {
+	if !rc.HomeIsolated() || rc.Entrypoint.Cmd == "" {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	home = filepath.Clean(home)
+
+	bin, err := exec.LookPath(rc.Entrypoint.Cmd)
+	if err != nil {
+		return // the validator already reports an unresolvable entrypoint
+	}
+	if abs, err := filepath.Abs(bin); err == nil {
+		bin = abs
+	}
+	candidates := []string{bin}
+	if resolved, err := filepath.EvalSymlinks(bin); err == nil && resolved != bin {
+		candidates = append(candidates, resolved)
+	}
+
+	for _, path := range candidates {
+		if !strings.HasPrefix(path, home+"/") || rc.ReexposedInHome(path) {
+			continue
+		}
+		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+
+			": entrypoint %q resolves to %q, which is inside the home directory replaced by home = \"isolated\"\n"+
+			"         nothing re-exposes it, so the sandbox will fail with \"command not found\". Add to the profile:\n"+
+			"           [sandbox]\n           home_allow = [%q]\n",
+			rc.Entrypoint.Cmd, path, filepath.Dir(path))
+	}
+}
+
 // parseMount parses "src:dest[:mode]" into a Mount.
 func parseMount(s string) (config.Mount, error) {
 	parts := strings.SplitN(s, ":", 3)
@@ -632,6 +691,11 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 	if rc.Workdir != "" {
 		fmt.Fprintf(w, "workdir:     %s\n", rc.Workdir)
 	}
+	homeMode := rc.HomeMode
+	if homeMode == "" {
+		homeMode = config.HomeHostRO
+	}
+	fmt.Fprintf(w, "home:        %s\n", homeMode)
 	fmt.Fprintf(w, "network:     %v\n", rc.Network)
 	fmt.Fprintf(w, "pid-ns:      %v\n", rc.PidNamespace)
 	if rc.ContainersConfPath != "" {
@@ -644,6 +708,18 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 		fmt.Fprintln(w, "timeout:     none")
 	}
 	fmt.Fprintln(w)
+
+	if rc.HomeIsolated() && len(rc.HomeAllow) > 0 {
+		fmt.Fprintln(w, "home_allow (read-only inside the isolated home):")
+		for _, p := range rc.HomeAllow {
+			if _, err := os.Stat(p); err != nil {
+				fmt.Fprintf(w, "  %s (missing on host — skipped)\n", p)
+				continue
+			}
+			fmt.Fprintf(w, "  %s\n", p)
+		}
+		fmt.Fprintln(w)
+	}
 
 	if len(rc.Mounts) > 0 {
 		fmt.Fprintln(w, "mounts:")

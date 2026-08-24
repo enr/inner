@@ -6,6 +6,16 @@ description = "Run a single shell command in sandbox (no network)"
 network   = false
 clipboard = false
 
+# ── Home isolation (allowlist model) ──────────────────────────────────────────
+# This profile deliberately stays on the default "host-ro" model: it is a shell
+# for the user's own hands, and an empty home would hide the dotfiles, tools and
+# project files that make it useful. The sandbox still protects writes and the
+# hard-coded credential list, but every other file under $HOME stays readable.
+#
+# For an agent-style shell (nothing readable except what is named), uncomment:
+# home = "isolated"
+# home_allow = ["~/.local/bin", "~/.nvm", "~/.asdf"]
+
 [env]
 clearenv = true
 inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
