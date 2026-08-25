@@ -13,6 +13,11 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #7 — `quoteGitConfigValue` mangled `\r`** — it now writes a
+  raw CR byte inside the quotes, matching real `git config`'s own output,
+  instead of the copy-pasted `\n` escape (or the `\r` escape the review
+  suggested, which turns out to not exist in git's own parser). See **#7**
+  below.
 - ✅ **[FIXED] Issue #6 — `extractExpiresAt` map iteration was nondeterministic**
   — it now collects every candidate expiry and returns the earliest, instead of
   the first one a randomized map iteration happens to visit. See **#6** below.
@@ -409,22 +414,36 @@ reshuffles every run, which is what made the old code flaky).
 
 ---
 
-## #7 — [Low] `quoteGitConfigValue` rewrites `\r` to `\n`
+## #7 — [CLOSED] `quoteGitConfigValue` rewrites `\r` to `\n`
 
 **Where:** `internal/git/sanitizer.go` — `quoteGitConfigValue`
 (~`sanitizer.go:243`).
 
-**What is wrong:** the escape `switch` has `case '\r':` writing the literal `\n`
-escape (looks copy-pasted from the `\n` case). A carriage return in a value is
-silently turned into a newline escape in the emitted gitconfig.
+**What was wrong:** the escape `switch` had `case '\r':` writing the literal
+`\n` escape (looks copy-pasted from the `\n` case). A carriage return in a
+value was silently turned into a newline escape in the emitted gitconfig.
 
 **Why it matters:** low impact (CR in a git value is rare), but it is a silent
 data-mangling bug.
 
-**How to fix:** emit `\r` for the `'\r'` case.
+### Fix — not the one originally suggested
 
-**How to verify:** unit test that a value containing `\r` round-trips to `\r` in
-the quoted output.
+The review's suggested fix ("emit `\r` for the `'\r'` case") turned out to be
+wrong: git's own config parser has **no `\r` escape**. Verified against the
+real `git` binary — a config file containing the literal two-char sequence
+`\` `r` inside a quoted value is a hard parse failure (`fatal: bad config line`),
+not a mangled-but-parseable value. And `git config <key> <value>` itself, given
+a value containing a real carriage return, writes a **raw CR byte** inside the
+quotes, not any escape sequence. `quoteGitConfigValue` now does the same:
+`case '\r': sb.WriteByte('\r')`.
+
+**Verification:** `TestProcess_overrideQuotesCarriageReturn`
+(`internal/git/sanitizer_test.go`) asserts the emitted config contains a raw CR
+in the value and no `\r` two-char sequence, then — when `git` is on `PATH` —
+writes the sanitized output to a temp file and round-trips it through the real
+`git config --get`, confirming git itself accepts the file and returns the
+original value byte-for-byte. Confirmed the test fails against the pre-fix code
+(which emits `\n` for a `\r` input, as documented in the original report).
 
 ---
 

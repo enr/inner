@@ -241,7 +241,11 @@ func quoteGitConfigValue(value string) string {
 		case '\n':
 			sb.WriteString(`\n`)
 		case '\r':
-			sb.WriteString(`\n`)
+			// Not `\r`: git's own config parser has no such escape (a value
+			// containing a literal `\r` two-char sequence is a fatal "bad
+			// config line"). git itself writes a raw CR byte inside the
+			// quotes, so match that instead of inventing an escape.
+			sb.WriteByte('\r')
 		case '\t':
 			sb.WriteString(`\t`)
 		case '\b':

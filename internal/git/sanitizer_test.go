@@ -2,6 +2,8 @@ package git
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -154,6 +156,45 @@ func TestProcess_overrideEscapesValueInjection(t *testing.T) {
 	}
 	if !strings.Contains(out, `name = "alice\n[core]\n\thooksPath = /tmp/evil"`) {
 		t.Fatalf("override value was not gitconfig-quoted safely:\n%s", out)
+	}
+}
+
+// TestProcess_overrideQuotesCarriageReturn reproduces issue #7: the quoting
+// switch had a `\r` case that emitted the literal `\n` escape (copy-pasted
+// from the `\n` case above it), silently turning a CR into a newline escape.
+// git's own config parser has no `\r` escape at all — a value containing the
+// two-char sequence `\` `r` is a fatal "bad config line" — so the fix must not
+// just swap in a `\r` escape either; it must emit a raw CR byte inside the
+// quotes, matching what `git config` itself writes (verified below against
+// the real git binary, when available).
+func TestProcess_overrideQuotesCarriageReturn(t *testing.T) {
+	out := Process("", nil, map[string]string{
+		"user.name": "alice\rbob",
+	})
+
+	if !strings.Contains(out, "name = \"alice\rbob\"") {
+		t.Fatalf("expected a raw CR inside the quoted value, got:\n%q", out)
+	}
+	if strings.Contains(out, `\r`) {
+		t.Fatalf(`gitconfig has no \r escape; got a literal backslash-r sequence:%s`, out)
+	}
+
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH, skipping round-trip verification")
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(cfgPath, []byte(out), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(gitPath, "config", "--file", cfgPath, "--get", "user.name")
+	got, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("real git rejected the sanitized config: %v", err)
+	}
+	if want := "alice\rbob\n"; string(got) != want {
+		t.Fatalf("git config --get returned %q, want %q", got, want)
 	}
 }
 
