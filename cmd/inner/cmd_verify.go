@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -86,11 +87,27 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 	}
 	rc.Env.Set["INNER_VERIFY_INSIDE"] = "1"
 	rc.Env.Set["INNER_VERIFY_PROFILE"] = profileName
-	// The home mode travels through the environment rather than being re-read
-	// from the profile inside: the check must run even when the profiles
-	// directory is not readable from within the sandbox.
-	if rc.HomeMode != "" {
-		rc.Env.Set["INNER_VERIFY_HOME_MODE"] = rc.HomeMode
+	// Everything the checks need travels through the environment rather than
+	// being re-read from the profile inside the sandbox. The profile file is
+	// routinely unreachable there — under home = "isolated" it lives in the
+	// hidden home, and `inner verify` sets no workdir, so nothing binds it back.
+	// Re-reading it silently produced a default context (no network, no shims,
+	// no allow keys, no custom checks), which made every agent profile fail the
+	// network check and made [sandbox] allow declassification a no-op.
+	//
+	// These values describe the sandbox that was actually built, which is what
+	// the checks should be judged against anyway.
+	rc.Env.Set["INNER_VERIFY_HOME_MODE"] = rc.HomeMode
+	rc.Env.Set["INNER_VERIFY_NETWORK"] = boolEnv(rc.Network)
+	rc.Env.Set["INNER_VERIFY_SHIMS"] = boolEnv(rc.ShimDir != "")
+	rc.Env.Set["INNER_VERIFY_ALLOW"] = strings.Join(rc.Allow, ",")
+	rc.Env.Set["INNER_VERIFY_CUSTOM"] = ""
+	if len(rc.VerifyCustomChecks) > 0 {
+		encoded, err := json.Marshal(rc.VerifyCustomChecks)
+		if err != nil {
+			return fmt.Errorf("encoding custom checks: %w", err)
+		}
+		rc.Env.Set["INNER_VERIFY_CUSTOM"] = string(encoded)
 	}
 
 	// Build sandbox command.
@@ -121,25 +138,36 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 // renders the report, and exits with a non-zero code if the sandbox is not
 // conformant.
 func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
-	var allow []string
-	var custom []config.CustomCheck
-	networkEnabled := false
-	shimsExpected := false
-
 	profileName := os.Getenv("INNER_VERIFY_PROFILE")
 	if profileName == "" {
 		profileName = "default"
 	}
-	homeMode := os.Getenv("INNER_VERIFY_HOME_MODE")
-	if p, err := a.loader.LoadProfileAuto(profileName); err == nil {
-		allow = p.Sandbox.Allow
-		custom = p.Verify.Custom.Checks
-		networkEnabled = p.Sandbox.Network
-		shimsExpected = len(p.Noop.Block) > 0 || len(p.Noop.Rewrite) > 0
-		// The env var set by the host side wins: it describes the sandbox that
-		// was actually built, while the profile may not even be readable here.
-		if homeMode == "" {
-			homeMode = p.Sandbox.Home
+	// The host side describes the sandbox it built through the environment.
+	// The profile is only re-read to fill in what the environment does not
+	// carry — it may well be invisible from in here (see runVerifyOutside).
+	homeMode, homeModeSet := os.LookupEnv("INNER_VERIFY_HOME_MODE")
+	networkEnabled, networkSet := lookupBoolEnv("INNER_VERIFY_NETWORK")
+	shimsExpected, shimsSet := lookupBoolEnv("INNER_VERIFY_SHIMS")
+	allow, allowSet := lookupListEnv("INNER_VERIFY_ALLOW")
+	custom, customSet := lookupCustomChecksEnv("INNER_VERIFY_CUSTOM")
+
+	if !homeModeSet || !networkSet || !shimsSet || !allowSet || !customSet {
+		if p, err := a.loader.LoadProfileAuto(profileName); err == nil {
+			if !allowSet {
+				allow = p.Sandbox.Allow
+			}
+			if !customSet {
+				custom = p.Verify.Custom.Checks
+			}
+			if !networkSet {
+				networkEnabled = p.Sandbox.Network
+			}
+			if !shimsSet {
+				shimsExpected = len(p.Noop.Block) > 0 || len(p.Noop.Rewrite) > 0
+			}
+			if !homeModeSet {
+				homeMode = p.Sandbox.Home
+			}
 		}
 	}
 
@@ -158,6 +186,55 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 		return exitCodeError{code: 1}
 	}
 	return nil
+}
+
+// ── Verify context passed through the environment ─────────────────────────────
+
+// boolEnv renders a bool for one of the INNER_VERIFY_* variables.
+func boolEnv(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}
+
+// lookupBoolEnv reads a boolEnv value, reporting whether the variable was set.
+func lookupBoolEnv(name string) (bool, bool) {
+	v, ok := os.LookupEnv(name)
+	if !ok {
+		return false, false
+	}
+	return v == "1", true
+}
+
+// lookupListEnv reads a comma-separated list, reporting whether the variable
+// was set. An empty variable is a set-but-empty list, not an absent one.
+func lookupListEnv(name string) ([]string, bool) {
+	v, ok := os.LookupEnv(name)
+	if !ok {
+		return nil, false
+	}
+	if v == "" {
+		return nil, true
+	}
+	return strings.Split(v, ","), true
+}
+
+// lookupCustomChecksEnv decodes the JSON-encoded [verify.custom] checks. A
+// malformed value is treated as absent so the profile fallback can still run.
+func lookupCustomChecksEnv(name string) ([]config.CustomCheck, bool) {
+	v, ok := os.LookupEnv(name)
+	if !ok {
+		return nil, false
+	}
+	if v == "" {
+		return nil, true
+	}
+	var checks []config.CustomCheck
+	if err := json.Unmarshal([]byte(v), &checks); err != nil {
+		return nil, false
+	}
+	return checks, true
 }
 
 // ── Cobra wiring (thin) ───────────────────────────────────────────────────────

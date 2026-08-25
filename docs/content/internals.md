@@ -206,6 +206,41 @@ The following resources are hidden by default:
 | `podman-socket` | `/run/user/<uid>/podman/podman.sock` | `--bind /dev/null` |
 | `bash-history` | `~/.bash_history` | `--bind /dev/null` |
 | `zsh-history` | `~/.zsh_history` | `--bind /dev/null` |
+| `aws-credentials` | `~/.aws` | `--tmpfs` (empty dir) |
+| `gcloud-credentials` | `~/.config/gcloud` | `--tmpfs` (empty dir) |
+| `kube-config` | `~/.kube` | `--tmpfs` (empty dir) |
+| `azure-credentials` | `~/.azure` | `--tmpfs` (empty dir) |
+| `docker-config` | `~/.docker/config.json` | `--bind /dev/null` |
+| `npmrc` | `~/.npmrc` | `--bind /dev/null` |
+| `pypirc` | `~/.pypirc` | `--bind /dev/null` |
+| `cargo-credentials` | `~/.cargo/credentials`, `~/.cargo/credentials.toml` | `--bind /dev/null` |
+| `gh-config` | `~/.config/gh` | `--tmpfs` (empty dir) |
+| `terraform-credentials` | `~/.terraform.d` | `--tmpfs` (empty dir) |
+| `maven-settings` | `~/.m2/settings.xml`, `~/.m2/settings-security.xml` | `--bind /dev/null` |
+| `gradle-properties` | `~/.gradle/gradle.properties` | `--bind /dev/null` |
+| `helm-config` | `~/.config/helm` | `--tmpfs` (empty dir) |
+| `pgpass` | `~/.pgpass` | `--bind /dev/null` |
+| `mysql-config` | `~/.my.cnf` | `--bind /dev/null` |
+| `password-store` | `~/.password-store` | `--tmpfs` (empty dir) |
+| `keyrings` | `~/.local/share/keyrings` | `--tmpfs` (empty dir) |
+| `onepassword-config` | `~/.config/op` | `--tmpfs` (empty dir) |
+| `browser-profiles` | `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware`, `~/.config/microsoft-edge`, `~/.config/vivaldi`, `~/.config/opera` | `--tmpfs` (empty dir) |
+
+A key may cover several paths (`browser-profiles`, `maven-settings`): all of
+them are hidden, and listing the key in `allow` un-hides all of them.
+
+Only the credential files of `~/.m2` and `~/.gradle` are hidden, not the whole
+directory: the rest is the local artifact cache, and hiding it would break
+offline builds for no security gain.
+
+**This is a denylist, and a denylist rots.** It protects only the paths someone
+thought of; a tool that invents a new token path is readable until the list is
+updated. `home = "isolated"` (see [profiles](../profiles/#home-filesystem-model)) is the
+allowlist model and the real answer for profiles that do not need the host home
+— this table is the floor for profiles that stay on `home = "host-ro"`.
+Two tests guard it: `TestSensitiveResources_coverWellKnownSecrets` (a canary
+list of paths that must be covered) and `inner verify`, which derives one check
+per key from this same table.
 
 Each entry is skipped when:
 

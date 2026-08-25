@@ -13,6 +13,9 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #1 — denylist read side** — both fixes shipped: the
+  allowlist home mode (`[sandbox] home = "isolated"`) and the extended,
+  test-guarded hide list, with planted-secret e2e coverage. See **#1** below.
 - ✅ **[FIXED] Nested-user-ns `--` insertion bug** — `prepareNestedUserNs` used
   to splice bwrap fds before *every* `--`. Now inserts before the first
   separator only. (`cmd/inner/cmd_run.go`)
@@ -23,43 +26,24 @@ Status of items already handled:
 
 ---
 
-## #1 — [IMPLEMENTED / partially open] The read side of the sandbox is a denylist, not an allowlist
+## #1 — [CLOSED] The read side of the sandbox is a denylist, not an allowlist
 
 **Where:** `internal/isolator/bwrap.go` — `--ro-bind / /` (base mount) plus the
-hard-coded `sensitive` list (~`bwrap.go:248`).
+hide list in `config.SensitiveResources` (`internal/config/types.go`).
 
-**What is wrong:** the entire host filesystem is bind-mounted read-only into the
+**What was wrong:** the entire host filesystem is bind-mounted read-only into the
 sandbox, and then a *fixed list* of ~17 known credential paths is hidden on top.
-Anything **not** on that list is fully readable by the sandboxed agent.
+Anything **not** on that list is fully readable by the sandboxed agent: browser
+cookie databases, `.env` files anywhere in the tree, the user's source code, and
+tokens for tools not on the deny-list (`~/.config/gh`, `~/.terraform.d`,
+`~/.m2/settings.xml`, `~/.config/helm`, …). The sandbox protected against
+**writes** and a fixed set of credential files; it did **not** protect the
+confidentiality of data at rest, and the list would silently rot as new tools
+invent new token paths.
 
-**Why it matters:** a coding agent (claude, etc.) running in the sandbox can read
-the user's whole home directory and system: browser cookie databases
-(`~/.mozilla`, `~/.config/google-chrome`), `.env` files anywhere in the tree, the
-user's source code and documents, and tokens for tools not on the deny-list
-(`~/.config/gh`, `~/.terraform.d`, `~/.m2/settings.xml`, `~/.config/helm`,
-JetBrains/VS Code config, …). The sandbox protects against **writes** and a fixed
-set of credential files; it does **not** protect the confidentiality of data at
-rest. The list will also silently rot as new tools invent new token paths.
+Both fixes proposed in the review are now in.
 
-**How to fix (options, in increasing order of strength):**
-
-1. *Short term:* extend the `sensitive` list (add `~/.config/gh`,
-   `~/.terraform.d`, `~/.m2`, `~/.config/helm`, `~/.local/share/keyrings`, browser
-   profile dirs) and add a test that fails when a new well-known secret path is
-   not covered.
-2. *Proper fix:* invert the model for workspace-style profiles — start from an
-   empty home (`--tmpfs $HOME`) and **allowlist** only the directories the agent
-   needs (the workdir, the capability dirs). This is a larger change and should
-   be a new profile mode (e.g. `[sandbox] home = "isolated"`).
-
-**How to verify:** write an e2e test that, with a default profile, tries to
-`cat` a planted secret outside the deny-list (e.g. `~/.config/gh/hosts.yml`) and
-asserts the chosen policy (readable under denylist mode, hidden under allowlist
-mode).
-
-### Status — fix 2 implemented (`[sandbox] home = "isolated"`)
-
-The inverted model shipped as a profile mode:
+### Fix 2 — the allowlist model (`[sandbox] home = "isolated"`)
 
 - `[sandbox] home` selects `"host-ro"` (previous behaviour, still the default
   for any profile that does not ask) or `"isolated"` (`--tmpfs $HOME`, emitted
@@ -76,23 +60,96 @@ The inverted model shipped as a profile mode:
   `/proc/self/mountinfo` from inside the sandbox and fails unless `$HOME` really
   is a tmpfs.
 - Guardrails: `inner run` refuses a workdir that covers `$HOME` under
-  `home = "isolated"` (the read-write bind would restore the host home on top of
-  the tmpfs), warns when the entrypoint binary itself lives in the hidden home,
-  and the profile validator rejects an unknown mode, an allowlist entry equal to
-  `$HOME`, and warns when an entry re-exposes a path from the hide list.
+  `home = "isolated"`, warns when the entrypoint binary itself lives in the
+  hidden home, and the profile validator rejects an unknown mode, an allowlist
+  entry equal to `$HOME`, and warns when an entry re-exposes a path from the
+  hide list.
 
-Still open:
+### Fix 1 — the deny list was extended and is now guarded
 
-- **Fix 1 (extend the deny list)** was *not* done: under `home = "host-ro"`
-  `~/.config/gh`, `~/.terraform.d`, `~/.m2`, `~/.config/helm`,
-  `~/.local/share/keyrings` and browser profile directories are still readable.
-  Isolated mode makes this marginal for agent profiles, but the default mode
-  keeps the original weakness.
-- **The e2e verification above is not automated.** Unit coverage asserts the
-  emitted bwrap argv and the checker logic; nobody has yet run a planted-secret
-  test against a real bubblewrap (none is available in the CI container used for
-  this change). Sign this off on a real machine before relying on the mode —
-  same treatment as issue #9.
+`config.SensitiveResources` gained the paths named in the review plus the
+neighbouring ones that carry the same class of secret. New allow keys:
+`gh-config`, `terraform-credentials`, `maven-settings`, `gradle-properties`,
+`helm-config`, `pgpass`, `mysql-config`, `keyrings`, `onepassword-config`,
+`browser-profiles` (`~/.mozilla` and the Chrome/Chromium/Brave/Edge/Vivaldi/Opera
+profile directories), plus `~/.cargo/credentials.toml` under the existing
+`cargo-credentials` key. A key may now cover several paths; allowing the key
+un-hides all of them. Only the *credential files* of `~/.m2` and `~/.gradle` are
+hidden — the rest of those trees is the artifact cache, and hiding it would break
+offline builds for no security gain.
+
+Three mechanisms keep the list from rotting again:
+
+- `TestSensitiveResources_coverWellKnownSecrets` (`internal/config/sensitive_test.go`)
+  holds a canary list of well-known secret paths; adding a tool's token path
+  there fails the build until the hide list covers it. Two companion tests assert
+  every hide key is declassifiable via `[sandbox] allow` (except the two
+  shell-history keys, deliberately) and is listed in `CredentialAllowKeys`, so a
+  new entry cannot silently escape the "network + credentials" warning.
+- `inner verify` now derives **one check per hide key** from the same table
+  (`Checker.checkSensitiveResources`), instead of covering only the five
+  resources that had a hand-written check. Growing the hide list grows `verify`
+  automatically. A check fails when any of its paths is readable and non-empty
+  inside the sandbox; `[sandbox] allow` declassifies it like any other check.
+- The docs tables (`docs/content/internals.md`, `docs/content/profiles.md`) list
+  the full table and state plainly that a denylist only protects what someone
+  thought of, pointing at `home = "isolated"` as the real answer.
+
+### Verification — automated, and signed off on a real bubblewrap
+
+`.sdlc/e2e` gained a **"Planted secrets: read-side policy"** section. It plants
+real files on the host (`~/.config/gh/inner-e2e-hosts-$$.yml`, an *unlisted*
+`~/.inner-e2e-unlisted-secret-$$.env`, and an allowlisted directory), then
+asserts, through a real `bwrap`:
+
+1. host-ro: the planted `~/.config/gh` secret is **not** readable;
+2. host-ro: the unlisted secret **is** readable — the denylist limitation,
+   asserted so it cannot change silently;
+3. host-ro: `allow = ["gh-config"]` re-exposes it (escape hatch works);
+4. isolated: **both** secrets are unreadable;
+5. isolated: `$HOME` is really a tmpfs;
+6. isolated: `inner verify` passes;
+7. isolated: a `home_allow` entry is readable and nothing else is.
+
+Everything planted is removed on exit, and the whole section skips itself when
+`$HOME` is not writable (e.g. when the suite runs inside an inner sandbox).
+
+Manual sign-off on bubblewrap 0.11.2 (2026-08-25), using the maintainer's real
+home instead of planted files, since the check session itself ran with a
+read-only home:
+
+| Check | Result |
+|-------|--------|
+| `~/.config/gh/hosts.yml` under host-ro | gone (parent is an empty tmpfs) |
+| `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium` | 0 entries |
+| `~/.m2/settings.xml`, `~/.gradle/gradle.properties` | `character special file` (/dev/null bind) |
+| `~/.m2/settings-ifis.xml` (non-standard name, unlisted) | readable — denylist limitation, as designed |
+| `allow = ["gh-config"]` | `hosts.yml` readable again |
+| `home = "isolated"` + `home_allow = ["~/.m2"]` | `$HOME` fstype `tmpfs`, entries `.m2 Projects`, gh secret gone, `~/.m2/settings.xml` still `/dev/null` |
+| `inner verify -p <isolated profile>` | 33/33 checks passed |
+
+### Fallout fixed along the way — `inner verify` under an isolated home
+
+Running the e2e suite outside a sandbox surfaced a real bug in the isolated-home
+work: `inner verify` re-read the profile file **from inside** the sandbox, but
+`verify` sets no workdir, so under `home = "isolated"` the profile (living in the
+hidden home) was unreadable. The load failed silently and the checks ran with a
+default context: `network = false`, no shims expected, **no `allow` keys and no
+`[verify.custom]` checks**. Visible symptom: every agent profile failed the
+`network restricted` check. Worse, unseen: `[sandbox] allow` declassification and
+custom checks were silently dropped for exactly the profiles that isolate the home.
+
+Fix in `cmd/inner/cmd_verify.go`: the host side now passes the whole verify
+context through `INNER_VERIFY_*` env vars (home mode, network, shims-expected,
+allow list, JSON-encoded custom checks), following the precedent already used for
+the home mode; the profile is only re-read to fill in what the environment does
+not carry. The values now describe the sandbox that was actually built. Covered
+by `cmd/inner/cmd_verify_test.go`, and `.sdlc/e2e`'s `run_verify` now prints the
+failing check lines instead of a bare red line.
+
+Residual, accepted: under `home = "host-ro"` any path nobody listed is still
+readable (item 2 above). That is inherent to the denylist model — the fix for a
+profile that cannot accept it is `home = "isolated"`.
 
 ---
 

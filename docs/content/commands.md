@@ -289,6 +289,13 @@ inner verify [flags]
 
 This means the checks probe what a real agent run would actually see — not the host environment.
 
+The inside invocation never re-reads the profile file: everything the checks need
+(home mode, `network`, `allow` keys, whether shims are expected, `[verify.custom]`
+checks) is passed to it through `INNER_VERIFY_*` environment variables. Under
+`home = "isolated"` the profile lives in the hidden home and would simply be
+unreadable from inside, and the values passed this way describe the sandbox that
+was actually built rather than what the file says.
+
 ### Flags
 
 | Flag | Short | Type | Default | Description |

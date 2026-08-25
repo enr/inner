@@ -3,6 +3,12 @@ name           = "java-maven"
 description    = "Interactive shell with Java Maven and Podman support"
 extends        = "shell-containers"
 
+# The local repository is mounted rw, but ~/.m2/settings.xml and
+# settings-security.xml stay hidden (they carry registry credentials).
+# A build that needs them — private mirrors, deploy servers — must opt in:
+#
+#   [sandbox]
+#   allow = ["maven-settings"]
 [mounts]
 "~/.m2" = { dest = "~/.m2", mode = "rw" }
 

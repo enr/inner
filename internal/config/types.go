@@ -45,14 +45,21 @@ var ValidAllowKeys = []string{
 	"ssh-keys", "git-credentials", "gpg-keys",
 	"docker-socket", "podman-socket", "nested-user-ns", "netrc",
 	"aws-credentials", "gcloud-credentials", "kube-config", "azure-credentials",
-	"docker-config", "npmrc", "pypirc", "cargo-credentials",
-	"password-store",
+	"docker-config", "npmrc", "pypirc", "cargo-credentials", "gh-config",
+	"terraform-credentials", "maven-settings", "gradle-properties",
+	"helm-config", "pgpass", "mysql-config",
+	"password-store", "keyrings", "onepassword-config", "browser-profiles",
 	// Verify-only declassification keys (no filesystem hide action).
 	"env-secrets", "shims-active", "network-policy",
 }
 
 // SensitiveResource is a host resource hidden from the sandbox by default.
 // Listing Key in [sandbox] allow keeps the resource visible.
+//
+// A key may appear on several entries when one logical secret lives in more
+// than one place (e.g. "browser-profiles" covers one directory per browser):
+// every entry with that key is hidden, and allowing the key un-hides all of
+// them at once.
 type SensitiveResource struct {
 	Key  string
 	Path string // absolute host path
@@ -62,7 +69,14 @@ type SensitiveResource struct {
 // SensitiveResources returns the resources the isolator hides by default, for
 // a given home directory and numeric uid. It is the single source of truth for
 // the hide list: the isolator emits the mounts, the profile validator uses it
-// to warn when [sandbox] home_allow re-exposes one of them.
+// to warn when [sandbox] home_allow re-exposes one of them, and `inner verify`
+// derives one check per key from it.
+//
+// This is a denylist, and a denylist rots: it only protects paths someone
+// thought of. `home = "isolated"` (the allowlist model) is the real answer for
+// profiles that do not need the host home — this list is the floor for the
+// profiles that stay on home = "host-ro". When adding a tool here, also add
+// its path to the canary list in TestSensitiveResources_coverWellKnownSecrets.
 func SensitiveResources(home, uid string) []SensitiveResource {
 	join := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
 	return []SensitiveResource{
@@ -84,8 +98,33 @@ func SensitiveResources(home, uid string) []SensitiveResource {
 		{"npmrc", join(".npmrc"), false},
 		{"pypirc", join(".pypirc"), false},
 		{"cargo-credentials", join(".cargo", "credentials"), false},
-		// Password managers.
+		{"cargo-credentials", join(".cargo", "credentials.toml"), false},
+		// Developer tool tokens.
+		{"gh-config", join(".config", "gh"), true},
+		{"terraform-credentials", join(".terraform.d"), true},
+		// Only the credential files of ~/.m2 and ~/.gradle: the rest of those
+		// directories is the local artifact cache, and hiding it would break
+		// every offline build for no security gain.
+		{"maven-settings", join(".m2", "settings.xml"), false},
+		{"maven-settings", join(".m2", "settings-security.xml"), false},
+		{"gradle-properties", join(".gradle", "gradle.properties"), false},
+		{"helm-config", join(".config", "helm"), true},
+		// Database credentials.
+		{"pgpass", join(".pgpass"), false},
+		{"mysql-config", join(".my.cnf"), false},
+		// Password managers and secret stores.
 		{"password-store", join(".password-store"), true},
+		{"keyrings", join(".local", "share", "keyrings"), true},
+		{"onepassword-config", join(".config", "op"), true},
+		// Browser profiles: cookie jars and saved-password databases are a
+		// session-hijacking primitive, not just "config".
+		{"browser-profiles", join(".mozilla"), true},
+		{"browser-profiles", join(".config", "google-chrome"), true},
+		{"browser-profiles", join(".config", "chromium"), true},
+		{"browser-profiles", join(".config", "BraveSoftware"), true},
+		{"browser-profiles", join(".config", "microsoft-edge"), true},
+		{"browser-profiles", join(".config", "vivaldi"), true},
+		{"browser-profiles", join(".config", "opera"), true},
 	}
 }
 

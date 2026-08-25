@@ -755,13 +755,19 @@ PROFILES_DIR="$SCRIPT_DIR/../internal/setup/profiles"
 CONTRIB_DIR="$SCRIPT_DIR/../contrib/profiles"
 PODMAN_SOCK="/run/user/$(id -u)/podman/podman.sock"
 
+# run_verify: run `inner verify` on a profile and report. On failure the failing
+# check lines are printed: without them "verify <profile>" is an unactionable
+# red line, and the interesting information (which check, on which path) is
+# exactly what the report should carry.
 run_verify() {
-    local label="$1" path="$2"
-    if inner verify -p "$path" >/dev/null 2>&1; then
+    local label="$1" path="$2" out
+    out=$(inner verify -p "$path" 2>&1)
+    if [[ $? -eq 0 ]]; then
         pass "verify $label"
-    else
-        fail "verify $label"
+        return
     fi
+    fail "verify $label"
+    echo "$out" | grep -A1 "^\[!!\]" | sed 's/^/         /'
 }
 
 run_verify "shell"         "$PROFILES_DIR/shell.toml"
@@ -791,6 +797,215 @@ if [[ -S "$PODMAN_SOCK" ]]; then
     fi
 else
     printf "  [SKIP] podman socket not available, skipping container profile verify\n"
+fi
+
+# ── Planted-secret confidentiality tests ─────────────────────────────────────
+# The read side of the sandbox (SECURITY_REVIEW.md issue #1). Two policies are
+# asserted against a REAL bwrap, with real files planted on the host:
+#
+#   home = "host-ro" (default) → denylist: the paths in config.SensitiveResources
+#                                are hidden, everything else in $HOME is readable.
+#   home = "isolated"          → allowlist: $HOME is an empty tmpfs, so a planted
+#                                secret is invisible wherever it sits.
+#
+# Everything planted here is removed by cleanup_planted, including directories
+# that did not exist before this run. The whole section is skipped when $HOME is
+# not writable (e.g. when this script itself runs inside an inner sandbox).
+
+section "Planted secrets: read-side policy"
+
+PLANTED_FILES=()
+PLANTED_DIRS=()
+PLANTED_CONTENT="inner-e2e-planted-secret-$$"
+
+# plant: create a file with known content, remembering what to remove later.
+# Usage: plant <abs-path>
+plant() {
+    local target="$1" dir
+    dir=$(dirname "$target")
+    if [[ ! -d "$dir" ]]; then
+        mkdir -p "$dir" || return 1
+        PLANTED_DIRS+=("$dir")
+    fi
+    echo "$PLANTED_CONTENT" > "$target" || return 1
+    PLANTED_FILES+=("$target")
+}
+
+cleanup_planted() {
+    local f d i
+    for f in "${PLANTED_FILES[@]:-}"; do [[ -n "$f" ]] && rm -f "$f"; done
+    # Deepest last-created first, and only if empty: never remove a pre-existing tree.
+    for ((i = ${#PLANTED_DIRS[@]} - 1; i >= 0; i--)); do
+        d="${PLANTED_DIRS[$i]}"
+        [[ -n "$d" ]] && rmdir "$d" 2>/dev/null
+    done
+    return 0
+}
+trap 'rm -rf "$TMPWORK"; cleanup_planted' EXIT
+
+# read_in_sandbox: cat a host path inside the sandbox; prints the content or
+# "UNREADABLE". Runs from $TMPWORK so the workdir bind never re-exposes $HOME.
+read_in_sandbox() {
+    local profile="$1" target="$2"
+    run_sandbox "$profile" -w "$TMPWORK" -- \
+        -c "cat '$target' 2>/dev/null || echo UNREADABLE" 2>/dev/null | tr -d '[:space:]'
+}
+
+planted_secret_tests() {
+    # A secret on the deny list, a secret NOT on it, both inside $HOME.
+    local denied="$HOME/.config/gh/inner-e2e-hosts-$$.yml"
+    local unlisted="$HOME/.inner-e2e-unlisted-secret-$$.env"
+    local allowed_dir="$HOME/.inner-e2e-allowed-$$"
+    plant "$denied"          || { fail "planted secrets: cannot create $denied"; return; }
+    plant "$unlisted"        || { fail "planted secrets: cannot create $unlisted"; return; }
+    plant "$allowed_dir/tool.txt" || { fail "planted secrets: cannot create $allowed_dir"; return; }
+
+    local isolated="$TMPWORK/isolated.toml"
+    cat > "$isolated" <<'EOF'
+schema_version = "1"
+name           = "inner-e2e-isolated"
+description    = "e2e test profile — isolated home (allowlist)"
+
+[sandbox]
+network = false
+home    = "isolated"
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+    local isolated_allow="$TMPWORK/isolated-allow.toml"
+    cat > "$isolated_allow" <<EOF
+schema_version = "1"
+name           = "inner-e2e-isolated-allow"
+
+[sandbox]
+network    = false
+home       = "isolated"
+home_allow = ["$allowed_dir"]
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+    local gh_allowed="$TMPWORK/gh-allowed.toml"
+    cat > "$gh_allowed" <<'EOF'
+schema_version = "1"
+name           = "inner-e2e-gh-allowed"
+
+[sandbox]
+network = false
+allow   = ["gh-config"]
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+    local result
+
+    # 1. Deny list, host-ro: the hide entry must actually hide the path.
+    result=$(read_in_sandbox "$NONET" "$denied")
+    if [[ "$result" == "UNREADABLE" ]]; then
+        pass "host-ro: planted ~/.config/gh secret is not readable (deny list covers it)"
+    else
+        fail "host-ro: planted ~/.config/gh secret was READ inside the sandbox (got '$result')"
+    fi
+
+    # 2. Deny list, host-ro: a path nobody listed IS readable. This is the known
+    #    weakness of the denylist model, asserted so it cannot change silently.
+    result=$(read_in_sandbox "$NONET" "$unlisted")
+    if [[ "$result" == "$PLANTED_CONTENT" ]]; then
+        pass "host-ro: unlisted secret is readable (documented denylist limitation)"
+    else
+        fail "host-ro: expected the unlisted secret to be readable, got '$result'"
+    fi
+
+    # 3. The allow key un-hides a deny-list path again (escape hatch works).
+    result=$(read_in_sandbox "$gh_allowed" "$denied")
+    if [[ "$result" == "$PLANTED_CONTENT" ]]; then
+        pass "host-ro: allow = [\"gh-config\"] re-exposes ~/.config/gh"
+    else
+        fail "host-ro: allow = [\"gh-config\"] did not re-expose ~/.config/gh (got '$result')"
+    fi
+
+    # 4. Isolated home: BOTH secrets disappear — that is the point of the allowlist.
+    result=$(read_in_sandbox "$isolated" "$denied")
+    if [[ "$result" == "UNREADABLE" ]]; then
+        pass "isolated: planted ~/.config/gh secret is not readable"
+    else
+        fail "isolated: planted ~/.config/gh secret was READ inside the sandbox (got '$result')"
+    fi
+
+    result=$(read_in_sandbox "$isolated" "$unlisted")
+    if [[ "$result" == "UNREADABLE" ]]; then
+        pass "isolated: unlisted secret is not readable (allowlist model holds)"
+    else
+        fail "isolated: unlisted secret was READ inside the sandbox (got '$result')"
+    fi
+
+    # 5. Isolated home really is a tmpfs.
+    result=$(run_sandbox "$isolated" -w "$TMPWORK" -- \
+        -c 'findmnt -no FSTYPE "$HOME" 2>/dev/null || grep -c " $HOME tmpfs " /proc/self/mountinfo' \
+        2>/dev/null | tr -d '[:space:]')
+    if [[ "$result" == "tmpfs" || "$result" == "1" ]]; then
+        pass "isolated: \$HOME is a tmpfs inside the sandbox"
+    else
+        fail "isolated: \$HOME is not a tmpfs (got '$result')"
+    fi
+
+    # 6. inner verify agrees: the home-isolated check passes for this profile.
+    if inner verify -p "$isolated" >/dev/null 2>&1; then
+        pass "isolated: inner verify passes (home-isolated check)"
+    else
+        fail "isolated: inner verify failed for the isolated-home profile"
+    fi
+
+    # 7. The allowlist re-exposes what the profile asks for, and only that.
+    result=$(read_in_sandbox "$isolated_allow" "$allowed_dir/tool.txt")
+    if [[ "$result" == "$PLANTED_CONTENT" ]]; then
+        pass "isolated: home_allow entry is readable inside the sandbox"
+    else
+        fail "isolated: home_allow entry not readable (got '$result')"
+    fi
+
+    result=$(read_in_sandbox "$isolated_allow" "$unlisted")
+    if [[ "$result" == "UNREADABLE" ]]; then
+        pass "isolated: home_allow does not re-expose the rest of the home"
+    else
+        fail "isolated: unlisted secret readable despite the allowlist (got '$result')"
+    fi
+}
+
+HOME_PROBE="$HOME/.inner-e2e-writable-$$"
+if touch "$HOME_PROBE" 2>/dev/null; then
+    rm -f "$HOME_PROBE"
+    planted_secret_tests
+else
+    printf "  [SKIP] \$HOME is not writable (running inside a sandbox?), skipping planted-secret tests\n"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

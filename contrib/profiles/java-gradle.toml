@@ -3,6 +3,11 @@ name           = "java-gradle"
 description    = "Interactive shell with Java Gradle and Podman support"
 extends        = "shell-containers"
 
+# The Gradle home is mounted rw, but ~/.gradle/gradle.properties stays hidden
+# (it commonly carries signing keys and repository tokens). Opt in with:
+#
+#   [sandbox]
+#   allow = ["gradle-properties"]
 [mounts]
 "~/.gradle" = { dest = "~/.gradle", mode = "rw" }
 

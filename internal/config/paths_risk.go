@@ -75,6 +75,8 @@ func IsSystemDir(path string) bool {
 var CredentialAllowKeys = []string{
 	"ssh-keys", "git-credentials", "gpg-keys", "netrc",
 	"aws-credentials", "gcloud-credentials", "kube-config", "azure-credentials",
-	"docker-config", "npmrc", "pypirc", "cargo-credentials",
-	"password-store",
+	"docker-config", "npmrc", "pypirc", "cargo-credentials", "gh-config",
+	"terraform-credentials", "maven-settings", "gradle-properties",
+	"helm-config", "pgpass", "mysql-config",
+	"password-store", "keyrings", "onepassword-config", "browser-profiles",
 }

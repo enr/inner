@@ -408,8 +408,34 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `podman-socket` | `/run/user/$UID/podman/podman.sock` (Podman rootless socket, per-user path) |
 | `nested-user-ns` | Unprivileged user namespaces inside sandbox (required for Podman) |
 | `netrc` | `~/.netrc` |
-| `bash-history` | `~/.bash_history` |
-| `zsh-history` | `~/.zsh_history` |
+| `aws-credentials` | `~/.aws/` |
+| `gcloud-credentials` | `~/.config/gcloud/` |
+| `kube-config` | `~/.kube/` |
+| `azure-credentials` | `~/.azure/` |
+| `docker-config` | `~/.docker/config.json` (registry tokens) |
+| `npmrc` | `~/.npmrc` |
+| `pypirc` | `~/.pypirc` |
+| `cargo-credentials` | `~/.cargo/credentials[.toml]` |
+| `gh-config` | `~/.config/gh/` (GitHub CLI token) |
+| `terraform-credentials` | `~/.terraform.d/` |
+| `maven-settings` | `~/.m2/settings.xml`, `~/.m2/settings-security.xml` |
+| `gradle-properties` | `~/.gradle/gradle.properties` |
+| `helm-config` | `~/.config/helm/` |
+| `pgpass` | `~/.pgpass` |
+| `mysql-config` | `~/.my.cnf` |
+| `password-store` | `~/.password-store/` |
+| `keyrings` | `~/.local/share/keyrings/` |
+| `onepassword-config` | `~/.config/op/` |
+| `browser-profiles` | `~/.mozilla/`, `~/.config/{google-chrome,chromium,BraveSoftware,microsoft-edge,vivaldi,opera}/` (cookies, saved passwords) |
+
+`~/.bash_history` and `~/.zsh_history` are hidden too and are **not**
+declassifiable: nothing legitimately needs the host shell history inside a
+sandbox.
+
+The hide list is a denylist: it covers the paths listed above and nothing else.
+A profile that does not need the host home should use
+[`home = "isolated"`](#home-filesystem-model) instead — that is the allowlist
+model, and it is what the built-in agent profiles use.
 
 The two socket entries are distinct because they point to different paths: `docker-socket` is the system-level Docker daemon socket, while `podman-socket` is the per-user Podman rootless socket.
 

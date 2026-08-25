@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -242,6 +244,7 @@ func (c *Checker) Run() Report {
 		c.checkShimsActive(),
 		c.checkNetworkPolicy(),
 	}
+	results = append(results, c.checkSensitiveResources()...)
 	for _, cc := range c.Custom {
 		results = append(results, c.runCustomCheck(cc))
 	}
@@ -549,4 +552,90 @@ func suggestAllow(key string) string {
 		"to hide it (recommended):\n  add nothing — this is the default behaviour\n\nto explicitly allow it if the agent needs it:\n  [sandbox]\n  allow = [\"%s\"]",
 		key,
 	)
+}
+
+// ── Denylist coverage checks ──────────────────────────────────────────────────
+
+// dedicatedResourceKeys are the hide keys that already have a hand-written
+// check above (with resource-specific logic, e.g. "a private key file", not
+// just "the directory is non-empty"). They are skipped by the generic pass so
+// no key is reported twice.
+var dedicatedResourceKeys = []string{
+	"ssh-keys", "gpg-keys", "git-credentials", "netrc", "docker-socket",
+}
+
+// checkSensitiveResources derives one check per remaining key in the isolator's
+// hide list (config.SensitiveResources), so that `inner verify` proves the
+// denylist actually took effect instead of covering only the five resources
+// someone wrote a bespoke check for. Growing the hide list grows verify
+// automatically.
+//
+// A key fails when any of its paths is readable and non-empty inside the
+// sandbox: a hidden directory is an empty tmpfs, a hidden file is /dev/null
+// (size 0), and a path absent on the host is absent here too.
+func (c *Checker) checkSensitiveResources() []CheckResult {
+	home := c.homeDir()
+	resources := config.SensitiveResources(home, strconv.Itoa(os.Getuid()))
+
+	var order []string
+	byKey := map[string][]config.SensitiveResource{}
+	for _, res := range resources {
+		if slices.Contains(dedicatedResourceKeys, res.Key) {
+			continue
+		}
+		if _, seen := byKey[res.Key]; !seen {
+			order = append(order, res.Key)
+		}
+		byKey[res.Key] = append(byKey[res.Key], res)
+	}
+
+	results := make([]CheckResult, 0, len(order))
+	for _, key := range order {
+		severity := SeverityMedium
+		if slices.Contains(config.CredentialAllowKeys, key) {
+			severity = SeverityHigh
+		}
+		r := CheckResult{
+			ID:       key,
+			Name:     key + " not accessible",
+			Severity: severity,
+			Suggest:  suggestAllow(key),
+			Passed:   true,
+		}
+		for _, res := range byKey[key] {
+			if exposed, detail := resourceExposed(res); exposed {
+				r.Passed = false
+				r.Detail = tildify(home, detail)
+				break
+			}
+		}
+		results = append(results, r)
+	}
+	return results
+}
+
+// resourceExposed reports whether a hidden resource still carries content
+// inside the sandbox, and which path proves it.
+func resourceExposed(res config.SensitiveResource) (bool, string) {
+	if res.Dir {
+		entries, err := os.ReadDir(res.Path)
+		if err != nil || len(entries) == 0 {
+			return false, ""
+		}
+		return true, fmt.Sprintf("%s not empty (%d entries)", res.Path, len(entries))
+	}
+	info, err := os.Stat(res.Path)
+	if err != nil || info.IsDir() || info.Size() == 0 {
+		return false, ""
+	}
+	return true, res.Path + " found"
+}
+
+// tildify shortens a home-relative path for display, matching the "~/.ssh"
+// style of the hand-written checks.
+func tildify(home, s string) string {
+	if home == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, home+"/", "~/")
 }
