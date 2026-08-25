@@ -13,6 +13,10 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #11 — `checkEnvSecrets` was an oversold name-only
+  heuristic** — broader pattern list, renamed and reworded to say plainly it is
+  a heuristic, and downgraded from High to Medium severity so a false positive
+  doesn't fail `inner verify` on its own. See **#11** below.
 - ✅ **[FIXED] Issue #10 — `expandAliases` split on raw whitespace** — already
   fixed in `31697a9`, before this review pass; the review text below just
   hadn't been updated to say so. See **#10** below.
@@ -584,22 +588,41 @@ input.
 
 ---
 
-## #11 — [Low] `checkEnvSecrets` is a name-only heuristic
+## #11 — [CLOSED] `checkEnvSecrets` is a name-only heuristic
 
 **Where:** `internal/sandbox/checker.go` — `checkEnvSecrets`
 (~`checker.go:336`).
 
-**What is wrong:** it flags env var **names** containing `PASSWORD`, `SECRET`,
-`TOKEN`, `CREDENTIAL`, `PRIVATE_KEY`. It misses common real secrets whose names
-don't match (`AWS_ACCESS_KEY_ID`, `OPENAI_API_KEY`, `GH_TOKEN` is caught but
-`OPENAI_API_KEY` is not, etc.).
+**What was wrong:** it flagged env var **names** containing `PASSWORD`,
+`SECRET`, `TOKEN`, `CREDENTIAL`, `PRIVATE_KEY`. It missed common real secrets
+whose names don't match (`AWS_ACCESS_KEY_ID`, `OPENAI_API_KEY`, `GH_TOKEN` was
+caught but `OPENAI_API_KEY` was not, etc.).
 
 **Why it matters:** it is an informational check; the risk is that it is
 *oversold* as "no secrets in env" when it only catches a few naming patterns.
 
-**How to fix:** broaden the pattern list (add `API_KEY`, `ACCESS_KEY`, `_KEY`,
-`PASSWD`, `AUTH`) and soften the check's wording/severity so it is clearly a
-heuristic, not a guarantee.
+### Fix
+
+Both parts of the suggested fix, applied exactly as scoped:
+
+- **Broader patterns** — added `PASSWD`, `API_KEY`, `ACCESS_KEY`, `_KEY`,
+  `AUTH` to the existing `PASSWORD`, `SECRET`, `TOKEN`, `CREDENTIAL`,
+  `PRIVATE_KEY` list. `_KEY` alone now catches `OPENAI_API_KEY` and
+  `AWS_ACCESS_KEY_ID` too, but the specific patterns stay for clearer detail
+  text on the common cases.
+- **Softer wording and severity** — renamed to "no obviously-named secrets in
+  env vars", the failure detail now says "(heuristic, may include false
+  positives)" instead of stating a match as fact, and severity dropped from
+  High to Medium: a name-only match is suggestive, not conclusive, in *both*
+  directions (it can flag `BASIC_AUTH_REALM` with nothing secret in it, and
+  miss a real secret in a variable it has never heard of), so it should nudge
+  a profile author to double-check `[env] inherit`, not fail `inner verify`
+  outright the way a High-severity finding does.
+
+**Verification:** `internal/sandbox/checker_test.go` — a table test over the
+newly-covered names (`OPENAI_API_KEY`, `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `DB_PASSWD`, `BASIC_AUTH`), plus an explicit assertion
+that the check's severity is `SeverityMedium`.
 
 ---
 

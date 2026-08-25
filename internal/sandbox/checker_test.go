@@ -242,6 +242,36 @@ func TestCheck_envSecrets_detects_token(t *testing.T) {
 	}
 }
 
+// TestCheck_envSecrets_detects_broaderPatterns covers issue #11: the old
+// pattern list caught GITHUB_TOKEN but missed common real secrets like
+// OPENAI_API_KEY or AWS_ACCESS_KEY_ID whose names don't contain PASSWORD,
+// SECRET, TOKEN, CREDENTIAL or PRIVATE_KEY.
+func TestCheck_envSecrets_detects_broaderPatterns(t *testing.T) {
+	for _, name := range []string{
+		"OPENAI_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+		"DB_PASSWD", "BASIC_AUTH",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "x")
+			ch, _ := newChecker(t)
+			r := ch.checkEnvSecrets()
+			if r.Passed {
+				t.Errorf("expected env-secrets to fail with %s set", name)
+			}
+		})
+	}
+}
+
+// TestCheck_envSecrets_isMediumSeverity asserts the check stays at Medium: a
+// name-only heuristic that can both over- and under-match should not carry
+// the weight of a High/Critical finding (issue #11).
+func TestCheck_envSecrets_isMediumSeverity(t *testing.T) {
+	ch, _ := newChecker(t)
+	if got := ch.checkEnvSecrets().Severity; got != SeverityMedium {
+		t.Errorf("env-secrets severity = %v, want SeverityMedium", got)
+	}
+}
+
 // ── docker-socket ─────────────────────────────────────────────────────────────
 
 func TestCheck_dockerSocket_pass_when_absent(t *testing.T) {

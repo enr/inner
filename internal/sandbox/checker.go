@@ -375,9 +375,21 @@ func (c *Checker) checkGPGKeys() CheckResult {
 	return r
 }
 
+// checkEnvSecrets is a name-only heuristic, not a guarantee: it flags
+// environment variable *names* that look like they hold a secret. It has no
+// way to know that, say, OPENAI_API_KEY or AWS_ACCESS_KEY_ID holds one when
+// the name doesn't contain a pattern it looks for, and no way to know that a
+// variable matching a pattern doesn't just hold a placeholder. Severity is
+// Medium (not High/Critical) precisely because a name match is suggestive,
+// not conclusive — this check should nudge a profile author to double-check
+// [env] inherit, not fail a sandbox that already handles its secrets some
+// other way.
 func (c *Checker) checkEnvSecrets() CheckResult {
-	r := CheckResult{ID: "env-secrets", Name: "no secrets in env vars", Severity: SeverityHigh}
-	patterns := []string{"PASSWORD", "SECRET", "TOKEN", "CREDENTIAL", "PRIVATE_KEY"}
+	r := CheckResult{ID: "env-secrets", Name: "no obviously-named secrets in env vars", Severity: SeverityMedium}
+	patterns := []string{
+		"PASSWORD", "PASSWD", "SECRET", "TOKEN", "CREDENTIAL",
+		"PRIVATE_KEY", "API_KEY", "ACCESS_KEY", "_KEY", "AUTH",
+	}
 	var found []string
 	for _, env := range os.Environ() {
 		key, _, _ := strings.Cut(env, "=")
@@ -391,7 +403,7 @@ func (c *Checker) checkEnvSecrets() CheckResult {
 	}
 	if len(found) > 0 {
 		r.Passed = false
-		r.Detail = "env vars with sensitive names: " + strings.Join(found, ", ")
+		r.Detail = "env vars with names that look like secrets (heuristic, may include false positives): " + strings.Join(found, ", ")
 		return r
 	}
 	r.Passed = true

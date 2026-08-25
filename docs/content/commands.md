@@ -335,7 +335,7 @@ was actually built rather than what the file says.
 | git credentials not exposed | CRITICAL | `~/.git-credentials` must be absent or empty |
 | `~/.ssh` not accessible | HIGH | No private key files visible in `~/.ssh/` |
 | `~/.gnupg` not accessible | HIGH | `~/.gnupg/` must be empty |
-| no secrets in env vars | HIGH | No env var names containing `PASSWORD`, `SECRET`, `TOKEN`, etc. |
+| no obviously-named secrets in env vars | MEDIUM | Heuristic, not a guarantee: flags env var names containing `PASSWORD`, `PASSWD`, `SECRET`, `TOKEN`, `CREDENTIAL`, `PRIVATE_KEY`, `API_KEY`, `ACCESS_KEY`, `_KEY` or `AUTH`. A name match doesn't prove a secret is present, and a differently-named variable can still hold one |
 | docker socket not accessible | MEDIUM | `/var/run/docker.sock` must not be reachable |
 | `~/.netrc` not accessible | MEDIUM | `~/.netrc` must be absent or empty |
 | shims active in PATH | MEDIUM | Shim directory must be first in `PATH` |
