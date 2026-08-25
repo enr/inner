@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -255,9 +256,48 @@ func TestLauncher_postStart_called(t *testing.T) {
 	}
 }
 
+// syncBuffer is a bytes.Buffer that is safe to read while another goroutine
+// writes to it, and that can be waited on.
+//
+// PostStart is documented as running concurrently with the process, and Run
+// does not wait for it, so its log output arrives on a goroutine nobody joins.
+// A plain bytes.Buffer read from the test goroutine is then a genuine data race
+// — bytes.Buffer is not safe for concurrent use, and there is no happens-before
+// edge between the write and the read.
+//
+// The signal channel replaces sleeping and hoping: the test waits for the write
+// it is asserting on instead of guessing how long the goroutine needs.
+type syncBuffer struct {
+	mu      sync.Mutex
+	buf     bytes.Buffer
+	once    sync.Once
+	written chan struct{}
+}
+
+func newSyncBuffer() *syncBuffer {
+	return &syncBuffer{written: make(chan struct{})}
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n, err := b.buf.Write(p)
+	b.once.Do(func() { close(b.written) })
+	return n, err
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Written is closed as soon as anything has been written.
+func (b *syncBuffer) Written() <-chan struct{} { return b.written }
+
 func TestLauncher_postStart_errorIsLogged(t *testing.T) {
-	var logBuf bytes.Buffer
-	log.SetOutput(&logBuf)
+	logBuf := newSyncBuffer()
+	log.SetOutput(logBuf)
 	defer log.SetOutput(os.Stderr)
 
 	l, _, _ := newTestLauncher()
@@ -276,8 +316,13 @@ func TestLauncher_postStart_errorIsLogged(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("postStart was never called")
 	}
-	// Give the goroutine time to log after postStart returns.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the log write itself, rather than sleeping long enough that it
+	// has probably happened.
+	select {
+	case <-logBuf.Written():
+	case <-time.After(2 * time.Second):
+		t.Fatal("postStart error was never logged")
+	}
 	if !strings.Contains(logBuf.String(), "poststart-failure") {
 		t.Errorf("expected postStart error to be logged, got: %q", logBuf.String())
 	}
