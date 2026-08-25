@@ -108,9 +108,23 @@ inner run -p claude-one-shot --limit-memory 2G --limit-cpu 100% --limit-pids 256
 # Preview the resolved config and bwrap command without running
 inner run -p claude-interactive --dry-run
 
-# Use a profile from a URL (downloaded for this run only, not saved)
+# Use a profile from a URL (downloaded for this run only, not saved).
+# A downloaded profile is hardened and needs explicit consent — see below.
 inner run -p https://raw.githubusercontent.com/acme/profiles/main/claude-restricted.toml
 ```
+
+### Profiles downloaded from a URL
+
+A profile fetched over HTTPS configures the whole sandbox, so it is treated as untrusted
+input: `inner` strips the settings that would hand it host privileges (`inherit_all`,
+secret-looking `[env] inherit` names, credential and socket `allow` keys,
+`pid_namespace = false`), prints what it still asks for, and requires an explicit yes.
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--allow-remote` | bool | Consent to running the downloaded profile without the interactive prompt. Required for non-interactive runs — `--yes` deliberately does not cover this |
+| `--trust-remote` | bool | Run it unhardened (implies `--allow-remote`); only for a profile you control |
+| `--sha256` | string | Pin the sha256 of the downloaded bytes; abort on mismatch. The digest of each download is printed so it can be pinned |
 
 `--dry-run` prints the resolved profile, config file paths, effective sandbox settings, and the
 `bwrap` command that would be executed. The local config line is always shown so you can confirm
@@ -247,13 +261,14 @@ inner profile clone claude-interactive my-agent
 Download and install a profile from an HTTP/HTTPS URL into `~/.config/inner/profiles/`:
 
 ```bash
-inner profile install URL [--name NAME] [--force]
+inner profile install URL [--name NAME] [--force] [--sha256 DIGEST]
 ```
 
 | Flag | Type | Description |
 |------|------|-------------|
 | `--name` | string | Override the profile name (default: last URL path segment, `.toml` stripped) |
 | `--force` | bool | Overwrite an existing profile with the same name |
+| `--sha256` | string | Refuse to install if the downloaded content has a different sha256 |
 
 ```bash
 # Install under the name derived from the URL
@@ -266,7 +281,11 @@ inner profile install https://example.com/my-profile.toml --name restricted
 inner profile install https://example.com/my-profile.toml --force
 ```
 
-The TOML is validated before being written to disk. Use `inner run -p URL` to try a remote profile without installing it first.
+The TOML is validated before being written to disk; the sha256 of the download and every
+validation warning are printed. An installed profile is a local profile: `inner run -p
+<name>` skips the consent gate and the hardening applied to `inner run <url>`, so review
+what the install reported before running it. Use `inner run -p URL` to try a remote
+profile without installing it first.
 
 ---
 

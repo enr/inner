@@ -399,7 +399,13 @@ var fetchProfileURL = config.FetchURL
 // name overrides the filename derived from the URL; if empty, the last path
 // segment (without .toml extension) is used.
 // If force is false and the destination file already exists, an error is returned.
-func (a *App) profileInstallFromURL(w io.Writer, rawURL, name string, force bool) error {
+//
+// pin, when non-empty, is the sha256 the downloaded bytes must have; a mismatch
+// aborts the install. Installing is an explicit act of trust — an installed
+// profile is a local profile and `inner run -p <name>` does not gate it the way
+// it gates `inner run <url>` — so the digest and the settings that weaken the
+// sandbox are printed here, while the user is still deciding.
+func (a *App) profileInstallFromURL(w io.Writer, rawURL, name string, force bool, pin string) error {
 	if !config.IsURL(rawURL) {
 		return fmt.Errorf("not a URL: %s", rawURL)
 	}
@@ -425,6 +431,11 @@ func (a *App) profileInstallFromURL(w io.Writer, rawURL, name string, force bool
 		return fmt.Errorf("downloading profile: %w", err)
 	}
 
+	digest := sha256Hex(data)
+	if err := checkProfileDigest(pin, digest, rawURL); err != nil {
+		return err
+	}
+
 	// Validate the TOML before writing.
 	var p config.Profile
 	if err := toml.Unmarshal(data, &p); err != nil {
@@ -443,6 +454,19 @@ func (a *App) profileInstallFromURL(w io.Writer, rawURL, name string, force bool
 		return fmt.Errorf("writing profile: %w", err)
 	}
 	fmt.Fprintf(w, "installed profile %q to %s\n", name, destPath)
+	fmt.Fprintf(w, "sha256: %s\n", digest)
+	if pin == "" {
+		fmt.Fprintf(w, "  (pass --sha256 %s to pin this content on the next install)\n", digest)
+	}
+	// A downloaded profile configures the whole sandbox; say what this one
+	// weakens before it is run.
+	for _, issue := range profile.Validate(&p, a.loader.WorkDir).Issues {
+		marker := colorizeW(w, ansiBoldYellow, "[warning]")
+		if issue.Level == profile.LevelError {
+			marker = colorizeW(w, ansiBoldRed, "[error]")
+		}
+		fmt.Fprintf(w, "%s %s\n", marker, issue.Message)
+	}
 	return nil
 }
 
@@ -602,15 +626,17 @@ func (a *App) profileCloneCmd() *cobra.Command {
 func (a *App) profileInstallCmd() *cobra.Command {
 	var name string
 	var force bool
+	var pin string
 	cmd := &cobra.Command{
 		Use:   "install URL",
 		Short: "Download and install a profile from a URL",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.profileInstallFromURL(cmd.OutOrStdout(), args[0], name, force)
+			return a.profileInstallFromURL(cmd.OutOrStdout(), args[0], name, force, pin)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Override the profile name (default: derived from URL)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing profile")
+	cmd.Flags().StringVar(&pin, "sha256", "", "Refuse to install if the downloaded content has a different sha256")
 	return cmd
 }

@@ -88,9 +88,12 @@ inner run -p shell -w .
 ```
 
 ### Temporary Profiles
-You can run a profile directly from a URL without installing it:
+You can run a profile directly from a URL without installing it. A downloaded profile is
+hardened (no `inherit_all`, no credential `allow` keys) and needs an explicit yes:
 ```bash
-inner run -p https://example.com/custom.toml
+inner run -p https://example.com/custom.toml                       # prompts y/N
+inner run -p https://example.com/custom.toml --allow-remote        # no prompt (--yes does not count)
+inner run -p https://example.com/custom.toml --sha256 <digest>     # pin the content
 ```
 
 ### Quick Aliases

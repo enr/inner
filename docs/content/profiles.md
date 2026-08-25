@@ -17,11 +17,41 @@ inner run -p profiles/inner-dev.toml
 inner run -p /tmp/my-test-profile.toml
 ```
 
-You can also pass an **HTTP/HTTPS URL**. `inner` downloads the TOML, validates it, and uses it for that single run — nothing is written to disk:
+You can also pass an **HTTPS URL**. `inner` downloads the TOML, validates it, and uses it for that single run — nothing is written to disk:
 
 ```bash
 inner run -p https://raw.githubusercontent.com/acme/profiles/main/claude-restricted.toml
 ```
+
+A downloaded profile is **untrusted input**: it decides the entrypoint, the network,
+the environment and which credentials stay visible, so one URL would otherwise mean
+"run this command on my machine with my secrets". `inner` therefore:
+
+1. **hardens it** — `inherit_all` is ignored, `[env] inherit` entries whose name looks
+   like a secret (`*TOKEN*`, `*SECRET*`, `*KEY*`, …) are dropped, `[sandbox] allow`
+   keys that un-hide credentials or hand over a container socket are removed, and
+   `pid_namespace = false` is ignored;
+2. **asks** — it prints what the profile still requests (command, network, home mode,
+   capabilities, writable mounts) and waits for a `y/N` answer. `--yes` does *not*
+   answer this prompt; `--allow-remote` accepts it without prompting, which is also
+   what a non-interactive run must pass;
+3. **can pin the content** — `--sha256 <digest>` refuses to run if the URL serves
+   different bytes than the ones you reviewed. The digest of every download is
+   printed, ready to be pinned.
+
+```bash
+# Review it, then accept the prompt
+inner run -p https://example.com/custom.toml
+
+# Non-interactive, pinned to the exact content that was reviewed
+inner run -p https://example.com/custom.toml --allow-remote --sha256 3f9a…
+
+# Opt out of the hardening (the profile gets the sandbox it asks for)
+inner run -p https://example.com/custom.toml --trust-remote
+```
+
+`--trust-remote` implies consent and disables step 1 — use it only for a profile you
+control.
 
 To permanently install a remote profile, use [`inner profile install`](#inner-profile-install).
 
@@ -1224,15 +1254,22 @@ inner profile install https://example.com/my-profile.toml --force
 Downloads a profile TOML from an HTTP/HTTPS URL and installs it in `~/.config/inner/profiles/`.
 
 ```
-inner profile install URL [--name NAME] [--force]
+inner profile install URL [--name NAME] [--force] [--sha256 DIGEST]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--name NAME` | Override the profile name (default: derived from the last URL path segment, `.toml` stripped) |
 | `--force` | Overwrite an existing profile with the same name |
+| `--sha256 DIGEST` | Refuse to install if the downloaded content has a different sha256 |
 
-The TOML is validated before writing to disk. The downloaded profile is subject to the same constraints as any local profile — review it before running with `inner run -p <url>` or `inner profile show` after installing.
+The TOML is validated before writing to disk, and the install prints the sha256 of the
+downloaded bytes plus every validation warning the profile produces.
+
+Installing is an explicit act of trust: an installed profile is a **local** profile, so
+`inner run -p <name>` runs it without the consent gate and without the hardening that
+`inner run <url>` applies. Read what the install printed — and `inner profile show
+<name>` — before running it.
 
 ---
 

@@ -799,7 +799,7 @@ func TestProfileInstallFromURL_basic(t *testing.T) {
 	app, dir := newTestApp(t)
 	var buf bytes.Buffer
 	url := srv.URL + "/remote-test.toml"
-	if err := app.profileInstallFromURL(&buf, url, "", false); err != nil {
+	if err := app.profileInstallFromURL(&buf, url, "", false, ""); err != nil {
 		t.Fatalf("profileInstallFromURL: %v", err)
 	}
 
@@ -823,7 +823,7 @@ func TestProfileInstallFromURL_customName(t *testing.T) {
 	}))
 
 	app, dir := newTestApp(t)
-	if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/some.toml", "custom", false); err != nil {
+	if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/some.toml", "custom", false, ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -842,7 +842,7 @@ func TestProfileInstallFromURL_conflictNoForce(t *testing.T) {
 	app, dir := newTestApp(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "remote-test.toml"), `name = "existing"`)
 
-	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/remote-test.toml", "", false)
+	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/remote-test.toml", "", false, "")
 	if err == nil {
 		t.Fatal("expected conflict error, got nil")
 	}
@@ -860,7 +860,7 @@ func TestProfileInstallFromURL_forceOverwrite(t *testing.T) {
 	app, dir := newTestApp(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "remote-test.toml"), `name = "old"`)
 
-	if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/remote-test.toml", "", true); err != nil {
+	if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/remote-test.toml", "", true, ""); err != nil {
 		t.Fatalf("unexpected error with --force: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "profiles", "remote-test.toml"))
@@ -876,7 +876,7 @@ func TestProfileInstallFromURL_invalidTOML(t *testing.T) {
 	}))
 
 	app, _ := newTestApp(t)
-	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/bad.toml", "", false)
+	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/bad.toml", "", false, "")
 	if err == nil {
 		t.Fatal("expected TOML parse error, got nil")
 	}
@@ -891,7 +891,7 @@ func TestProfileInstallFromURL_http404(t *testing.T) {
 	}))
 
 	app, _ := newTestApp(t)
-	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/missing.toml", "", false)
+	err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+"/missing.toml", "", false, "")
 	if err == nil {
 		t.Fatal("expected HTTP error, got nil")
 	}
@@ -899,7 +899,7 @@ func TestProfileInstallFromURL_http404(t *testing.T) {
 
 func TestProfileInstallFromURL_notURL(t *testing.T) {
 	app, _ := newTestApp(t)
-	err := app.profileInstallFromURL(&bytes.Buffer{}, "not-a-url", "", false)
+	err := app.profileInstallFromURL(&bytes.Buffer{}, "not-a-url", "", false, "")
 	if err == nil {
 		t.Fatal("expected error for non-URL, got nil")
 	}
@@ -921,7 +921,7 @@ func TestProfileInstallFromURL_nameFromURLSegment(t *testing.T) {
 	}
 	for _, tt := range tests {
 		app, dir := newTestApp(t)
-		if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+tt.urlPath, "", false); err != nil {
+		if err := app.profileInstallFromURL(&bytes.Buffer{}, srv.URL+tt.urlPath, "", false, ""); err != nil {
 			t.Errorf("URL %s: unexpected error: %v", tt.urlPath, err)
 			continue
 		}

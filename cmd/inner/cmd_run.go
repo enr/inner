@@ -50,6 +50,10 @@ type runCLIFlags struct {
 	timeout       int
 	dryRun        bool
 	yes           bool
+	// Remote-profile trust (only meaningful when the profile is a URL).
+	allowRemote bool   // consent to run the downloaded profile
+	trustRemote bool   // additionally skip the hardening applied to remote profiles
+	sha256      string // pin: refuse to run if the fetched bytes hash differently
 	// Resource limit overrides (highest priority in the resolution chain).
 	limitMemory string // e.g. "4G", "512M"
 	limitCPU    string // e.g. "200%" or "2.0" (cores)
@@ -74,10 +78,18 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		profileName = a.loader.DefaultProfileName()
 	}
 	// If the profile is a URL, download it to a temp file and use that path.
+	// The bytes are untrusted: they are pinned (when --sha256 was passed) here,
+	// then hardened and confirmed below, once the merged RunConfig shows what
+	// the profile actually asks for. See remote_profile.go.
+	var remote remoteSource
 	if config.IsURL(profileName) {
 		data, fetchErr := fetchRunProfileURL(profileName)
 		if fetchErr != nil {
 			return fmt.Errorf("downloading profile: %w", fetchErr)
+		}
+		remote = remoteSource{url: profileName, digest: sha256Hex(data)}
+		if err := checkProfileDigest(flags.sha256, remote.digest, remote.url); err != nil {
+			return err
 		}
 		tmp, tmpErr := os.CreateTemp("", "inner-profile-*.toml")
 		if tmpErr != nil {
@@ -90,6 +102,8 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		}
 		tmp.Close()
 		profileName = tmp.Name()
+	} else if flags.sha256 != "" {
+		return fmt.Errorf("--sha256 pins the content of a downloaded profile, but %q is a local profile", profileName)
 	}
 	rc, err := a.loader.Build(profileName)
 	if err != nil {
@@ -97,6 +111,20 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 	if rc.Experimental {
 		return fmt.Errorf("profile %q is marked experimental and is not ready for use", profileName)
+	}
+
+	// 2b. Consent gate for a downloaded profile: harden it, show what it still
+	//     asks for, and require an explicit yes. Runs before any CLI override so
+	//     the user's own flags are applied on top of the hardened profile.
+	if remote.isRemote() {
+		proceed, gateErr := gateRemoteProfile(w, os.Stdin, rc, remote, flags, stdinIsTerminal())
+		if gateErr != nil {
+			return gateErr
+		}
+		if !proceed {
+			fmt.Fprintln(w, "aborted.")
+			return nil
+		}
 	}
 
 	// 3. Resolve effective workdir (priority: --workdir flag > profile workdir > cwd).
@@ -1077,6 +1105,9 @@ to the entrypoint command.`,
 	cmd.Flags().IntVar(&flags.timeout, "timeout", 0, "Timeout in seconds (0 = none)")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Print the sandbox command without executing it")
 	cmd.Flags().BoolVarP(&flags.yes, "yes", "y", false, "Skip interactive confirmation prompts (e.g. keyring unlock)")
+	cmd.Flags().BoolVar(&flags.allowRemote, "allow-remote", false, "Consent to running a profile downloaded from a URL (--yes does not)")
+	cmd.Flags().BoolVar(&flags.trustRemote, "trust-remote", false, "Run a downloaded profile unhardened: it may inherit host env and un-hide credentials (implies --allow-remote)")
+	cmd.Flags().StringVar(&flags.sha256, "sha256", "", "Pin the sha256 of a profile downloaded from a URL; abort on mismatch")
 	cmd.Flags().StringVar(&flags.limitMemory, "limit-memory", "", "Override memory limit (e.g. \"4G\", \"512M\")")
 	cmd.Flags().StringVar(&flags.limitCPU, "limit-cpu", "", "Override CPU limit (e.g. \"200%\" or \"2.0\" cores)")
 	cmd.Flags().IntVar(&flags.limitPids, "limit-pids", 0, "Override max process count (0 = no override)")

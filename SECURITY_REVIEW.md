@@ -13,6 +13,9 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #2 — remote profiles were fully trusted** — a downloaded
+  profile is now hardened, summarized and blocked on explicit consent, and can be
+  pinned with `--sha256`. See **#2** below.
 - ✅ **[FIXED] Issue #1 — denylist read side** — both fixes shipped: the
   allowlist home mode (`[sandbox] home = "isolated"`) and the extended,
   test-guarded hide list, with planted-secret e2e coverage. See **#1** below.
@@ -153,12 +156,12 @@ profile that cannot accept it is `home = "isolated"`.
 
 ---
 
-## #2 — [High] Remote profiles are fully trusted to configure the sandbox
+## #2 — [CLOSED] Remote profiles are fully trusted to configure the sandbox
 
 **Where:** `cmd/inner/cmd_run.go` (URL download path, ~`cmd_run.go:72`) and
 `internal/config/remote.go`.
 
-**What is wrong:** `inner run https://…/profile.toml` downloads a TOML profile and
+**What was wrong:** `inner run https://…/profile.toml` downloads a TOML profile and
 runs it. The profile controls **everything** about the sandbox: `network = true`,
 `inherit_all = true` (forwards the whole host environment), `[sandbox] allow =
 [...]` (un-hides ssh keys, cloud creds), the entrypoint command and its
@@ -189,20 +192,81 @@ but a remote profile can disable the net.
 `inherit_all = true` / `network = true` is rejected (or requires explicit
 consent) by `runSandbox`, and that a checksum mismatch aborts.
 
-### Partial mitigation shipped (not a fix)
+### Earlier partial mitigation (kept)
 
-Profile validation now *reports* the dangerous settings a remote profile could
+Profile validation *reports* the dangerous settings a remote profile could
 request, and refuses the outright destructive ones: a `rw` mount of `/` (or of
 a path covering `$HOME` under `home = "isolated"`) is an error that blocks the
 run, while `inherit_all = true`, `network = true` combined with credential
 `allow` keys, `pid_namespace = false` and `rw` mounts of system directories
 produce warnings naming the consequence and the fix. Same checks in
 `inner profile validate` and `inner doctor`, so a downloaded profile can be
-inspected before it is run.
+inspected before it is run. Warnings do not block, which is why the three fixes
+below were needed on top.
 
-This raises the cost of the footgun but does **not** close the issue: warnings
-do not block, `inner run <url>` still executes the downloaded profile without
-consent, and there is still no checksum pin.
+### Fix — a downloaded profile is now untrusted input (`cmd/inner/remote_profile.go`)
+
+All three measures asked for in the review are in. The gate runs in `runSandbox`
+right after the profile is built and **before** any CLI override, so the user's
+own flags are applied on top of the hardened profile.
+
+1. **Hardening (`hardenRemoteProfile`)** — applied by default to any profile
+   fetched from a URL, it removes what would turn the sandbox into a host-secret
+   pipe:
+   - `[env] inherit_all = true` → ignored, the environment stays cleared;
+   - `[env] inherit` entries whose name looks like a secret (`*TOKEN*`,
+     `*SECRET*`, `*PASSWORD*`, `*PASSWD*`, `*CREDENTIAL*`, `*KEY*`, `*AUTH*`,
+     `*SESSION*`) → dropped, so the profile cannot ask for a host credential by
+     name either;
+   - `[sandbox] allow` keys that un-hide a readable credential
+     (`config.CredentialAllowKeys`) or grant a host privilege (`docker-socket`,
+     `podman-socket`, `nested-user-ns`) → dropped; the verify-only keys
+     (`env-secrets`, `shims-active`, `network-policy`) are harmless and kept;
+   - `[sandbox] pid_namespace = false` → ignored.
+
+   `--trust-remote` opts out of the hardening (and counts as consent) for a
+   profile the user controls.
+
+   Deliberately **not** stripped: `network`, the entrypoint, mounts and
+   capabilities. Those are what a profile legitimately exists to describe;
+   forcing `network = false` would break every remote agent profile while the
+   hardening above already removes the secrets that make an open network an
+   exfiltration channel. They are reported instead, and consent is what gates
+   them.
+
+2. **Blocking consent (`gateRemoteProfile`)** — the summary lists the source URL,
+   the sha256, every hardening that was applied, and what the profile still asks
+   for (command + args, network, home mode, capabilities, remaining `allow`
+   keys, inherited env, writable mounts, noop rewrites). Then it blocks on
+   `run this downloaded profile? [y/N]`. `--yes` deliberately does **not** answer
+   it — that flag skips routine confirmations, it is not blanket trust for
+   downloaded code. `--allow-remote` (or `--trust-remote`) accepts without the
+   prompt; a run with no terminal on stdin and no flag is **refused**, never
+   silently accepted. `--dry-run` prints the summary and proceeds, since nothing
+   executes.
+
+3. **Checksum pin** — `inner run <url> --sha256 <digest>` hashes the exact bytes
+   fetched and aborts on mismatch (accepts a bare or `sha256:`-prefixed digest,
+   any case). The digest of every download is printed with the command to pin it,
+   so serving different content tomorrow fails instead of running. Passing
+   `--sha256` with a local profile is an error, not a silent no-op.
+
+`inner profile install <url>` gained the same `--sha256` pin, and now prints the
+digest and the profile's validation warnings. It stays *without* a consent gate
+on purpose: installing is the explicit act of trust, and the installed file is a
+local profile from then on. Both the command docs and the profiles docs say so.
+
+**Verification:** `cmd/inner/remote_profile_test.go` — digest match / mismatch /
+malformed pin; hardening strips exactly the privileged settings and leaves a
+benign profile untouched; `--trust-remote` skips it; the interactive answers
+(`y`/`Y`/`n`/empty/EOF); and four `runSandbox` integration tests over a TLS test
+server: `--yes` alone is refused ("without consent"), `--allow-remote` runs and
+the *isolator actually receives* a config with no `inherit_all`, no `allow` keys
+and the PID namespace back on, a wrong `--sha256` aborts, a matching one runs.
+
+Residual, accepted: a profile installed with `inner profile install` is a local
+profile and is not re-gated at run time; and `--trust-remote` is, by design, a
+full opt-out. Both are explicit user acts, printed and documented.
 
 ---
 
