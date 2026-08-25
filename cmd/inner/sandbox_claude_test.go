@@ -824,3 +824,53 @@ func TestApplyClaude_noDbusBindWhenSocketMissing(t *testing.T) {
 		}
 	}
 }
+
+// ── copyFile / copyDir: symlinks must not be dereferenced (issue #3) ──────────
+
+func TestCopyFile_refusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "secret")
+	if err := os.WriteFile(secret, []byte("top secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(dir, "dst")
+	if err := copyFile(link, dst); err == nil {
+		t.Fatal("expected copyFile to refuse a symlink source, got nil error")
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Errorf("dst was created despite the symlink refusal: %v", err)
+	}
+}
+
+func TestCopyDir_skipsSymlinkedFile(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "id_rsa")
+	if err := os.WriteFile(secret, []byte("private key material"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "regular.txt"), []byte("fine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(src, "evil")); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "dst")
+	if err := copyDir(src, dst); err != nil {
+		t.Fatalf("copyDir: %v", err)
+	}
+
+	if data, err := os.ReadFile(filepath.Join(dst, "regular.txt")); err != nil || string(data) != "fine" {
+		t.Errorf("regular file was not copied: data=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "evil")); !os.IsNotExist(err) {
+		t.Errorf("symlinked file was copied into the destination: err=%v", err)
+	}
+}

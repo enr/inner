@@ -501,11 +501,19 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 // ── File / dir copy helpers ───────────────────────────────────────────────────
 
 func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
+	// Lstat, not Stat: refuse to follow a symlink. src lives in a directory
+	// tree that is being copied so the sandbox gets an isolated snapshot; a
+	// symlink planted there (e.g. ~/.claude/skills/evil -> ~/.ssh/id_rsa) would
+	// otherwise have its target's contents copied in and mounted into the
+	// sandbox, bypassing the sensitive-path hiding entirely.
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
-	info, err := os.Stat(src)
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to copy %q: it is a symlink", src)
+	}
+	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
@@ -545,6 +553,13 @@ func copyDir(src, dst string) error {
 		dstPath := filepath.Join(dst, rel)
 		if d.IsDir() {
 			return os.MkdirAll(dstPath, 0o755)
+		}
+		// A symlinked directory is not descended into by WalkDir, but a
+		// symlinked file still reaches here as a regular entry. Skip it rather
+		// than aborting the whole copy: see copyFile for why it must not be
+		// dereferenced.
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
 		}
 		return copyFile(path, dstPath)
 	})

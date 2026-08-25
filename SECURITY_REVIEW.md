@@ -13,6 +13,9 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #3 — `safe-rw` and capability copies followed symlinks** —
+  `copyFile` refuses a symlink source (`os.Lstat`), `copyDir` skips a symlinked
+  file instead of dereferencing it. See **#3** below.
 - ✅ **[FIXED] Issue #2 — remote profiles were fully trusted** — a downloaded
   profile is now hardened, summarized and blocked on explicit consent, and can be
   pinned with `--sha256`. See **#2** below.
@@ -270,32 +273,40 @@ full opt-out. Both are explicit user acts, printed and documented.
 
 ---
 
-## #3 — [Medium] `safe-rw` and capability copies follow symlinks
+## #3 — [CLOSED] `safe-rw` and capability copies follow symlinks
 
 **Where:** `cmd/inner/sandbox_claude.go` — `copyFile` / `copyDir`
 (~`sandbox_claude.go:463`), used by `applyGenericSafeMounts`
 (`cmd/inner/sandbox_safe.go`) and every capability `prepare*` function
 (`prepareClaude`, `prepareCursor`, …).
 
-**What is wrong:** `copyFile` uses `os.ReadFile`, which **follows symlinks**.
+**What was wrong:** `copyFile` used `os.ReadFile`, which **follows symlinks**.
 `copyDir` walks with `filepath.WalkDir` (which does not descend into symlinked
-*directories*) but still hands file symlinks to `copyFile`. So a symlink planted
+*directories*) but still handed file symlinks to `copyFile`. So a symlink planted
 inside a copied source tree (e.g. `~/.claude/skills/evil -> /home/user/.ssh/id_rsa`)
-has its **contents** copied into the sandbox temp dir and then mounted into the
+had its **contents** copied into the sandbox temp dir and then mounted into the
 sandbox — bypassing the sensitive-path hiding from issue #1.
 
 **Why it matters:** the whole point of "copy the dir so the agent can't corrupt
 the original" is integrity isolation. Symlink-following turns a copied directory
 into a read primitive for arbitrary host files.
 
-**How to fix:** in `copyDir`'s walk and in `copyFile`, `Lstat` each entry; if it
-is a symlink, either skip it or recreate it as a symlink **without**
-dereferencing (`os.Readlink` + `os.Symlink`). Skipping is simplest and safest for
-the capability use case.
+### Fix
 
-**How to verify:** unit test — create a source dir containing a symlink to a file
-outside it, run `copyDir`, and assert the destination does **not** contain the
-target's contents.
+`copyFile` now `os.Lstat`s the source before reading it and refuses (returns an
+error) when it is a symlink — fail closed, matching the existing broken-symlink
+handling in `internal/isolator/bwrap.go` (see the Appendix). `copyDir`'s walk
+checks `d.Type()&fs.ModeSymlink` and skips a symlinked file entry instead of
+handing it to `copyFile` (which would otherwise abort the whole walk on the
+first symlink found, since `filepath.WalkDir` stops on a non-nil callback
+error). Every existing call site already ignores `copyFile`/`copyDir` errors for
+missing files (`_ = copyFile(...)`), so a rejected symlink degrades the same way
+a missing file already did: that one entry is absent from the copy, not a hard
+failure of the capability.
+
+**Verification:** `TestCopyFile_refusesSymlink` and `TestCopyDir_skipsSymlinkedFile`
+in `cmd/inner/sandbox_claude_test.go` — a symlink to a file outside the source
+tree is neither read into the destination directly nor via a directory walk.
 
 ---
 
