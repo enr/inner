@@ -158,15 +158,27 @@ Incremental path for inner:
 Plus proxy request logs once S2 exists (`inner log show <run-id>
 --network`).
 
-### S5. Remote profile trust (HIGH — confirms SECURITY_REVIEW #2)
+### S5. Remote profile trust — **IMPLEMENTED** (closes SECURITY_REVIEW #2)
 
 nono profiles come from a registry with signing and a trust/attestation
-story (OpenSSF-aligned). inner fetches TOML from any URL and trusts it to
+story (OpenSSF-aligned). inner used to fetch TOML from any URL and trust it to
 configure the sandbox (network, `inherit_all`, `allow`, entrypoint).
-Minimum viable fix as already sketched in SECURITY_REVIEW #2: blocking
-consent showing the dangerous settings + `--sha256` pinning. A signed
-profile index (cosign/minisign over `contrib/profiles`) is the natural
-follow-up and much cheaper than a full registry.
+Minimum viable fix as already sketched here: blocking consent showing the
+dangerous settings + `--sha256` pinning.
+
+**Shipped, and going a step further than "show and confirm":** a downloaded
+profile is now also *hardened* by default before the consent prompt is even
+shown — `inherit_all`, secret-looking `[env] inherit` names, and the
+credential/socket/`nested-user-ns` `allow` keys are stripped outright, not just
+flagged (`--trust-remote` opts back out for a profile the user controls). The
+consent prompt (`--allow-remote`, never satisfied by `--yes`) then covers what
+survives hardening — network, entrypoint, mounts, capabilities. `--sha256`
+pinning shipped for both `inner run <url>` and `inner profile install`. See
+`cmd/inner/remote_profile.go` and SECURITY_REVIEW.md #2.
+
+**Not done — still the natural follow-up:** a signed profile index
+(cosign/minisign over `contrib/profiles`), which remains much cheaper than a
+full registry and is unrelated to the consent/hardening/pinning work above.
 
 ### S6. Canonical-path denial for blocked commands (MEDIUM)
 
@@ -325,7 +337,7 @@ resident daemon.
 | 2 | ~~S1 isolated-home allowlist mode~~ | **done** — closes the fix-2 half of review #1 |
 | 3 | S3 credential injection | removes the worst `allow` escape hatches |
 | 4 | F1 workspace snapshots/rollback | highest user-visible safety win |
-| 5 | S5 remote profile pinning/consent | cheap, closes review #2 |
+| 5 | ~~S5 remote profile pinning/consent~~ | **done** — closes review #2 (signed profile index still open, see S5) |
 | 6 | S6 canonical-path shim denial | cheap bypass fix |
 | 7 | U1/U2 JSON output + run-ID UX | enables automation, low effort |
 | 8 | S4 structured audit log | builds on U2 |
