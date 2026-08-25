@@ -383,6 +383,206 @@ else
     fail "network-enabled profile: expected HTTP 200, got '$HTTP_CODE'"
 fi
 
+# ── Network allowlist mode ────────────────────────────────────────────────────
+#
+# The chain under test is namespace + bind-mounted socket + relay + proxy. Only
+# a real bwrap can exercise it: everything below the socket is covered by unit
+# tests, and everything above it only composes for real here.
+#
+# Note which assertions need the internet and which do not. Every DENIAL is
+# decided before any name is resolved — that ordering is the whole point of the
+# design, since resolving first would leak the name to the attacker's
+# nameserver — so the refusal tests run offline. Only "an allowed domain is
+# actually reachable" needs connectivity, and it is guarded.
+
+section "Network: allowlist mode"
+
+ALLOWLIST="$TMPWORK/allowlist.toml"
+ALLOWLIST_LOCAL="$TMPWORK/allowlist-local.toml"
+ALLOWLIST_DENY="$TMPWORK/allowlist-deny.toml"
+
+cat > "$ALLOWLIST" <<'EOF'
+schema_version = "1"
+name        = "inner-e2e-allowlist"
+description = "e2e test profile — network allowlist"
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["example.com"]
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 30
+EOF
+
+# Deliberately lists the cloud metadata endpoint and host loopback in
+# network_allow. Both must still be refused: the always-deny address list is not
+# overridable by configuration, and this profile is what proves it.
+cat > "$ALLOWLIST_LOCAL" <<'EOF'
+schema_version = "1"
+name        = "inner-e2e-allowlist-local"
+description = "e2e test profile — always-deny beats the allow list"
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["169.254.169.254", "127.0.0.1"]
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 30
+EOF
+
+# Allows and denies the same host: network_deny must win, which is what lets a
+# profile drop a destination a capability contributed.
+cat > "$ALLOWLIST_DENY" <<'EOF'
+schema_version = "1"
+name        = "inner-e2e-allowlist-deny"
+description = "e2e test profile — network_deny overrides network_allow"
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["example.com"]
+network_deny  = ["example.com"]
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 30
+EOF
+
+# The socket is the only route out of the namespace, so its absence would make
+# every other assertion below pass for the wrong reason.
+OUT=$(run_cmd "$ALLOWLIST" 'test -S /tmp/inner/net-proxy.sock && echo SOCKET_OK' 2>/dev/null || true)
+if echo "$OUT" | grep -q SOCKET_OK; then
+    pass "allowlist: the proxy socket is bind-mounted inside the sandbox"
+else
+    fail "allowlist: the proxy socket is missing inside the sandbox"
+fi
+
+# All four spellings: Go checks the upper and lower case forms and other tools
+# are split between them, so a missing one is a tool with silently no network.
+OUT=$(run_cmd "$ALLOWLIST" 'echo "$HTTP_PROXY|$HTTPS_PROXY|$http_proxy|$https_proxy|$NODE_USE_ENV_PROXY|[$NO_PROXY]"' 2>/dev/null || true)
+if echo "$OUT" | grep -q 'http://127.0.0.1:10108|http://127.0.0.1:10108|http://127.0.0.1:10108|http://127.0.0.1:10108|1|\[\]'; then
+    pass "allowlist: every proxy environment variable is set, NO_PROXY forced empty"
+else
+    fail "allowlist: proxy environment is wrong (got '$OUT')"
+fi
+
+# The kernel guarantee underneath everything else: with --unshare-net there is
+# no route and no resolver, so bypassing the proxy reaches nothing at all.
+if run_cmd "$ALLOWLIST" 'curl -s --noproxy "*" --connect-timeout 5 -o /dev/null https://example.com' >/dev/null 2>&1; then
+    fail "allowlist: a direct connection bypassing the proxy succeeded"
+else
+    pass "allowlist: a direct connection bypassing the proxy fails"
+fi
+
+# Refused before the name is ever resolved — no connectivity required.
+OUT=$(run_cmd "$ALLOWLIST" 'curl -s --connect-timeout 10 -o /dev/null https://www.google.com' 2>&1 || true)
+if echo "$OUT" | grep -q "blocked www.google.com:443 (not in the allow list)"; then
+    pass "allowlist: a destination outside the list is refused, with the reason logged"
+else
+    fail "allowlist: expected a refusal for an unlisted destination (got '$OUT')"
+fi
+
+OUT=$(run_cmd "$ALLOWLIST_LOCAL" 'curl -s --connect-timeout 5 -o /dev/null http://169.254.169.254/' 2>&1 || true)
+if echo "$OUT" | grep -q "cloud metadata endpoint"; then
+    pass "allowlist: the cloud metadata endpoint is refused even when listed in network_allow"
+else
+    fail "allowlist: metadata endpoint was not refused by the always-deny list (got '$OUT')"
+fi
+
+# The proxy runs in the HOST network namespace, so without this check the
+# sandbox would GAIN access to every service on the user's localhost.
+OUT=$(run_cmd "$ALLOWLIST_LOCAL" 'curl -s --connect-timeout 5 -o /dev/null http://127.0.0.1:80/' 2>&1 || true)
+if echo "$OUT" | grep -q "loopback address"; then
+    pass "allowlist: host loopback is refused even when listed in network_allow"
+else
+    fail "allowlist: host loopback was not refused by the always-deny list (got '$OUT')"
+fi
+
+OUT=$(run_cmd "$ALLOWLIST_DENY" 'curl -s --connect-timeout 10 -o /dev/null https://example.com' 2>&1 || true)
+if echo "$OUT" | grep -q 'denied by network_deny'; then
+    pass "allowlist: network_deny overrides an explicit network_allow entry"
+else
+    fail "allowlist: network_deny did not override network_allow (got '$OUT')"
+fi
+
+# The one assertion that needs the internet: everything above is a refusal,
+# and refusals are decided without resolving anything.
+if curl -s --connect-timeout 5 -o /dev/null https://example.com 2>/dev/null; then
+    HTTP_CODE=$(run_cmd "$ALLOWLIST" \
+        "curl -s --connect-timeout 10 -o /dev/null -w '%{http_code}' https://example.com" 2>/dev/null || echo "000")
+    HTTP_CODE=$(echo "$HTTP_CODE" | tr -d '[:space:]')
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        pass "allowlist: an allowed destination is reachable through the proxy"
+    else
+        fail "allowlist: expected HTTP 200 for an allowed destination, got '$HTTP_CODE'"
+    fi
+else
+    printf "  [SKIP] no internet access from the host, skipping the allowed-destination check\n"
+fi
+
+# `inner verify` builds the same sandbox a run gets, proxy included, and must
+# still report the floor: no direct socket escapes the namespace.
+if inner verify -p "$ALLOWLIST" 2>/dev/null | grep -q "network restricted"; then
+    pass "allowlist: inner verify reports the network as restricted"
+else
+    fail "allowlist: inner verify did not report a restricted network"
+fi
+
+# With several layers feeding the list, the dry-run has to say which one
+# contributed each entry, or "why is this domain open?" has no answer.
+if [[ -d "$HOME/.claude" ]]; then
+    CAP_ALLOW="$TMPWORK/allowlist-cap.toml"
+    cat > "$CAP_ALLOW" <<'EOF'
+schema_version = "1"
+name         = "inner-e2e-allowlist-cap"
+description  = "e2e test profile — capability egress defaults"
+capabilities = ["claude"]
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["example.com"]
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+EOF
+    OUT=$(dry_run "$CAP_ALLOW" -y)
+    if echo "$OUT" | grep -qF "api.anthropic.com [capability:claude]" &&
+       echo "$OUT" | grep -qF "example.com [profile]"; then
+        pass "allowlist: the capability contributes its endpoints and the profile extends them"
+    else
+        fail "allowlist: layered allow list not reported with provenance (got '$OUT')"
+    fi
+else
+    printf "  [SKIP] ~/.claude not found, skipping the capability-defaults check\n"
+fi
+
 # ── Environment variables ─────────────────────────────────────────────────────
 
 section "Environment variables"
