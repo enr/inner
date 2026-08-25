@@ -33,6 +33,7 @@ func buildRootCmd(app *App) *cobra.Command {
 	root.AddCommand(app.newDoctorCmd())
 	root.AddCommand(app.newLogCmd())
 	root.AddCommand(app.newVerifyCmd())
+	root.AddCommand(app.newNetRelayCmd())
 	return root
 }
 

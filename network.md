@@ -10,7 +10,7 @@ S2 — network allowlist proxy
  the shared appendHomeAllowIfHidden helper. "allowlist" is a reserved name the
  validator refuses until the proxy ships.
 
- Also LANDED: internal/netproxy in full — the decision layer (ParseTarget,
+ Also LANDED: the relay (cmd/inner/cmd_net_relay.go) and internal/netproxy in full — the decision layer (ParseTarget,
  Policy.AllowsHost, Policy.AllowsAddr, the AllowPrivateDestinations test seam)
  and the CONNECT/plain-HTTP server on top of it, with its timeouts, concurrency
  cap and hop-by-hop header stripping. The package is self-contained and needs no
@@ -328,12 +328,18 @@ S2 — network allowlist proxy
  resolver for the rebinding-protection tests. The always-deny tests themselves
  leave the field false, so the production default stays honest.
 
- The relay (cmd/inner/cmd_net_relay.go, new hidden subcommand)
+ The relay (cmd/inner/cmd_net_relay.go, hidden subcommand) — LANDED
 
  inner __net-relay --listen 127.0.0.1:10108 --unix /tmp/inner/net-proxy.sock -- <real cmd> <real args...> — a cobra.Command{Hidden: true} registered in
- root.go like the other subcommands; the -- passthrough works exactly
- like inner run's already does. The listen port is a single exported constant
- shared by the relay and the isolator's --setenv block — never two literals.
+ root.go like the other subcommands, with SetInterspersed(false) so an
+ entrypoint argument that looks like one of the relay's own flags, or a second
+ "--" inside the entrypoint's arguments, reaches the child untouched (both
+ shapes occur in real profiles and both have a test).
+
+ The addresses are three constants in internal/netproxy — RelayListenAddr,
+ SandboxSocketPath, ProxyURL() — read by both the relay and the isolator,
+ because a mismatch between any two of them is a sandbox with no working
+ network and no error message explaining it.
  Confirmed empirically: the sandboxed entrypoint runs as PID 2 (bwrap itself
  is PID 1 / reaper — it does not pass --as-pid-1, per the invariant comment in
  bwrap.go), so the relay is a perfectly ordinary child process, not an init —
@@ -357,8 +363,13 @@ S2 — network allowlist proxy
     is used by the Go runtime for async preemption and must never be
     forwarded.
  4. Waits for the child and exits transparently: its exit code when it exited
-    normally, 128+signum when it died from a signal (ideally by resetting the
-    handler and re-raising, so the parent observes a real signal death).
+    normally, 128+signum when it died from a signal, and 127 when the entrypoint
+    could not be started at all (which is almost always "not in the sandbox's
+    PATH", and deserves to be recognisable as that).
+
+    Resolved: no reset-and-re-raise. The only observable difference is to a
+    parent that inspects WaitStatus.Signaled(), and bwrap's reaper already
+    collapses that into an exit status before inner's launcher sees it.
 
  This is the one part of the design that needs a human, same as issue #9: a
  relay hop sits between bwrap and the real TUI now. The mechanics

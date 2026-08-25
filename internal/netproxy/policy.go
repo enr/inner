@@ -347,3 +347,32 @@ func (p Policy) AllowsAddr(ip net.IP) error {
 func denyAddr(ip net.IP, reason string) error {
 	return &DenyError{Target: ip.String(), Reason: reason}
 }
+
+// ── Sandbox-side addresses ────────────────────────────────────────────────────
+//
+// These three constants are the contract between the pieces that live in
+// different packages: the in-sandbox relay (cmd/inner) listens on
+// RelayListenAddr, the isolator (internal/isolator) bind-mounts the host proxy
+// socket at SandboxSocketPath and points the proxy environment variables at
+// ProxyURL(). They are defined once here because a mismatch between any two of
+// them is a sandbox with no working network and no error message explaining it.
+
+const (
+	// RelayListenAddr is the loopback address the relay listens on INSIDE the
+	// sandbox. The port is unremarkable and does not need to be free on the
+	// host: the sandbox has its own network namespace, so this address exists
+	// only in there and cannot collide with anything the user is running.
+	RelayListenAddr = "127.0.0.1:10108"
+
+	// SandboxSocketPath is where the host-side proxy socket is bind-mounted
+	// inside the sandbox. It sits under /tmp/inner like the injected gitconfig
+	// and containers.conf: /tmp is already a tmpfs at that point, so the
+	// directory can be created without touching the read-only root, and the
+	// host's temp-directory layout is not leaked into the sandbox.
+	SandboxSocketPath = "/tmp/inner/net-proxy.sock"
+)
+
+// ProxyURL is the value for HTTP_PROXY/HTTPS_PROXY inside the sandbox.
+func ProxyURL() string {
+	return "http://" + RelayListenAddr
+}
