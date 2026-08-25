@@ -10,12 +10,12 @@ S2 — network allowlist proxy
  the shared appendHomeAllowIfHidden helper. "allowlist" is a reserved name the
  validator refuses until the proxy ships.
 
- Also LANDED: internal/netproxy's decision layer — ParseTarget, Policy.AllowsHost
- (the allowlist gate), Policy.AllowsAddr (the always-deny address list) and the
- AllowPrivateDestinations test seam. Pure logic, no sockets and no DNS: it is the
- part every one of the three pre-implementation decisions shapes, and the part
- where a mistake is a bypass rather than a bug. The server, the relay and the
- wiring are not written yet.
+ Also LANDED: internal/netproxy in full — the decision layer (ParseTarget,
+ Policy.AllowsHost, Policy.AllowsAddr, the AllowPrivateDestinations test seam)
+ and the CONNECT/plain-HTTP server on top of it, with its timeouts, concurrency
+ cap and hop-by-hop header stripping. The package is self-contained and needs no
+ bwrap: it serves any net.Listener. The relay and the cmd_run/bwrap wiring are
+ not written yet, and neither are the capability allowlist layers.
 
  Everything below that is not marked LANDED is still to build.
 
@@ -213,9 +213,9 @@ S2 — network allowlist proxy
 
  The proxy (internal/netproxy/proxy.go, new package)
 
- A Proxy struct { Allow, Deny []string; resolver ...injectable... } served
- over net.Listener (a unix listener on the host side). Handles two request
- shapes via net/http:
+ LANDED. A Proxy struct carrying a Policy and an injectable Resolver, served
+ over any net.Listener (a unix listener on the host side in production, a
+ loopback one in tests). Handles two request shapes:
 
  - CONNECT host:port (HTTPS, the common case): hijack the connection, run the
    decision chain below, then write 200 Connection Established or 403 with a
@@ -270,7 +270,7 @@ S2 — network allowlist proxy
  10.x into network_allow. Deferred to a fast-follow; noted here so the
  always-deny list is not quietly weakened later to accommodate that use case.
 
- Robustness (all missing from the first draft, all cheap):
+ Robustness (LANDED — all missing from the first draft, all cheap):
 
  - Timeouts on: the CONNECT request read, DNS resolution, the upstream dial,
    and an idle timeout on the established tunnel. Without the last one a
