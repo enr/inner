@@ -18,9 +18,17 @@ S2 — network allowlist proxy
  an allowed domain returns 200 through the proxy; a domain outside the list is
  refused with its reason; the cloud metadata endpoint and host loopback are
  refused even when listed in network_allow; network_deny overrides an allow
- entry; and `inner verify` reports "network restricted" as a pass. What the
- .sdlc/e2e section below still owes is that same sequence as an automated,
- repeatable script.
+ entry; and `inner verify` reports "network restricted" as a pass. That sequence is now
+ an automated section in .sdlc/e2e (ten assertions; only the
+ allowed-destination one needs connectivity, and it skips without it).
+
+ Docs are written: profiles.md has the user-facing section, internals.md the
+ relay/proxy design, commands.md the dry-run output. NONO_COMPARISON.md §S2 and
+ ISSUES.md ISS-05 are marked done, both recording what shipped beyond the
+ original proposal and what was deliberately deferred.
+
+ What remains: the manual TUI checklist (SECURITY_REVIEW.md §9) re-run with a
+ relay in the chain, which needs a real terminal.
 
  Also LANDED: the relay (cmd/inner/cmd_net_relay.go) and internal/netproxy in full — the decision layer (ParseTarget,
  Policy.AllowsHost, Policy.AllowsAddr, the AllowPrivateDestinations test seam)

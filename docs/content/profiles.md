@@ -248,7 +248,10 @@ Controls top-level sandbox behavior.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `network` | bool | `false` | Allow network access |
+| `network` | bool | `false` | Legacy on/off switch. Still honoured; `network_mode` is the field to reach for. |
+| `network_mode` | string | from `network` | `"off"`, `"full"` or `"allowlist"`. See [network — allowlist mode](#network-allowlist-mode). |
+| `network_allow` | list | `[]` | Destinations reachable in allowlist mode. Unioned with what the profile's capabilities contribute. |
+| `network_deny` | list | `[]` | Destinations subtracted from that union. The only way to narrow it. |
 | `clipboard` | bool | `false` | Forward clipboard (requires display server) |
 | `pid_namespace` | bool | `true` | Give the sandbox a private PID namespace (`--unshare-pid`). See below. |
 | `home` | string | `"host-ro"` | Filesystem model applied to `$HOME`: `"host-ro"` (readable, minus the hidden credential list) or `"isolated"` (empty tmpfs, allowlist). See [`home`](#home-filesystem-model). |
@@ -424,6 +427,142 @@ Common breakages and their fix:
 
 To roll back, set `home = "host-ro"` (or delete the two keys): the profile
 returns to the previous behaviour with no other change.
+
+### `network` — allowlist mode {#network-allowlist-mode}
+
+`network = true` gives an agent the whole internet. That is the exfiltration
+surface: anything the agent can read, it can send anywhere. `network_mode =
+"allowlist"` replaces it with a list of destinations.
+
+```toml
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["github.com", "*.githubusercontent.com"]
+```
+
+| Mode | What the sandbox can reach |
+|------|----------------------------|
+| `"off"` | Nothing. Private, empty network namespace. |
+| `"full"` | Everything the host can reach. Equivalent to `network = true`. |
+| `"allowlist"` | Only the destinations below, and only over HTTP(S). |
+
+`network = true` / `false` keeps working and maps to `"full"` / `"off"`. If a
+profile and the base it extends disagree, whichever field the **child** declares
+wins — writing `network = false` in a child always means no network, even when
+the base set `network_mode`.
+
+#### How it works
+
+The sandbox gets `--unshare-net`, exactly like `network_mode = "off"`: no
+interface but loopback, so no process inside can open a socket to any real
+address. The kernel enforces that, not a policy check.
+
+The one way out is a single Unix socket bind-mounted into the sandbox, where a
+proxy running **on the host** enforces the list. `HTTP_PROXY` and friends are
+set to point at it. DNS is resolved by the proxy, not by the sandbox, and the
+proxy connects to the address it resolved — so a name cannot resolve to one
+address during the check and another at connect time.
+
+Anything that is not HTTP(S) fails closed: `git+ssh`, database drivers, custom
+package registries. Tools that do a DNS lookup before their first request fail
+at that lookup — `/etc/resolv.conf` exists inside the sandbox but resolves
+nothing.
+
+#### What goes in the list
+
+| Entry | Matches |
+|-------|---------|
+| `example.com` | exactly that name, on ports 443 and 80 |
+| `example.com:8443` | exactly that name, on exactly that port |
+| `*.example.com` | any subdomain at any depth — **not** the apex, list it separately |
+| `10.0.0.7` | an IP literal |
+
+A bare entry authorising only 443 and 80 is deliberate: without it,
+`network_allow = ["github.com"]` would also authorise an SSH connection to
+`github.com:22`, which on a profile that also allows `ssh-keys` is a full push
+channel.
+
+Names must be ASCII. Internationalised (IDN) hostnames are rejected rather than
+converted.
+
+#### Capabilities bring their own destinations
+
+A profile that declares a capability inherits the destinations that tool needs,
+and extends them:
+
+```toml
+capabilities = ["claude"]
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["github.com"]     # added to what the claude capability brings
+```
+
+`inner run --dry-run` shows the effective list and where each entry came from:
+
+```
+network:     allowlist
+  allow: api.anthropic.com [capability:claude]
+  allow: console.anthropic.com [capability:claude]
+  allow: statsig.anthropic.com [capability:claude]
+  allow: sentry.io [capability:claude]
+  allow: github.com [profile]
+```
+
+The layers only ever **add**. To remove something — a tool's telemetry endpoint,
+say — use `network_deny`:
+
+```toml
+network_deny = ["sentry.io"]
+```
+
+A deny entry wins over any allow entry, and a bare host in `network_deny` covers
+every port, not just 443 and 80. Denies are patterns too, so
+`network_deny = ["*.internal.example.com"]` carves a hole out of an allowed
+`*.example.com`.
+
+Capabilities other than `claude` do not ship egress defaults yet: `inner`
+reports which ones contribute nothing so you can list their domains yourself,
+rather than leaving you with an unexplained connection error inside the sandbox.
+
+#### What is always refused
+
+Some destinations are refused no matter what the profile says, because the proxy
+runs in the **host** network namespace — turning it on re-attaches an otherwise
+fully isolated sandbox to the host's stack:
+
+- **loopback** (`127.0.0.0/8`, `::1`) — every service on your localhost: a
+  Docker API on `:2375`, a local model server, a dev server, a database;
+- **private and link-local ranges** (`10/8`, `172.16/12`, `192.168/16`, ULA,
+  `fe80::/10`) — your LAN: router, NAS, internal CI;
+- **cloud metadata endpoints** (`169.254.169.254`, AWS IMDSv6) — instance
+  credentials;
+- **CGNAT / Tailscale** (`100.64/10`) and other non-global-unicast addresses.
+
+Listing one of these in `network_allow` does not enable it.
+
+#### What it does not do
+
+The allowlist limits **where** the sandbox can connect, not **what** it sends
+there. A profile that allows `github.com` can still push a secret to a gist.
+Narrowing the list is the protection; there is no inspection of the traffic.
+
+#### Migrating a profile
+
+```diff
+ [sandbox]
+-network = true
++network_mode  = "allowlist"
++network_allow = ["github.com", "*.githubusercontent.com"]
+```
+
+Start from `--dry-run` to see what the capabilities already cover, run the
+profile, and add what the tool turns out to need — blocked attempts are logged
+to stderr naming the destination and the reason:
+
+```
+inner: network-allowlist: blocked www.example.org:443 (not in the allow list)
+```
 
 ### `allow` — sensitive resource opt-in
 

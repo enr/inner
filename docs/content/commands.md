@@ -154,6 +154,23 @@ bwrap command:
   bwrap --ro-bind / / ...
 ```
 
+Under `network_mode = "allowlist"` the `network` line is followed by the
+effective allow list, with the layer that contributed each entry — a profile
+inherits its capabilities' destinations and extends them, so this is how you see
+what the run can actually reach and why:
+
+```
+network:     allowlist
+  allow: api.anthropic.com [capability:claude]
+  allow: console.anthropic.com [capability:claude]
+  allow: statsig.anthropic.com [capability:claude]
+  allow: sentry.io [capability:claude]
+  allow: github.com [profile]
+  deny:  sentry.io
+```
+
+See [network — allowlist mode](profiles.md#network-allowlist-mode).
+
 The `resource limits` block shows the **effective** caps for this exact run
 (after the full resolution chain and any `--limit-*` flags). See
 [`[sandbox.limits]`](profiles.md#sandbox-limits-resource-limits) for how the

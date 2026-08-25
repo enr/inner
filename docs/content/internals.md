@@ -192,12 +192,89 @@ The flag that actually detaches the controlling terminal is `--new-session` (it 
 ### Network: `--unshare-net`
 
 ```go
-if !cfg.Network {
+if cfg.EffectiveNetworkMode() != config.NetworkFull {
     args = append(args, "--unshare-net")
 }
 ```
 
-Driven by `cfg.Network` (profile `[sandbox] network = true`, CLI `--network` / `--no-network`).
+Only `"full"` keeps the host network namespace. `"off"`, `"allowlist"`, and any
+value a given binary does not recognise all get a private namespace — a mode
+that cannot be enforced must never silently mean "open network".
+
+Driven by `[sandbox] network_mode` (or the legacy `network` bool) and the CLI
+`--network` / `--no-network`, both of which move the mode rather than the bool.
+
+### Allowlist mode: the proxy, the socket and the relay
+
+`network_mode = "allowlist"` is `--unshare-net` plus exactly one way out.
+
+```
+sandbox (own netns)                    │  host
+                                       │
+  entrypoint                           │
+    └─ HTTP_PROXY=http://127.0.0.1:10108
+         └─ inner __net-relay  ────────┼──▶ /tmp/inner/net-proxy.sock
+                (loopback listener)    │      └─ netproxy.Proxy
+                                       │           └─ upstream
+```
+
+**Why a relay at all.** `HTTP_PROXY` must name a TCP address; no HTTP client
+speaks to a Unix socket through it. But a TCP port cannot cross a network
+namespace, while a bind-mounted socket can. The relay is `inner` re-invoked
+inside the sandbox as a hidden `__net-relay` subcommand: it listens on loopback
+in the sandbox's own namespace, forwards each connection to the socket, and
+wraps the real entrypoint so the sandbox still has one process to wait for.
+
+A read-only bind is enough for the socket. The kernel's `EROFS` check in
+`inode_permission` covers regular files, directories and symlinks — not sockets
+— so `connect(2)` still succeeds through a `--ro-bind`.
+
+**Signals through the relay.** The relay and the entrypoint share the foreground
+process group, so the tty driver already delivers `SIGINT`, `SIGQUIT`, `SIGTSTP`
+and `SIGWINCH` to both. The relay forwards only `SIGTERM` and `SIGHUP` —
+forwarding the rest would give the entrypoint a *second* copy of every Ctrl-C,
+and a TUI whose quit gesture is "press Ctrl-C twice" would read one keypress as
+two. For the same reason the child is not given its own process group.
+
+**The decision chain**, in `internal/netproxy`, in this order:
+
+1. parse and normalise the target (lower-case, strip a trailing dot, reject
+   non-ASCII);
+2. match it against the allow list — **before resolving anything**;
+3. resolve, once;
+4. reject if any resolved address is on the always-deny list;
+5. dial the validated address literal, never the name again.
+
+Step 2 before step 3 is the load-bearing part. Resolving first would make the
+proxy a DNS exfiltration channel: a request for
+`<secret-in-base32>.attacker.com` would send that name to the attacker's
+nameserver, and refusing the TCP connection afterwards would be too late. The
+API enforces the order structurally — `AllowsHost` takes a parsed name,
+`AllowsAddr` takes a `net.IP` — so getting it backwards requires writing code
+that visibly does that.
+
+Step 5 is what closes DNS rebinding: the address checked is the address dialled.
+
+**Why the always-deny list is large.** The proxy runs on the host, in the host
+network namespace. Enabling it does not only narrow what the sandbox can reach —
+it re-attaches a previously fully-isolated namespace to the host's stack.
+Loopback, RFC1918, ULA, link-local, CGNAT and every non-global-unicast address
+are refused regardless of configuration, because otherwise the feature would
+*hand out* access to the user's localhost services rather than take access away.
+The test is positive (reject unless the address is ordinary global unicast), so
+a range nobody thought of fails closed.
+
+**Environment injection** happens after the `--clearenv` block in `bwrap.go`,
+for the same reason the `containers.conf` injection does: bwrap applies
+`--clearenv` when it parses it and wipes every earlier `--setenv`. All four
+spellings of the proxy variable are set, `NO_PROXY` is forced empty, and
+`NODE_USE_ENV_PROXY=1` is set because Node 26+ otherwise ignores the proxy
+environment for `fetch()`.
+
+**No session token.** The socket lives in a `0700` temp directory owned by the
+user, so the processes that can reach the proxy are exactly the ones that could
+run `inner` in the first place. A token would authenticate that set to itself.
+This would need revisiting if the proxy ever grew a TCP listener on the host.
 
 ### Nested user namespaces: `--unshare-user` + caps
 

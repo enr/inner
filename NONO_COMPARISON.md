@@ -87,7 +87,7 @@ put back read-only — needed in practice because agent CLIs live under `~`
 sandbox (`home-isolated`, HIGH). See `docs/content/profiles.md`
 ("home — filesystem model" and the migration section).
 
-### S2. Network allowlist via a supervised proxy (HIGH)
+### S2. Network allowlist via a supervised proxy — **IMPLEMENTED**
 
 inner's network policy is all-or-nothing, and agent profiles practically
 require `network = true` (API access), which then allows exfiltration to
@@ -115,6 +115,39 @@ allow = ["api.anthropic.com", "github.com", "*.githubusercontent.com"]
 
 This turns the weakest point of every agent profile (open network) into a
 policy surface. It is the feature most worth stealing wholesale.
+
+**Shipped as** `[sandbox] network_mode = "allowlist"` with flat
+`network_allow` / `network_deny` keys, rather than the nested
+`[sandbox.network]` table sketched above — every other two-part policy in the
+schema is already flat (`home`/`home_allow`), and the nested form would sit
+awkwardly next to the legacy `network` bool it has to coexist with. See
+`docs/content/profiles.md` ("network — allowlist mode") and
+`docs/content/internals.md` for the design.
+
+Beyond the proposal:
+
+- **Layered lists.** A capability carries the egress destinations its tool
+  needs, a profile inherits them and extends them, and `--dry-run` names the
+  layer that contributed each entry. `network_deny` is the one way to narrow.
+- **Plain-HTTP forwarding and IP-literal entries**, not only CONNECT to names.
+- **A much larger always-deny list.** The proxy runs in the host network
+  namespace, so enabling it re-attaches an otherwise isolated sandbox to the
+  host's stack: loopback, RFC1918, ULA, CGNAT and every non-global-unicast
+  address are refused regardless of configuration, not just the metadata IP.
+- **Port scoping.** A bare allow entry authorises 443 and 80 only, so
+  `["github.com"]` does not also authorise an SSH push channel.
+
+Deliberately deferred:
+
+- **No per-run session token.** The proposal assumed a proxy on a host TCP
+  port, where any local process could ride it. This one is a Unix socket in a
+  `0700` directory, so the reachable set is already "processes running as this
+  user" — the same set that could run `inner` directly. Revisit if the proxy
+  ever grows a TCP listener.
+- **No `--allow-domain` CLI flag** (profile-only for now; see U3).
+- **No TLS interception or method+path filtering** — that is S3.
+- **No structured audit log** of proxy decisions — that is S4. Blocked
+  attempts go to stderr with the destination and the reason.
 
 ### S3. Credential injection instead of credential exposure (HIGH)
 
@@ -333,7 +366,7 @@ resident daemon.
 
 | Priority | Item | Rationale |
 |---|---|---|
-| 1 | S2 network allowlist proxy | biggest real-world risk reduction; unlocks S3 |
+| 1 | S2 network allowlist proxy — **DONE** | biggest real-world risk reduction; unlocks S3 |
 | 2 | ~~S1 isolated-home allowlist mode~~ | **done** — closes the fix-2 half of review #1 |
 | 3 | S3 credential injection | removes the worst `allow` escape hatches |
 | 4 | F1 workspace snapshots/rollback | highest user-visible safety win |

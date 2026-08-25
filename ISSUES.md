@@ -21,8 +21,8 @@ tipo, priorità, dimensione stimata, fonti e dipendenze. Le issue "abilitanti"
 
 **Ordine di lavoro consigliato:** ISS-01 → ISS-02 → ISS-03 → ISS-08 → ISS-17 →
 ISS-05 → ISS-04 → ISS-06 → bug P2 (ISS-10…14) → ISS-18/19 → resto.
-ISS-04 e ISS-07 sono chiuse; ISS-05 ha le fondamenta gia' in tree
-(`[sandbox] network_mode`, vedi `network.md` → Status).
+ISS-04, ISS-05 e ISS-07 sono chiuse. ISS-06 (credential injection) puo'
+partire: si appoggia al proxy di ISS-05, ora in tree.
 Razionale: prima i fix exploitabili e i quick win (P0), poi il sign-off manuale
 già dovuto, poi i due enabler strutturali (run-ID/JSON e proxy di rete) che
 sbloccano credenziali, audit e rollback.
@@ -93,8 +93,15 @@ sandbox. **Acceptance e2e ancora da firmare su macchina reale**: bubblewrap non
 è disponibile nell'ambiente in cui la modifica è stata sviluppata, quindi la
 copertura è a livello di argv bwrap e di unit test (come ISS-07).
 
-### ISS-05 · Proxy di rete supervisionato con allowlist di domini
+### ISS-05 · Proxy di rete supervisionato con allowlist di domini — **FATTO**
 `security` `feature` · **P1** · Size L · Fonte: NONO_COMPARISON S2 · **Enabler** per ISS-06, ISS-18 (eventi rete), ISS-21 (`--allow-domain`)
+
+Chiusa: `[sandbox] network_mode = "allowlist"` (chiavi piatte `network_allow` /
+`network_deny`, non la tabella annidata dello sketch). Rispetto alla proposta:
+liste a livelli con default per capability e provenienza nel `--dry-run`,
+always-deny esteso a loopback/LAN/CGNAT (il proxy gira nel netns dell'host),
+scoping delle porte. Niente session token — socket unix `0700`, non porta TCP:
+motivazione in `NONO_COMPARISON.md` §S2 e `network.md`.
 
 La rete oggi è on/off e i profili agente richiedono `network = true` → rete
 aperta verso ovunque. Nuovo modo `[sandbox.network] mode = "allowlist"`:
