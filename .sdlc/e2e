@@ -845,6 +845,124 @@ else
     pass "pid_namespace=false: --unshare-pid correctly absent (escape hatch works)"
 fi
 
+# ── Process isolation: runtime ────────────────────────────────────────────────
+#
+# The dry-run checks above assert that --unshare-pid is EMITTED. These assert
+# that it has the effect it is emitted for. They are steps 1, 4 and 5 of the
+# manual checklist in SECURITY_REVIEW.md #9 — the three that never needed a
+# human, only a script nobody had written.
+
+section "Process isolation: runtime"
+
+PIDNS_ON="$TMPWORK/pidns-on.toml"
+PIDNS_OFF="$TMPWORK/pidns-off.toml"
+
+cat > "$PIDNS_ON" <<'EOF'
+schema_version = "1"
+name        = "inner-e2e-pidns-on"
+description = "e2e test profile — PID namespace on (the default)"
+
+[sandbox]
+network = false
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+cat > "$PIDNS_OFF" <<'EOF'
+schema_version = "1"
+name        = "inner-e2e-pidns-off"
+description = "e2e test profile — PID namespace escape hatch"
+
+[sandbox]
+network       = false
+pid_namespace = false
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 15
+EOF
+
+# Counting host processes is the assertion that matters: /proc/<pid>/environ of
+# a same-UID process is where an agent would read the secrets a cleared
+# environment is meant to keep out.
+proc_count() {
+    run_cmd "$1" "ls /proc | grep -c '^[0-9]\+$'" 2>/dev/null | tr -cd '0-9'
+}
+
+PROC_ON=$(proc_count "$PIDNS_ON")
+PROC_OFF=$(proc_count "$PIDNS_OFF")
+
+if [[ -z "$PROC_ON" || -z "$PROC_OFF" ]]; then
+    fail "process isolation: could not count /proc entries (on='$PROC_ON' off='$PROC_OFF')"
+else
+    # An absolute threshold alone would be arbitrary, and would quietly pass on
+    # a machine that happens to run few processes. The comparison against the
+    # same sandbox with the escape hatch on is what makes this meaningful.
+    if [[ "$PROC_ON" -lt 20 ]]; then
+        pass "process isolation: sandbox sees only its own processes ($PROC_ON in /proc)"
+    else
+        fail "process isolation: sandbox sees $PROC_ON processes, expected a handful"
+    fi
+
+    if [[ "$PROC_OFF" -gt "$PROC_ON" ]]; then
+        pass "process isolation: pid_namespace=false really exposes the host ($PROC_OFF vs $PROC_ON)"
+    else
+        fail "process isolation: escape hatch showed $PROC_OFF processes, not more than $PROC_ON — the comparison proves nothing"
+    fi
+fi
+
+# Same property through ps, which is what a person would actually type.
+if run_cmd "$PIDNS_ON" "command -v ps >/dev/null" >/dev/null 2>&1; then
+    PS_ON=$(run_cmd "$PIDNS_ON" "ps -e | wc -l" 2>/dev/null | tr -cd '0-9')
+    if [[ -n "$PS_ON" && "$PS_ON" -lt 20 ]]; then
+        pass "process isolation: ps -e lists only sandbox processes ($PS_ON lines)"
+    else
+        fail "process isolation: ps -e listed '$PS_ON' lines, expected a handful"
+    fi
+else
+    printf "  [SKIP] ps not available inside the sandbox, skipping the ps check\n"
+fi
+
+# The reason PID isolation was believed to break TUIs: the worry was that it
+# detached the controlling terminal. It does not — the flag that would is
+# --new-session, which inner never emits. Under a real PTY, opening /dev/tty
+# from inside the sandbox must still succeed.
+# Guard on being ABLE to allocate a pseudo-terminal, not merely on script(1)
+# existing: inside a container or another sandbox, /dev/ptmx is often
+# unavailable and script fails with "failed to create pseudo-terminal". That is
+# a property of where the suite is running, not of inner.
+if command -v script >/dev/null 2>&1 && script -qec true /dev/null >/dev/null 2>&1; then
+    TTY_PROBE="$TMPWORK/tty-probe.sh"
+    cat > "$TTY_PROBE" <<EOF
+#!/usr/bin/env bash
+inner run -p "$PIDNS_ON" --no-interactive -- -c 'exec 3<>/dev/tty && echo TTY_OK'
+EOF
+    chmod +x "$TTY_PROBE"
+    if script -qec "$TTY_PROBE" /dev/null 2>&1 | grep -q TTY_OK; then
+        pass "process isolation: /dev/tty is still openable under --unshare-pid"
+    else
+        fail "process isolation: /dev/tty could not be opened under --unshare-pid (TUIs would hang)"
+    fi
+else
+    printf "  [SKIP] no pseudo-terminal available here, skipping the controlling-terminal probe\n"
+fi
+
 section "Dry-run: environment"
 
 LINE=$(bwrap_line "$NONET")
