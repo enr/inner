@@ -271,17 +271,37 @@ func (c *Checker) checkNoRoot() CheckResult {
 	return r
 }
 
+// checkUsrReadonly used to probe by attempting to create a file in usrDir and
+// treating write failure as "read-only". That fails open: run outside a
+// sandbox as a normal, non-root user, /usr is not writable anyway (regular
+// Unix permissions already forbid it), so the check reported "conformant"
+// while having verified nothing about the sandbox's own read-only bind. A
+// check that can only fail open gives false assurance, which is the wrong
+// direction for a Critical check.
+//
+// It now reads the mount actually covering usrDir from mountinfo and checks
+// its "ro" option directly — the same signal the kernel itself uses, and the
+// same approach checkHomeIsolated already takes for $HOME.
 func (c *Checker) checkUsrReadonly() CheckResult {
 	r := CheckResult{ID: "usr-readonly", Name: "/usr is read-only", Severity: SeverityCritical}
-	probe, err := os.CreateTemp(c.usrDir(), ".inner-probe-*")
+	data, err := os.ReadFile(c.mountInfoPath())
 	if err != nil {
-		r.Passed = true // can't write → read-only, as expected
-	} else {
-		probe.Close()
-		os.Remove(probe.Name()) //nolint:errcheck
 		r.Passed = false
-		r.Detail = c.usrDir() + " is writable"
+		r.Detail = fmt.Sprintf("cannot read %s: %v", c.mountInfoPath(), err)
+		return r
 	}
+	ro, found := mountReadOnly(string(data), c.usrDir())
+	if !found {
+		r.Passed = false
+		r.Detail = c.usrDir() + ": no covering mount found in " + c.mountInfoPath()
+		return r
+	}
+	if !ro {
+		r.Passed = false
+		r.Detail = c.usrDir() + " is mounted read-write"
+		return r
+	}
+	r.Passed = true
 	return r
 }
 
@@ -487,6 +507,48 @@ func mountFsType(mountInfo, mountPoint string) (string, bool) {
 		found = true
 	}
 	return fsType, found
+}
+
+// mountReadOnly reports whether the mount covering path has the "ro" option,
+// according to the content of a /proc/<pid>/mountinfo file, and whether such a
+// covering mount was found at all. Unlike mountFsType (which matches an exact
+// mount point), this resolves the mount the way the kernel would for a path
+// with no mount of its own — e.g. /usr with no dedicated mount entry is
+// covered by the "/" entry — by picking, among every mount point that is a
+// prefix of path, the longest (most specific) one. The LAST line for that
+// mount point wins, matching mountFsType's shadowing rule.
+func mountReadOnly(mountInfo, path string) (ro bool, found bool) {
+	path = filepath.Clean(path)
+	bestLen := -1
+	for _, line := range strings.Split(mountInfo, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+		// Mount points are octal-escaped in mountinfo; only the space escape is
+		// plausible in a system path.
+		mp := strings.ReplaceAll(fields[4], `\040`, " ")
+		if !isMountPrefix(path, mp) {
+			continue
+		}
+		if len(mp) < bestLen {
+			continue
+		}
+		bestLen = len(mp)
+		found = true
+		ro = slices.Contains(strings.Split(fields[5], ","), "ro")
+	}
+	return ro, found
+}
+
+// isMountPrefix reports whether mp is the mount point covering path: either
+// path is exactly mp, mp is an ancestor directory of path, or mp is "/" (which
+// covers everything).
+func isMountPrefix(path, mp string) bool {
+	if mp == "/" {
+		return true
+	}
+	return path == mp || strings.HasPrefix(path, mp+"/")
 }
 
 func (c *Checker) checkShimsActive() CheckResult {

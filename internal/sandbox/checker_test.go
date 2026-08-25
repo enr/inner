@@ -76,29 +76,52 @@ func TestCheck_noRoot_pass(t *testing.T) {
 
 // ── usr-readonly ──────────────────────────────────────────────────────────────
 
-func TestCheck_usrReadonly_fail_when_writable(t *testing.T) {
+// checkUsrReadonly reads the mount covering UsrDir from mountinfo instead of
+// probing by attempting a write (issue #8: a write-probe fails open — outside
+// a sandbox, as a normal non-root user, /usr is already unwritable by regular
+// Unix permissions regardless of whether the mount itself is read-only, so the
+// old check "passed" without checking the thing it claimed to check).
+
+func TestCheck_usrReadonly_fail_when_mountIsReadWrite(t *testing.T) {
 	ch, _ := newChecker(t)
-	// UsrDir defaults to a writable temp dir → should fail.
+	ch.UsrDir = "/usr"
+	ch.MountInfoPath = writeMountInfo(t, "40 30 0:44 / /usr rw,nosuid - overlay overlay rw\n")
 	r := ch.checkUsrReadonly()
 	if r.Passed {
-		t.Error("expected usr-readonly to fail when /usr is writable")
+		t.Errorf("expected usr-readonly to fail when the covering mount is rw, got: %s", r.Detail)
 	}
 }
 
-func TestCheck_usrReadonly_pass_when_readonly(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root bypasses filesystem permission bits; test requires non-root user")
-	}
+func TestCheck_usrReadonly_pass_when_mountIsReadOnly(t *testing.T) {
 	ch, _ := newChecker(t)
-	roDir := t.TempDir()
-	if err := os.Chmod(roDir, 0o555); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { os.Chmod(roDir, 0o755) }) //nolint:errcheck
-	ch.UsrDir = roDir
+	ch.UsrDir = "/usr"
+	ch.MountInfoPath = writeMountInfo(t, "40 30 0:44 / /usr ro,nosuid - overlay overlay ro\n")
 	r := ch.checkUsrReadonly()
 	if !r.Passed {
-		t.Errorf("expected usr-readonly to pass for ro dir, got: %s", r.Detail)
+		t.Errorf("expected usr-readonly to pass when the covering mount is ro, got: %s", r.Detail)
+	}
+}
+
+// A dedicated mount for /usr is unusual: inner's own sandbox binds the whole
+// root read-only as a single mount at "/", with no separate entry for /usr.
+// The check must resolve that covering mount the way the kernel would.
+func TestCheck_usrReadonly_resolvesCoveringRootMount(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.UsrDir = "/usr"
+	ch.MountInfoPath = writeMountInfo(t, "36 35 98:0 / / ro,nosuid - ext4 /dev/root ro\n")
+	r := ch.checkUsrReadonly()
+	if !r.Passed {
+		t.Errorf("expected usr-readonly to pass when covered by a ro root mount, got: %s", r.Detail)
+	}
+}
+
+func TestCheck_usrReadonly_failsWhenMountinfoUnreadable(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.MountInfoPath = filepath.Join(t.TempDir(), "does-not-exist")
+	// A check that cannot verify anything must fail closed, not pass silently
+	// the way the old write-probe did whenever the write itself failed.
+	if r := ch.checkUsrReadonly(); r.Passed {
+		t.Errorf("expected usr-readonly to fail closed when mountinfo cannot be read, got: %s", r.Detail)
 	}
 }
 

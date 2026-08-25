@@ -13,6 +13,10 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #8 — `checkUsrReadonly` failed open** — it now reads the
+  `ro` option of the mount actually covering `/usr` from mountinfo, the same
+  approach `checkHomeIsolated` already used for `$HOME`, instead of inferring
+  read-only from a failed write attempt. See **#8** below.
 - ✅ **[FIXED] Issue #7 — `quoteGitConfigValue` mangled `\r`** — it now writes a
   raw CR byte inside the quotes, matching real `git config`'s own output,
   instead of the copy-pasted `\n` escape (or the `\r` escape the review
@@ -447,29 +451,44 @@ original value byte-for-byte. Confirmed the test fails against the pre-fix code
 
 ---
 
-## #8 — [Low] `checkUsrReadonly` infers read-only from a failed write
+## #8 — [CLOSED] `checkUsrReadonly` infers read-only from a failed write
 
 **Where:** `internal/sandbox/checker.go` — `checkUsrReadonly`
 (~`checker.go:252`).
 
-**What is wrong:** the check decides `/usr` is read-only by *attempting to create
-a temp file there and treating failure as success*. Run outside the sandbox as a
-normal user, `/usr` is not writable anyway, so the check reports "conformant"
-while proving nothing. The failure mode is "silently passes," which is the wrong
-direction for a security check. (This is also why the unit test
-`TestCheck_usrReadonly_pass_when_readonly` fails when the suite runs as **root** —
-root *can* write the temp file, so the check correctly reports writable, but the
-test expected a pass. That test failure is pre-existing and unrelated to recent
-changes.)
+**What was wrong:** the check decided `/usr` was read-only by *attempting to
+create a temp file there and treating failure as success*. Run outside the
+sandbox as a normal user, `/usr` is not writable anyway, so the check reported
+"conformant" while proving nothing. The failure mode was "silently passes,"
+which is the wrong direction for a security check.
 
 **Why it matters:** a check that can only fail-open gives false assurance.
 
-**How to fix:** make intent explicit — this check is only meaningful **inside**
-the sandbox (where `inner verify` runs it). Either gate it on an
-"in sandbox" signal, or detect the mount's read-only flag directly (e.g. parse
-`/proc/mounts` for the `ro` option on the mount backing `/usr`) instead of
-probing by writing. For the failing unit test, make it skip when `os.Getuid()==0`
-or use an injected `UsrDir` that is genuinely read-only.
+### Fix
+
+`checkUsrReadonly` now reads `/proc/self/mountinfo` and checks the `ro` option
+on the mount actually covering `UsrDir` — the same signal the kernel itself
+enforces, and the same approach `checkHomeIsolated` already used for `$HOME`
+(issue #1's `home-isolated` check). The new `mountReadOnly` helper resolves the
+*covering* mount the way the kernel would for a path with no dedicated mount
+entry — `/usr` has none; it is covered by inner's own `--ro-bind / /` at `/` —
+by picking the longest matching mount-point prefix from mountinfo, mirroring
+the existing `mountFsType` helper's shadowing rule (last matching line wins).
+An unreadable mountinfo or no covering mount now **fails** the check, instead of
+the old code's "can't write → must be read-only."
+
+The unit test that used to fail under root (`TestCheck_usrReadonly_pass_when_readonly`,
+noted in the original report) is gone along with the write-probe it exercised;
+the new tests need no root/non-root branching since they drive the check
+through injected mountinfo fixtures, not real filesystem permissions.
+
+**Verification:** four tests in `internal/sandbox/checker_test.go` — fails on
+an `rw` covering mount, passes on an `ro` one, correctly resolves the covering
+`/` mount when `/usr` has no dedicated entry (inner's own sandbox layout), and
+fails closed when mountinfo cannot be read. Cross-checked against a real
+`bwrap --ro-bind / /`: `/proc/self/mountinfo` inside it lists the root mount
+with `ro` in the options field, confirming the check passes correctly in the
+actual sandbox `inner verify` runs in.
 
 ---
 
