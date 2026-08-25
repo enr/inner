@@ -122,6 +122,42 @@ func TestParseMount_invalidMode(t *testing.T) {
 	}
 }
 
+func TestParseMount_modes(t *testing.T) {
+	tests := []struct {
+		spec       string
+		wantMode   string
+		wantErr    bool
+		errIsAbout string // substring expected in the error, if wantErr
+	}{
+		{spec: "/src:/dest", wantMode: "ro"},
+		{spec: "/src:/dest:ro", wantMode: "ro"},
+		{spec: "/src:/dest:rw", wantMode: "rw"},
+		{spec: "/src:/dest:safe-rw", wantMode: "safe-rw"},
+		{spec: "/src:/dest:tmpfs", wantErr: true, errIsAbout: "no host source"},
+		{spec: "/src:/dest:bogus", wantErr: true, errIsAbout: "ro, rw or safe-rw"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.spec, func(t *testing.T) {
+			m, err := parseMount(tt.spec)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseMount(%q): expected error, got none", tt.spec)
+				}
+				if !strings.Contains(err.Error(), tt.errIsAbout) {
+					t.Errorf("parseMount(%q): error = %v, want it to contain %q", tt.spec, err, tt.errIsAbout)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseMount(%q): %v", tt.spec, err)
+			}
+			if m.Mode != tt.wantMode {
+				t.Errorf("parseMount(%q): Mode = %q, want %q", tt.spec, m.Mode, tt.wantMode)
+			}
+		})
+	}
+}
+
 // ── parseEnvVar ───────────────────────────────────────────────────────────────
 
 func TestParseEnvVar_simple(t *testing.T) {

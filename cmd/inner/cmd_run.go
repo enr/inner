@@ -708,6 +708,11 @@ func guardWorkdir(w io.Writer, rc *config.RunConfig, implicit, dryRun bool) (pro
 }
 
 // parseMount parses "src:dest[:mode]" into a Mount.
+// parseMount parses "src:dest[:mode]" into a Mount. mode is one of "ro" (the
+// default), "rw" or "safe-rw" — the same modes a profile's [mounts] table
+// accepts, except "tmpfs": that mode has no host source (it materializes an
+// empty directory at dest), so it does not fit the src:dest shape of this
+// flag. Declare a tmpfs mount in the profile's [mounts] table instead.
 func parseMount(s string) (config.Mount, error) {
 	parts := strings.SplitN(s, ":", 3)
 	if len(parts) < 2 {
@@ -717,8 +722,12 @@ func parseMount(s string) (config.Mount, error) {
 	if len(parts) == 3 {
 		mode = parts[2]
 	}
-	if mode != "ro" && mode != "rw" {
-		return config.Mount{}, fmt.Errorf("invalid mount mode %q in %q: must be ro or rw", mode, s)
+	switch mode {
+	case "ro", "rw", "safe-rw":
+	case "tmpfs":
+		return config.Mount{}, fmt.Errorf("invalid mount mode %q in %q: tmpfs has no host source, so it cannot be expressed as src:dest:tmpfs — declare it in the profile's [mounts] table instead", mode, s)
+	default:
+		return config.Mount{}, fmt.Errorf("invalid mount mode %q in %q: must be ro, rw or safe-rw", mode, s)
 	}
 	return config.Mount{
 		Src:  config.ExpandPath(parts[0]),
@@ -1094,7 +1103,7 @@ to the entrypoint command.`,
 	cmd.Flags().BoolVar(&flags.networkOff, "no-network", false, "Disable network access")
 	cmd.Flags().BoolVarP(&flags.interactive, "interactive", "i", false, "Force interactive mode")
 	cmd.Flags().BoolVar(&flags.noInteractive, "no-interactive", false, "Force non-interactive mode")
-	cmd.Flags().StringArrayVarP(&flags.mounts, "mount", "m", nil, "Additional mount: SRC:DEST[:MODE]")
+	cmd.Flags().StringArrayVarP(&flags.mounts, "mount", "m", nil, "Additional mount: SRC:DEST[:MODE] (mode: ro, rw or safe-rw; default ro)")
 	cmd.Flags().StringArrayVarP(&flags.env, "env", "e", nil, "Set env variable: KEY=VAL (~, $VAR and ${VAR} are expanded against the host environment)")
 	cmd.Flags().StringVar(&flags.entrypoint, "entrypoint", "", "Override entrypoint command (resets profile args, like docker --entrypoint)")
 	cmd.Flags().StringArrayVarP(&flags.args, "arg", "a", nil, "Append argument to entrypoint (repeatable)")

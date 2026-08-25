@@ -13,6 +13,9 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #4 — CLI `-m` rejected `safe-rw`** — `parseMount` now
+  accepts `safe-rw`; `tmpfs` is explicitly rejected with a pointer to `[mounts]`
+  since it has no host source. See **#4** below.
 - ✅ **[FIXED] Issue #3 — `safe-rw` and capability copies followed symlinks** —
   `copyFile` refuses a symlink source (`os.Lstat`), `copyDir` skips a symlinked
   file instead of dereferencing it. See **#3** below.
@@ -310,27 +313,29 @@ tree is neither read into the destination directly nor via a directory walk.
 
 ---
 
-## #4 — [Medium] CLI `-m` mount parser rejects `safe-rw` / `tmpfs`
+## #4 — [CLOSED] CLI `-m` mount parser rejects `safe-rw` / `tmpfs`
 
 **Where:** `cmd/inner/cmd_run.go` — `parseMount` (~`cmd_run.go:479`), vs the modes
 accepted in profiles (`internal/config/types.go` `MountEntry`, and the validator
 `internal/profile/validator.go`).
 
-**What is wrong:** profile mounts accept four modes (`ro`, `rw`, `safe-rw`,
-`tmpfs`), but the CLI `-m SRC:DEST[:MODE]` parser only allows `ro` and `rw`. A
-user cannot express `-m ~/data:/data:safe-rw` on the command line even though it
-is a first-class concept elsewhere.
+**What was wrong:** profile mounts accept four modes (`ro`, `rw`, `safe-rw`,
+`tmpfs`), but the CLI `-m SRC:DEST[:MODE]` parser only allowed `ro` and `rw`. A
+user could not express `-m ~/data:/data:safe-rw` on the command line even though
+it is a first-class concept elsewhere.
 
-**Why it matters:** inconsistent surface; users hit a confusing "invalid mode"
-error for a mode the tool clearly supports.
+### Fix
 
-**How to fix:** extend the allowed set in `parseMount` to include `safe-rw` and
-`tmpfs` (note `tmpfs` has no host source, so decide whether to support it via
-`-m` at all, or document the omission explicitly). Keep the error message listing
-the full set of valid modes.
+`parseMount` now accepts `safe-rw` (it needs a real `Src`, exactly like `ro`/`rw`,
+so it fits the `src:dest:mode` shape and `applyGenericSafeMounts` handles it with
+no other change). `tmpfs` is explicitly rejected with an error naming why —
+it has no host source, so it does not fit `src:dest:mode` — and pointing at the
+profile's `[mounts]` table instead of silently doing nothing or misparsing. The
+`--mount` flag help text and `docs/content/commands.md` were updated to match.
 
-**How to verify:** table test for `parseMount` covering all four modes plus an
-invalid one.
+**Verification:** `TestParseMount_modes` (`cmd/inner/cmd_run_test.go`), a table
+test covering `ro` (implicit and explicit), `rw`, `safe-rw`, the rejected
+`tmpfs`, and an unrelated invalid mode.
 
 ---
 
