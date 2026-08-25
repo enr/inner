@@ -7,11 +7,19 @@ type RunConfig struct {
 	// Name is the logical profile name (from the profile's name field, or
 	// derived from the filename). It may differ from the CLI argument used
 	// to select the profile (which can be a file path).
-	Name      string
-	Mounts    []Mount
-	Env       EnvConfig
-	Network   bool
-	Clipboard bool
+	Name   string
+	Mounts []Mount
+	Env    EnvConfig
+	// Network is the legacy on/off view of the network model, kept so existing
+	// consumers keep working: it is exactly NetworkMode != NetworkOff. Use
+	// NetworkMode (or EffectiveNetworkMode) for anything that must distinguish
+	// "open network" from "mediated network".
+	Network bool
+	// NetworkMode is the network model applied to this run, resolved once by
+	// the loader from [sandbox] network_mode / network. Empty only on a
+	// hand-built RunConfig; see EffectiveNetworkMode.
+	NetworkMode string
+	Clipboard   bool
 	// PidNamespace requests a private PID namespace for the sandbox
 	// (bwrap --unshare-pid). True by default; resolved by toRunConfig from
 	// SandboxConfig.PidNamespace (nil = unset = true).
@@ -78,6 +86,21 @@ type RunConfig struct {
 	// inner shows before starting the sandbox (e.g. the OS keyring unlock
 	// message for the claude capability). Set by --yes on the CLI.
 	AutoConfirm bool
+}
+
+// EffectiveNetworkMode returns the network model for this run. An empty
+// NetworkMode falls back to the legacy Network bool, mirroring how an empty
+// HomeMode means HomeHostRO — so a RunConfig built by hand (tests, callers
+// that predate the field) still reports a usable answer.
+//
+// Consumers that switch on the result must treat anything other than
+// NetworkFull as "no direct network access": that keeps an unrecognised or
+// not-yet-implemented mode fail-closed.
+func (c RunConfig) EffectiveNetworkMode() string {
+	if c.NetworkMode != "" {
+		return c.NetworkMode
+	}
+	return NetworkModeFromBool(c.Network)
 }
 
 // HomeIsolated reports whether this run replaces $HOME with an empty tmpfs

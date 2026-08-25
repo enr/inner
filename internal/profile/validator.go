@@ -121,6 +121,32 @@ func validateHome(r *Result, p *config.Profile) {
 	}
 }
 
+// validateNetwork checks [sandbox] network_mode.
+//
+// An unknown mode is an error for the same reason an unknown home mode is:
+// falling back to a default would let a typo ("allowist", "none") produce a
+// sandbox whose network reach differs from what the profile claims. A mode
+// that is known but not yet enforceable by this build is an error too — it
+// must never degrade silently into either "off" or "full".
+//
+// The legacy [sandbox] network bool needs no check of its own: mergeProfiles
+// collapses the two fields into a coherent pair along the extends chain, so a
+// merged profile can never carry a contradictory combination for this
+// function to find.
+func validateNetwork(r *Result, p *config.Profile) {
+	mode := p.Sandbox.NetworkMode
+	if mode == "" {
+		return // legacy network = true/false, nothing to check
+	}
+	if !slices.Contains(config.ValidNetworkModes, mode) {
+		r.addError(fmt.Sprintf("invalid [sandbox] network_mode %q (valid values: %v)", mode, config.ValidNetworkModes))
+		return
+	}
+	if mode == config.NetworkAllowlist {
+		r.addError(`[sandbox] network_mode = "allowlist" is reserved but not implemented yet in this build — use "off" or "full"`)
+	}
+}
+
 // effectiveHomeMode renders the home mode for a user-facing message, naming the
 // default explicitly so an unset key never shows up as an empty string.
 func effectiveHomeMode(mode string) string {
@@ -299,9 +325,15 @@ func validateMountSafety(r *Result, p *config.Profile) {
 func validateRiskyCombinations(r *Result, p *config.Profile) {
 	// Full environment inheritance: every host secret exported in the calling
 	// shell (AWS_*, GITHUB_TOKEN, …) is handed to the sandboxed process.
+	// Only an unmediated network turns a readable secret into an exfiltrated
+	// one. Gate on the resolved mode rather than the bare bool: a mediated
+	// mode is precisely what removes this risk, and warning about it anyway
+	// would train users to ignore the warning.
+	networkOpen := config.ResolveNetworkMode(p.Sandbox) == config.NetworkFull
+
 	if p.Env.InheritAll {
 		msg := "[env] inherit_all = true forwards the entire host environment into the sandbox, including every exported secret (AWS_*, GITHUB_TOKEN, …) — list the variables the run needs in [env] inherit instead"
-		if p.Sandbox.Network {
+		if networkOpen {
 			msg += "; with network = true those secrets can also leave the machine"
 		}
 		r.addWarning(msg)
@@ -311,7 +343,7 @@ func validateRiskyCombinations(r *Result, p *config.Profile) {
 	}
 
 	// Readable credentials + open network is the exfiltration setup.
-	if p.Sandbox.Network {
+	if networkOpen {
 		var creds []string
 		for _, key := range p.Sandbox.Allow {
 			if slices.Contains(config.CredentialAllowKeys, key) {
@@ -537,7 +569,7 @@ func Validate(p *config.Profile, workDir string) Result {
 	}
 	if slices.Contains(p.Sandbox.Allow, "nested-user-ns") {
 		r.addWarning("nested-user-ns grants CAP_SETUID/CAP_SETGID to the sandbox; do not enable for untrusted agents")
-		if p.Sandbox.Network {
+		if config.ResolveNetworkMode(p.Sandbox) == config.NetworkFull {
 			r.addWarning("nested-user-ns combined with network access increases privilege-escalation risk; review carefully")
 		}
 	}
@@ -545,6 +577,7 @@ func Validate(p *config.Profile, workDir string) Result {
 	// 3a-bis. Validate [sandbox] home / home_allow, and the coherence between the
 	// home mode and the rest of the profile.
 	validateHome(&r, p)
+	validateNetwork(&r, p)
 	validateAllowUnderIsolatedHome(&r, p)
 
 	// 3a-ter. Report mounts that hand out write access to the host system or

@@ -229,6 +229,37 @@ func TestBuild_networkEnabled(t *testing.T) {
 	}
 }
 
+// Only NetworkFull keeps the host network namespace. Everything else — "off",
+// the reserved "allowlist", and any value this build does not recognise — must
+// get --unshare-net: a mode this binary cannot enforce may never silently mean
+// "open network".
+func TestBuild_networkMode_failsClosed(t *testing.T) {
+	tests := []struct {
+		mode        string
+		legacyBool  bool
+		wantUnshare bool
+	}{
+		{config.NetworkFull, true, false},
+		{config.NetworkOff, false, true},
+		// The legacy bool is left true on purpose: the mode must win.
+		{config.NetworkAllowlist, true, true},
+		{"bogus", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			iso := testIsolator(runtime.RuntimeInfo{})
+			args := cmdArgs(t, iso, config.RunConfig{
+				NetworkMode: tt.mode,
+				Network:     tt.legacyBool,
+				Entrypoint:  config.Entrypoint{Cmd: "sh"},
+			})
+			if got := hasFlag(args, "--unshare-net"); got != tt.wantUnshare {
+				t.Errorf("mode %q: --unshare-net = %v, want %v", tt.mode, got, tt.wantUnshare)
+			}
+		})
+	}
+}
+
 // ── Mounts ────────────────────────────────────────────────────────────────────
 
 func TestBuild_mountRW(t *testing.T) {

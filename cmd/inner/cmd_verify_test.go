@@ -76,11 +76,34 @@ func TestRunVerifyInside_usesEnvContextWhenProfileIsUnreadable(t *testing.T) {
 	_ = app.runVerifyInside(&buf, false)
 
 	out := buf.String()
-	if !strings.Contains(out, "network=true in profile") {
-		t.Errorf("network check did not see network=true from the environment:\n%s", out)
+	if !strings.Contains(out, "network_mode=full in profile") {
+		t.Errorf("network check did not see the open network from the environment:\n%s", out)
 	}
 	if strings.Contains(out, "TCP connection to") {
-		t.Errorf("network check dialled out despite network=true:\n%s", out)
+		t.Errorf("network check dialled out despite an intentionally open network:\n%s", out)
+	}
+}
+
+// INNER_VERIFY_NETWORK_MODE is the authoritative channel; the legacy boolean is
+// only a fallback for an older host-side binary. A mediated mode must NOT be
+// collapsed into "network is open" — that would make the check skip itself on
+// exactly the modes it exists to probe.
+func TestRunVerifyInside_networkModeWinsOverLegacyBool(t *testing.T) {
+	app, _ := newRunTestApp(t)
+
+	t.Setenv("INNER_VERIFY_PROFILE", "/nonexistent/profile.toml")
+	t.Setenv("INNER_VERIFY_HOME_MODE", config.HomeHostRO)
+	t.Setenv("INNER_VERIFY_NETWORK_MODE", config.NetworkOff)
+	t.Setenv("INNER_VERIFY_NETWORK", "1") // legacy channel disagrees on purpose
+	t.Setenv("INNER_VERIFY_SHIMS", "0")
+	t.Setenv("INNER_VERIFY_ALLOW", "")
+	t.Setenv("INNER_VERIFY_CUSTOM", "")
+
+	var buf bytes.Buffer
+	_ = app.runVerifyInside(&buf, false)
+
+	if out := buf.String(); strings.Contains(out, "network_mode=full in profile") {
+		t.Errorf("legacy INNER_VERIFY_NETWORK overrode INNER_VERIFY_NETWORK_MODE:\n%s", out)
 	}
 }
 

@@ -173,10 +173,16 @@ func remoteProfileRequests(rc *config.RunConfig) []string {
 	}
 	out = append(out, "runs: "+cmd)
 
-	if rc.Network {
-		out = append(out, "network: enabled — the sandboxed process can reach the internet")
-	} else {
+	// Named by mode, not by the on/off bool: the consent prompt is the one
+	// place a user decides whether to trust an untrusted profile, so it must
+	// not collapse two different network models into the same sentence.
+	switch mode := rc.EffectiveNetworkMode(); mode {
+	case config.NetworkOff:
 		out = append(out, "network: disabled")
+	case config.NetworkFull:
+		out = append(out, "network: full — the sandboxed process can reach the internet")
+	default:
+		out = append(out, "network: "+mode)
 	}
 
 	home := rc.HomeMode

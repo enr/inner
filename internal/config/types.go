@@ -186,8 +186,22 @@ func (r ResourceLimits) IsZero() bool {
 
 // SandboxConfig controls high-level sandbox capabilities.
 type SandboxConfig struct {
-	Network   bool `toml:"network"`
-	Clipboard bool `toml:"clipboard"`
+	// Network is the legacy on/off switch. It is still honoured, but
+	// NetworkMode is the field to reach for: see ResolveNetworkMode for how
+	// the two combine, and mergeProfiles for how they combine across extends.
+	Network bool `toml:"network"`
+	// NetworkMode selects the network model applied to the sandbox.
+	// Valid values are listed in ValidNetworkModes; empty means "fall back to
+	// the Network bool", which keeps every pre-existing profile working
+	// unchanged (the same shape as [sandbox] home defaulting to HomeHostRO).
+	//
+	//   "off"       private, empty network namespace — no outbound traffic.
+	//   "full"      the host network namespace — the sandbox reaches anything
+	//               the host can reach. This is the exfiltration surface every
+	//               agent profile currently signs up for.
+	//   "allowlist" RESERVED, not implemented yet — see NetworkAllowlist.
+	NetworkMode string `toml:"network_mode"`
+	Clipboard   bool   `toml:"clipboard"`
 	// PidNamespace controls whether the sandbox gets its own PID namespace
 	// (bwrap --unshare-pid). Defaults to true (nil = unset = enabled).
 	//

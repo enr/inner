@@ -142,7 +142,7 @@ local config:  ~/projects/myapp/.config/inner.toml (missing)
 
 entrypoint: /usr/bin/claude
 interactive: true
-network:     true
+network:     full
 ...
 
 resource limits:

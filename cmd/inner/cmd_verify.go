@@ -60,15 +60,7 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 	// invocation needs: the inner binary itself (when installed under ~/.local/bin)
 	// and the profiles directory it re-reads to know which checks apply. Both are
 	// re-exposed read-only, and only for verify — `inner run` never gets them.
-	if rc.HomeIsolated() {
-		if home, err := os.UserHomeDir(); err == nil {
-			for _, p := range []string{innerBin, a.loader.Dir} {
-				if strings.HasPrefix(p, home+string(os.PathSeparator)) {
-					rc.HomeAllow = append(rc.HomeAllow, p)
-				}
-			}
-		}
-	}
+	appendHomeAllowIfHidden(rc, innerBin, a.loader.Dir)
 
 	// Override entrypoint: run `inner verify --inside [--suggest]`.
 	innerArgs := []string{"verify", "--inside"}
@@ -98,6 +90,10 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 	// These values describe the sandbox that was actually built, which is what
 	// the checks should be judged against anyway.
 	rc.Env.Set["INNER_VERIFY_HOME_MODE"] = rc.HomeMode
+	rc.Env.Set["INNER_VERIFY_NETWORK_MODE"] = rc.EffectiveNetworkMode()
+	// The legacy boolean is still written for one release so an inner binary
+	// older than this one, re-invoked as the --inside entrypoint, keeps seeing
+	// the context it expects. INNER_VERIFY_NETWORK_MODE is authoritative.
 	rc.Env.Set["INNER_VERIFY_NETWORK"] = boolEnv(rc.Network)
 	rc.Env.Set["INNER_VERIFY_SHIMS"] = boolEnv(rc.ShimDir != "")
 	rc.Env.Set["INNER_VERIFY_ALLOW"] = strings.Join(rc.Allow, ",")
@@ -146,7 +142,13 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 	// The profile is only re-read to fill in what the environment does not
 	// carry — it may well be invisible from in here (see runVerifyOutside).
 	homeMode, homeModeSet := os.LookupEnv("INNER_VERIFY_HOME_MODE")
-	networkEnabled, networkSet := lookupBoolEnv("INNER_VERIFY_NETWORK")
+	networkMode, networkSet := os.LookupEnv("INNER_VERIFY_NETWORK_MODE")
+	if !networkSet {
+		// Fall back to the legacy boolean channel (an older host-side binary).
+		if enabled, ok := lookupBoolEnv("INNER_VERIFY_NETWORK"); ok {
+			networkMode, networkSet = config.NetworkModeFromBool(enabled), true
+		}
+	}
 	shimsExpected, shimsSet := lookupBoolEnv("INNER_VERIFY_SHIMS")
 	allow, allowSet := lookupListEnv("INNER_VERIFY_ALLOW")
 	custom, customSet := lookupCustomChecksEnv("INNER_VERIFY_CUSTOM")
@@ -160,7 +162,11 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 				custom = p.Verify.Custom.Checks
 			}
 			if !networkSet {
-				networkEnabled = p.Sandbox.Network
+				// Must go through ResolveNetworkMode, not p.Sandbox.Network:
+				// reading the bare bool reports "open network" for every mode
+				// that is not "off", which would make the network-policy check
+				// skip itself on exactly the mediated modes it should probe.
+				networkMode = config.ResolveNetworkMode(p.Sandbox)
 			}
 			if !shimsSet {
 				shimsExpected = len(p.Noop.Block) > 0 || len(p.Noop.Rewrite) > 0
@@ -172,11 +178,11 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 	}
 
 	checker := &sandbox.Checker{
-		Allow:          allow,
-		Custom:         custom,
-		NetworkEnabled: networkEnabled,
-		ShimsExpected:  shimsExpected,
-		HomeIsolated:   homeMode == config.HomeIsolated,
+		Allow:         allow,
+		Custom:        custom,
+		NetworkMode:   networkMode,
+		ShimsExpected: shimsExpected,
+		HomeIsolated:  homeMode == config.HomeIsolated,
 	}
 
 	report := checker.Run()

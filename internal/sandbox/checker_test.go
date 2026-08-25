@@ -361,16 +361,32 @@ func TestCheck_networkPolicy_fail_when_open(t *testing.T) {
 	}
 }
 
-func TestCheck_networkPolicy_skip_when_networkEnabled(t *testing.T) {
+func TestCheck_networkPolicy_skip_when_networkFull(t *testing.T) {
 	ch, _ := newChecker(t)
-	ch.NetworkEnabled = true
+	ch.NetworkMode = config.NetworkFull
 	ch.dialFn = openDialFn // network open but intentional
 	r := ch.checkNetworkPolicy()
 	if !r.Passed {
-		t.Error("expected network-policy to pass when NetworkEnabled=true")
+		t.Error("expected network-policy to pass when NetworkMode=full")
 	}
-	if !strings.Contains(r.Detail, "network=true") {
-		t.Errorf("expected detail to mention network=true, got: %q", r.Detail)
+	if !strings.Contains(r.Detail, "network_mode=full") {
+		t.Errorf("expected detail to mention network_mode=full, got: %q", r.Detail)
+	}
+}
+
+// Only "full" declares an intentionally open network. Every other mode — "off"
+// today, "allowlist" once the proxy ships, and any value this build does not
+// recognise — must still be probed: their kernel guarantee (no direct socket
+// escape) is identical, and skipping the probe on an unrecognised mode would
+// silently certify a sandbox nobody verified.
+func TestCheck_networkPolicy_probes_everyModeButFull(t *testing.T) {
+	for _, mode := range []string{"", config.NetworkOff, config.NetworkAllowlist, "bogus"} {
+		ch, _ := newChecker(t)
+		ch.NetworkMode = mode
+		ch.dialFn = openDialFn // a reachable network must be reported as a failure
+		if r := ch.checkNetworkPolicy(); r.Passed {
+			t.Errorf("mode %q: expected network-policy to probe and fail, got pass (%q)", mode, r.Detail)
+		}
 	}
 }
 

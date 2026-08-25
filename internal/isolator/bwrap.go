@@ -267,7 +267,11 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	}
 
 	// ── Network ──────────────────────────────────────────────────────────────
-	if !cfg.Network {
+	// Only NetworkFull keeps the host network namespace. Every other mode —
+	// "off" today, "allowlist" once the proxy ships, and any value this build
+	// does not recognise — gets a private, empty namespace: fail-closed, so a
+	// mode this binary cannot enforce can never silently mean "open network".
+	if cfg.EffectiveNetworkMode() != config.NetworkFull {
 		args = append(args, "--unshare-net")
 	}
 

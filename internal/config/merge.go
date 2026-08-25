@@ -31,8 +31,24 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	}
 
 	// --- [sandbox] ---
-	if meta.IsDefined("sandbox", "network") {
+	// network / network_mode are two fields describing ONE decision, so a plain
+	// per-field override gets the precedence wrong in the unsafe direction:
+	// with a base declaring network_mode and a child declaring network = false,
+	// the child would keep the base's mode and silently still have network
+	// access. Resolve them together instead, and write the outcome into BOTH
+	// fields so the merged profile is always internally coherent:
+	//
+	//   1. overlay declares network_mode → it wins outright;
+	//   2. else overlay declares network  → the bool wins over the inherited
+	//      mode (which is exactly the case a per-field override would miss);
+	//   3. else                          → inherit the base's pair untouched.
+	switch {
+	case meta.IsDefined("sandbox", "network_mode"):
+		result.Sandbox.NetworkMode = overlay.Sandbox.NetworkMode
+		result.Sandbox.Network = overlay.Sandbox.NetworkMode != NetworkOff
+	case meta.IsDefined("sandbox", "network"):
 		result.Sandbox.Network = overlay.Sandbox.Network
+		result.Sandbox.NetworkMode = NetworkModeFromBool(overlay.Sandbox.Network)
 	}
 	if meta.IsDefined("sandbox", "clipboard") {
 		result.Sandbox.Clipboard = overlay.Sandbox.Clipboard

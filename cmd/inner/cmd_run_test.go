@@ -202,6 +202,36 @@ func TestApplyOverrides_noNetwork(t *testing.T) {
 	}
 }
 
+// The flags must move the MODE, not just the legacy bool: the isolator and
+// `inner verify` switch on the mode, so leaving them disagreeing would build a
+// sandbox that contradicts what --dry-run reports.
+func TestApplyOverrides_networkFlagsMoveTheMode(t *testing.T) {
+	tests := []struct {
+		name  string
+		start config.RunConfig
+		flags runCLIFlags
+		want  string
+	}{
+		{"--network", config.RunConfig{NetworkMode: config.NetworkOff}, runCLIFlags{networkOn: true}, config.NetworkFull},
+		{"--no-network", config.RunConfig{NetworkMode: config.NetworkFull}, runCLIFlags{networkOff: true}, config.NetworkOff},
+		{"neither keeps the profile mode", config.RunConfig{NetworkMode: config.NetworkFull}, runCLIFlags{}, config.NetworkFull},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rc := tt.start
+			if err := applyOverrides(&rc, tt.flags, nil); err != nil {
+				t.Fatal(err)
+			}
+			if rc.NetworkMode != tt.want {
+				t.Errorf("NetworkMode = %q, want %q", rc.NetworkMode, tt.want)
+			}
+			if want := tt.want != config.NetworkOff; rc.Network != want {
+				t.Errorf("legacy Network = %v, want %v (mode %q)", rc.Network, want, rc.NetworkMode)
+			}
+		})
+	}
+}
+
 func TestApplyOverrides_interactive(t *testing.T) {
 	rc := &config.RunConfig{}
 	if err := applyOverrides(rc, runCLIFlags{interactive: true}, nil); err != nil {

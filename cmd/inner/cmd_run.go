@@ -467,12 +467,17 @@ func applyCapabilities(rc *config.RunConfig) (func(), error) {
 // applyOverrides merges CLI flags into rc.
 // Pure function: no I/O, no side effects — primary target for unit tests.
 func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string) error {
-	// Network (--network / --no-network).
+	// Network (--network / --no-network). The flags move NetworkMode, not the
+	// legacy bool: setting rc.Network alone would leave the two fields
+	// disagreeing, and every consumer that switches on the mode (the isolator,
+	// verify) would keep applying the profile's model while the dry-run output
+	// claimed otherwise.
 	if flags.networkOn {
-		rc.Network = true
+		rc.NetworkMode = config.NetworkFull
 	} else if flags.networkOff {
-		rc.Network = false
+		rc.NetworkMode = config.NetworkOff
 	}
+	rc.Network = rc.EffectiveNetworkMode() != config.NetworkOff
 
 	// Interactive (-i / --no-interactive).
 	if flags.interactive {
@@ -772,7 +777,7 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 		homeMode = config.HomeHostRO
 	}
 	fmt.Fprintf(w, "home:        %s\n", homeMode)
-	fmt.Fprintf(w, "network:     %v\n", rc.Network)
+	fmt.Fprintf(w, "network:     %s\n", rc.EffectiveNetworkMode())
 	fmt.Fprintf(w, "pid-ns:      %v\n", rc.PidNamespace)
 	if rc.ContainersConfPath != "" {
 		fmt.Fprintf(w, "containers:  cgroup_manager override at %s\n", rc.ContainersConfPath)

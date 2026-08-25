@@ -132,7 +132,7 @@ func TestGateRemoteProfile_allowRemoteConsentsAndHardens(t *testing.T) {
 		t.Errorf("profile was not hardened: inherit_all=%v allow=%v", rc.Env.InheritAll, rc.Allow)
 	}
 	out := buf.String()
-	for _, want := range []string{src.url, src.digest, "hardened:", "curl evil", "network: enabled"} {
+	for _, want := range []string{src.url, src.digest, "hardened:", "curl evil", "network: full"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary is missing %q:\n%s", want, out)
 		}

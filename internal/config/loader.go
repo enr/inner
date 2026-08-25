@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -500,9 +501,21 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 	}
 	workspacesPath = ExpandPath(workspacesPath)
 
+	// Network model: resolved once here so every consumer reads the same
+	// answer. An unknown value is refused rather than silently falling back to
+	// a default — a typo ("allowist", "none") must not quietly produce a
+	// sandbox with different network reach than the profile claims. The
+	// validator reports the same error with more context, but it runs
+	// best-effort in `inner run`, so the authoritative check lives here.
+	networkMode := ResolveNetworkMode(p.Sandbox)
+	if !slices.Contains(ValidNetworkModes, networkMode) {
+		return nil, fmt.Errorf("invalid [sandbox] network_mode %q (valid values: %v)", networkMode, ValidNetworkModes)
+	}
+
 	cfg := &RunConfig{
-		Name:    p.Name,
-		Network: p.Sandbox.Network,
+		Name:        p.Name,
+		NetworkMode: networkMode,
+		Network:     networkMode != NetworkOff,
 		// PID namespace isolation defaults to ON: a nil (unset) value means
 		// true; only an explicit pid_namespace = false in the profile
 		// disables it. See SandboxConfig.PidNamespace for the rationale.
@@ -653,6 +666,16 @@ func (l *Loader) loadRaw(path string) (*Profile, toml.MetaData, error) {
 	meta, err := toml.DecodeFile(path, p)
 	if err != nil {
 		return nil, meta, err
+	}
+	// [sandbox] network and network_mode describe one decision through two
+	// fields. Make them agree here, at the only place a profile enters the
+	// process, so no struct with a contradictory pair ever exists: a profile
+	// declaring only network_mode = "full" would otherwise carry Network=false,
+	// and the next reader to reach for the bool would get the wrong answer.
+	if p.Sandbox.NetworkMode != "" {
+		p.Sandbox.Network = p.Sandbox.NetworkMode != NetworkOff
+	} else {
+		p.Sandbox.NetworkMode = NetworkModeFromBool(p.Sandbox.Network)
 	}
 	return p, meta, nil
 }

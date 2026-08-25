@@ -162,9 +162,17 @@ func (r Report) Render(w io.Writer, suggest bool) {
 // Fields with zero values fall back to real OS calls and paths.
 // Set them in tests to avoid filesystem and network dependencies.
 type Checker struct {
-	Allow          []string
-	Custom         []config.CustomCheck
-	NetworkEnabled bool // if true, network-policy check is skipped (network intentionally open)
+	Allow  []string
+	Custom []config.CustomCheck
+	// NetworkMode is the network model the sandbox was built with (see
+	// config.ValidNetworkModes). The network-policy check is skipped only for
+	// config.NetworkFull, where an open network is the declared intent; every
+	// other mode — "off", and "allowlist" once the proxy ships — must still
+	// prove that no direct socket escapes the namespace, which is the same
+	// kernel guarantee and the same probe.
+	//
+	// Empty means "unknown": the check runs, which is the safe default.
+	NetworkMode string
 	// HomeIsolated is true when the profile declares [sandbox] home =
 	// "isolated". The home-isolated check then asserts that $HOME really is the
 	// empty tmpfs the profile asked for, instead of the host home showing
@@ -587,9 +595,9 @@ func (c *Checker) checkShimsActive() CheckResult {
 
 func (c *Checker) checkNetworkPolicy() CheckResult {
 	r := CheckResult{ID: "network-policy", Name: "network restricted", Severity: SeverityMedium}
-	if c.NetworkEnabled {
+	if c.NetworkMode == config.NetworkFull {
 		r.Passed = true
-		r.Detail = "network=true in profile"
+		r.Detail = "network_mode=full in profile"
 		return r
 	}
 	conn, err := c.dial("tcp", "8.8.8.8:53", 2*time.Second)
