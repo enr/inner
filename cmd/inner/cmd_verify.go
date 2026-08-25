@@ -10,7 +10,6 @@ import (
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/executor"
 	"github.com/enr/inner/internal/sandbox"
-	"github.com/enr/inner/internal/shim"
 	"github.com/spf13/cobra"
 )
 
@@ -29,24 +28,14 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 		return err
 	}
 
-	// Build shim dir if the profile has noop entries.
-	var cleanups []func() error
-	if len(rc.Noop.Block) > 0 || len(rc.Noop.Rewrite) > 0 {
-		shimDir, err := shim.Builder{}.Build(rc.Noop)
-		if err != nil {
-			return fmt.Errorf("building shim dir: %w", err)
-		}
-		rc.ShimDir = shimDir
-		cleanups = append(cleanups, func() error { return os.RemoveAll(shimDir) })
-	}
-
-	// Generate the containers.conf override for rootless podman inside the
-	// sandbox, so [verify.custom] checks see the same environment as inner run.
-	cleanupContainers, err := applyContainersConf(rc)
+	// Host-side sandbox preparation, shared with `inner run` so the sandbox
+	// these checks are judged against is the one a run actually gets. The steps
+	// verify opts out of, and why, are on sandboxOptions.
+	cleanupPrep, err := prepareSandbox(rc, verifySandboxOptions())
 	if err != nil {
-		return fmt.Errorf("containers config: %w", err)
+		return err
 	}
-	defer cleanupContainers()
+	defer cleanupPrep()
 
 	// Resolve the inner binary path so it can be invoked inside the sandbox.
 	// os.Executable() returns the real path; with --ro-bind / / it is accessible
@@ -118,7 +107,7 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 
 	// Launch non-interactive; output is forwarded directly to the terminal.
 	launcher := a.launcherFn()
-	result, err := launcher.Run(cmd, executor.RunOptions{Cleanups: cleanups})
+	result, err := launcher.Run(cmd, executor.RunOptions{})
 	if err != nil {
 		return err
 	}

@@ -19,10 +19,8 @@ import (
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/containers"
 	"github.com/enr/inner/internal/executor"
-	"github.com/enr/inner/internal/git"
 	"github.com/enr/inner/internal/profile"
 	"github.com/enr/inner/internal/setup"
-	"github.com/enr/inner/internal/shim"
 	"github.com/enr/inner/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -276,48 +274,15 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		}
 	}
 
-	// 8. Build shim dir from [noop] config.
-	var cleanups []func() error
-	if len(rc.Noop.Block) > 0 || len(rc.Noop.Rewrite) > 0 {
-		shimDir, err := shim.Builder{}.Build(rc.Noop)
-		if err != nil {
-			return fmt.Errorf("building shim dir: %w", err)
-		}
-		rc.ShimDir = shimDir
-		cleanups = append(cleanups, func() error { return os.RemoveAll(shimDir) })
-	}
-
-	// 8b. Generate the containers.conf override for rootless podman inside the
-	//     sandbox (no-op unless nested-user-ns is allowed).
-	cleanupContainers, err := applyContainersConf(rc)
-	if err != nil {
-		return fmt.Errorf("containers config: %w", err)
-	}
-	defer cleanupContainers()
-
-	// 9. Sanitize gitconfig if configured.
-	if rc.Git != nil {
-		gitPath, err := git.Sanitize(rc.Git)
-		if err != nil {
-			return fmt.Errorf("sanitizing gitconfig: %w", err)
-		}
-		defer os.Remove(gitPath)
-		rc.GitConfigPath = gitPath
-	}
-
-	// 10–11b. Sandbox capability directories (claude, gemini, cursor).
-	cleanupCaps, err := applyCapabilities(rc)
+	// 8–11c. Host-side sandbox preparation: shim dir, containers.conf override,
+	//        sanitized gitconfig, capability directories, safe-rw mounts.
+	//        Shared with `inner verify` so both commands build the same sandbox;
+	//        see sandboxOptions for the steps they deliberately differ on.
+	cleanupPrep, err := prepareSandbox(rc, runSandboxOptions())
 	if err != nil {
 		return err
 	}
-	defer cleanupCaps()
-
-	// 11c. Apply generic safe-rw mounts (copy src → tmp, set mode to rw).
-	cleanupSafe, err := applyGenericSafeMounts(rc)
-	if err != nil {
-		return err
-	}
-	defer cleanupSafe()
+	defer cleanupPrep()
 
 	// 12. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
@@ -381,7 +346,6 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		PostStart:    postStart,
 		Timeout:      rc.Timeout,
 		LogDir:       rc.LogDir,
-		Cleanups:     cleanups,
 	})
 	if err != nil {
 		return err

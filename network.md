@@ -526,16 +526,28 @@ S2 — network allowlist proxy
    or an allowlist profile would report an open network and SKIP the probe.
    The Checker field is now NetworkMode (NetworkEnabled is gone); an empty
    value means "unknown" and the probe runs, which is the safe default.
- - Verify builds a different sandbox than run, and that asymmetry must be
-   documented rather than discovered: runVerifyOutside calls neither
-   applyCapabilities nor applyNetworkProxy, so under allowlist it runs with
-   --unshare-net but no socket and no relay. The network-policy check
-   therefore passes trivially and proves only the floor (no direct socket
-   escape), never the proxy path. Either wire applyNetworkProxy into verify
-   too, or state the limitation in the check's Detail string and in
-   internals.md. Explicitly out of scope either way: asserting that a
-   specific allowed domain is actually reachable — that's environment
-   dependent and not what a static conformance check should assert.
+ - Verify and run now share prepareSandbox (cmd/inner/sandbox_prepare.go,
+   LANDED), so the sandbox the checks are judged against is the one a run
+   actually gets, and the places the two commands differ are named fields on
+   sandboxOptions with the reason recorded on each. That is where the proxy
+   step goes: it cannot silently skip verify the way capability mounts and
+   safe-rw mounts had.
+
+   The one difference that is a real decision rather than an omission:
+   capability handlers do NOT run under verify. They are not pure mount
+   injection — the claude handler can launch `claude -p /try-login` to trigger
+   the OS keyring's graphical unlock dialog and then wait for Enter, and a
+   read-only conformance check must not have side effects on the user's
+   credential store. The cost is that verify cannot judge the capability
+   mounts; closing that means splitting each handler's mount injection from its
+   pre-flight actions, which is its own change.
+
+   Still to decide for the proxy specifically: whether verify gets the socket
+   and the relay. Without them the network-policy check under allowlist passes
+   trivially and proves only the floor (no direct socket escape), never the
+   proxy path. Explicitly out of scope either way: asserting that a specific
+   allowed domain is actually reachable — that is environment dependent and not
+   what a static conformance check should assert.
  - cmd_run.go printDryRun: extend the network: %v line to show the mode and,
    for allowlist, the effective allow list WITH its provenance
    (api.anthropic.com [capability:claude], github.com [profile]) — without
