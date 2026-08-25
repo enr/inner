@@ -13,6 +13,9 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #10 — `expandAliases` split on raw whitespace** — already
+  fixed in `31697a9`, before this review pass; the review text below just
+  hadn't been updated to say so. See **#10** below.
 - ✅ **[FIXED] Issue #8 — `checkUsrReadonly` failed open** — it now reads the
   `ro` option of the mount actually covering `/usr` from mountinfo, the same
   approach `checkHomeIsolated` already used for `$HOME`, instead of inferring
@@ -559,23 +562,25 @@ pid_namespace = false
 
 ---
 
-## #10 — [Low] `expandAliases` splits on whitespace
+## #10 — [CLOSED] `expandAliases` splits on whitespace
 
-**Where:** `cmd/inner/root.go` — `expandAliases` (~`root.go:115`,
-`strings.Fields(expansion)`).
+**Where:** `cmd/inner/root.go` — `expandAliases` (~`root.go:115`).
 
-**What is wrong:** alias expansions are split on raw whitespace, so an alias whose
-value contains a quoted argument with spaces (e.g. `review = "run -p x --arg
-'two words'"`) is split into the wrong tokens.
+**What was wrong:** alias expansions were split on raw whitespace, so an alias
+whose value contained a quoted argument with spaces (e.g. `review = "run -p x
+--arg 'two words'"`) was split into the wrong tokens.
 
-**Why it matters:** minor usability surprise; aliases silently misbehave for
-quoted args.
+**Status:** already fixed, in commit `31697a9` ("fix: correct log path, verify
+checks, alias quoting, and remove legacy config handling"), which predates this
+review pass — the review text just hadn't been updated to reflect it.
+`expandAliases` calls `splitArgs`, a small shell-like tokenizer (honours single
+and double quotes, `\`-escaping, unterminated quotes run to end of string) in
+place of `strings.Fields`.
 
-**How to fix:** parse the alias value with a shell-style tokenizer that respects
-quotes (e.g. a small `shlex`-like split) instead of `strings.Fields`.
-
-**How to verify:** test that an alias containing a quoted multi-word argument
-expands to the expected argv.
+**Verification:** `TestSplitArgs` (`cmd/inner/root_test.go`) — quoted
+multi-word arguments (both quote styles), escaped spaces, adjacent
+quoted/unquoted concatenation (`'single '"double"`), and empty/whitespace-only
+input.
 
 ---
 
