@@ -159,7 +159,14 @@ func extractExpiresAt(raw map[string]json.RawMessage) int64 {
 		}
 	}
 	// Scan all top-level keys that decode to objects — handles both the legacy
-	// "oauth_token" shape and the current "claudeAiOauth" shape.
+	// "oauth_token" shape and the current "claudeAiOauth" shape. Go's map
+	// iteration order is randomized, and more than one nested object can carry
+	// an expiry field, so collect every candidate instead of returning the
+	// first one found: returning the first would make the result nondeterministic
+	// across runs of the very same file. Pick the earliest expiry — the choice
+	// that never delays the credential-unlock prompt past when a token actually
+	// expires.
+	var earliest int64
 	for _, val := range raw {
 		var obj map[string]json.RawMessage
 		if json.Unmarshal(val, &obj) != nil {
@@ -169,12 +176,15 @@ func extractExpiresAt(raw map[string]json.RawMessage) int64 {
 			if v, ok := obj[field]; ok {
 				var ts int64
 				if json.Unmarshal(v, &ts) == nil && ts > 0 {
-					return normaliseTimestamp(ts)
+					ts = normaliseTimestamp(ts)
+					if earliest == 0 || ts < earliest {
+						earliest = ts
+					}
 				}
 			}
 		}
 	}
-	return 0
+	return earliest
 }
 
 // msThreshold is the boundary above which a timestamp is treated as

@@ -13,6 +13,9 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #6 — `extractExpiresAt` map iteration was nondeterministic**
+  — it now collects every candidate expiry and returns the earliest, instead of
+  the first one a randomized map iteration happens to visit. See **#6** below.
 - ✅ **[FIXED] Issue #5 — workspace prep could leak partial directories** —
   `dirsToCreate` output is now recorded for rollback *before* `MkdirAll` runs,
   not after it succeeds. See **#5** below.
@@ -377,26 +380,32 @@ with `ENAMETOOLONG` on the last one. Confirmed the test fails on the pre-fix cod
 
 ---
 
-## #6 — [Medium] `extractExpiresAt` iterates a map → nondeterministic token decision
+## #6 — [CLOSED] `extractExpiresAt` iterates a map → nondeterministic token decision
 
 **Where:** `cmd/inner/sandbox_claude.go` — `extractExpiresAt`, the nested-object
 fallback loop (~`sandbox_claude.go:155`).
 
-**What is wrong:** when the top-level `expiresAt` / `expires_at` keys are absent,
-the function scans nested objects by ranging over a Go `map`, whose iteration
-order is **randomized**. If more than one nested object carries an expiry field,
-which value is returned varies run to run.
+**What was wrong:** when the top-level `expiresAt` / `expires_at` keys are
+absent, the function scanned nested objects by ranging over a Go `map`, whose
+iteration order is **randomized**, and returned on the first match. If more than
+one nested object carried an expiry field, which value came back varied run to
+run.
 
 **Why it matters:** token expiry drives whether `inner` runs the credential
 unlock flow or skips it. Nondeterminism here means a flaky "sometimes prompts,
 sometimes doesn't" behaviour that is painful to reproduce.
 
-**How to fix:** check the known keys explicitly in a defined priority order, or
-collect candidate timestamps and pick deterministically (e.g. the smallest, i.e.
-earliest expiry — the safe choice). Avoid relying on map order.
+### Fix
 
-**How to verify:** unit test with a credentials blob containing two nested objects
-each with an `expiresAt`; assert the same value is returned across many runs.
+The loop now collects every candidate timestamp across all nested objects
+instead of returning on the first match, and picks the **earliest** — the safe
+choice, since it never delays the unlock prompt past when a token actually
+expires. Map iteration order no longer affects the result.
+
+**Verification:** `TestExtractExpiresAt_multipleNestedObjects_deterministic`
+(`cmd/inner/sandbox_claude_test.go`) — two nested objects with different
+expiries, asserted to return the earlier one across 50 runs (map iteration order
+reshuffles every run, which is what made the old code flaky).
 
 ---
 

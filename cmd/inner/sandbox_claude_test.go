@@ -697,6 +697,24 @@ func TestExtractExpiresAt_claudeAiOauthNested(t *testing.T) {
 	}
 }
 
+// TestExtractExpiresAt_multipleNestedObjects_deterministic reproduces issue
+// #6: with more than one nested object carrying an expiry, the result used to
+// depend on Go's randomized map iteration order. The earliest of the two
+// candidates must be returned every time, regardless of which key the map
+// visits first.
+func TestExtractExpiresAt_multipleNestedObjects_deterministic(t *testing.T) {
+	raw := map[string]json.RawMessage{
+		"claudeAiOauth": json.RawMessage(`{"accessToken":"x","expiresAt":2000000000}`),
+		"oauth_token":   json.RawMessage(`{"accessToken":"y","expires_at":1000000000}`),
+	}
+	const want = int64(1000000000) // the earlier of the two
+	for i := 0; i < 50; i++ {
+		if got := extractExpiresAt(raw); got != want {
+			t.Fatalf("run %d: extractExpiresAt = %d, want %d (earliest candidate)", i, got, want)
+		}
+	}
+}
+
 // ── normaliseTimestamp ────────────────────────────────────────────────────────
 
 func TestNormaliseTimestamp(t *testing.T) {
