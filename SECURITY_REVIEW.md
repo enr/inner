@@ -13,6 +13,11 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[SIGNED OFF] Issue #9 — PID-namespace / TUI manual verification** — the
+  checklist was run by the maintainer on a real terminal with a locally built
+  `inner` binary (2026-08-25); reported outcome: all steps OK. The
+  `pid_namespace = false` escape hatch stays documented as the per-host
+  rollback. See **#9** below.
 - ✅ **[FIXED] Issue #11 — `checkEnvSecrets` was an oversold name-only
   heuristic** — broader pattern list, renamed and reworded to say plainly it is
   a heuristic, and downgraded from High to Medium severity so a false positive
@@ -499,11 +504,29 @@ actual sandbox `inner verify` runs in.
 
 ---
 
-## #9 — [High → needs manual sign-off] Verify the PID-namespace / TUI change on real terminals
+## #9 — [CLOSED] Verify the PID-namespace / TUI change on real terminals
 
-**Status:** code change is **done and unit-/dry-run-tested**; what remains is a
-manual smoke test that **cannot be automated in CI** because it needs a real
-controlling terminal and the real TUI binaries.
+**Status:** **signed off on 2026-08-25.** The maintainer ran the checklist below
+by hand, on a real terminal, against a locally built `inner` binary, and reported
+all steps OK. Nothing further is required for this item.
+
+Scope of the attestation, stated plainly so a future reader knows what this
+sign-off does and does not carry: it is a single-machine, single-session pass
+reported as a whole, not a captured per-step transcript. That is exactly what
+this item asked for — the point was to put the real TUIs in front of a human
+once, because the automated test only replicates the core of libuv's terminal
+probe. It is not evidence that every kernel/bubblewrap/terminal-emulator
+combination behaves identically, which is why the rollback below stays
+documented rather than being removed.
+
+The steps are kept verbatim so they can be re-run: `network.md` calls for
+exactly this checklist to be repeated once the network relay adds a process hop
+between bwrap and the TUI, and that re-run only means something against this
+baseline.
+
+**Original status:** code change was **done and unit-/dry-run-tested**; what
+remained was a manual smoke test that **cannot be automated in CI** because it
+needs a real controlling terminal and the real TUI binaries.
 
 **Context:** `inner` now passes `--unshare-pid` for **all** runs (interactive
 included) to close the `/proc/<pid>/environ` host-process leak. Previously it was

@@ -21,6 +21,8 @@ tipo, priorità, dimensione stimata, fonti e dipendenze. Le issue "abilitanti"
 
 **Ordine di lavoro consigliato:** ISS-01 → ISS-02 → ISS-03 → ISS-08 → ISS-17 →
 ISS-05 → ISS-04 → ISS-06 → bug P2 (ISS-10…14) → ISS-18/19 → resto.
+ISS-04 e ISS-07 sono chiuse; ISS-05 ha le fondamenta gia' in tree
+(`[sandbox] network_mode`, vedi `network.md` → Status).
 Razionale: prima i fix exploitabili e i quick win (P0), poi il sign-off manuale
 già dovuto, poi i due enabler strutturali (run-ID/JSON e proxy di rete) che
 sbloccano credenziali, audit e rollback.
@@ -121,8 +123,13 @@ sandbox" è un salto di categoria.
 sia leggibile dentro la sandbox (grep su env e filesystem); endpoint fuori
 policy → 403.
 
-### ISS-07 · Sign-off manuale PID-namespace/TUI su terminali reali
+### ISS-07 · Sign-off manuale PID-namespace/TUI su terminali reali — **FATTO**
 `task` `qa` · **P1** · Size S (manuale) · Fonte: SECURITY_REVIEW #9
+
+Chiusa il 2026-08-25: checklist eseguita a mano su terminale reale con binario
+`inner` buildato localmente, esito riportato OK su tutti i passi. Vale come
+baseline per il re-run richiesto da `network.md` quando il relay di rete
+aggiungerà un hop di processo tra bwrap e la TUI.
 
 Il codice `--unshare-pid` per i run interattivi è già merged e testato in
 unit/dry-run; manca la verifica umana non automatizzabile: TUI reali (claude,

@@ -593,4 +593,6 @@ S2 — network allowlist proxy
    (SECURITY_REVIEW.md §9) once more, this time with a profile in
    network_mode = "allowlist", specifically for Ctrl-C (single vs double
    press, given the deliberate non-forwarding of tty signals) and resize
-   through the added relay hop.
+   through the added relay hop. The baseline exists: §9 was signed off on
+   2026-08-25 without a relay in the chain, so a difference observed here is
+   attributable to the relay rather than to --unshare-pid.
