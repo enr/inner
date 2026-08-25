@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/executor"
@@ -54,6 +55,20 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 		return fmt.Errorf("cannot determine inner binary path: %w", err)
 	}
 
+	// With home = "isolated" the empty home tmpfs hides two things the inside
+	// invocation needs: the inner binary itself (when installed under ~/.local/bin)
+	// and the profiles directory it re-reads to know which checks apply. Both are
+	// re-exposed read-only, and only for verify — `inner run` never gets them.
+	if rc.HomeIsolated() {
+		if home, err := os.UserHomeDir(); err == nil {
+			for _, p := range []string{innerBin, a.loader.Dir} {
+				if strings.HasPrefix(p, home+string(os.PathSeparator)) {
+					rc.HomeAllow = append(rc.HomeAllow, p)
+				}
+			}
+		}
+	}
+
 	// Override entrypoint: run `inner verify --inside [--suggest]`.
 	innerArgs := []string{"verify", "--inside"}
 	if suggest {
@@ -71,6 +86,12 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 	}
 	rc.Env.Set["INNER_VERIFY_INSIDE"] = "1"
 	rc.Env.Set["INNER_VERIFY_PROFILE"] = profileName
+	// The home mode travels through the environment rather than being re-read
+	// from the profile inside: the check must run even when the profiles
+	// directory is not readable from within the sandbox.
+	if rc.HomeMode != "" {
+		rc.Env.Set["INNER_VERIFY_HOME_MODE"] = rc.HomeMode
+	}
 
 	// Build sandbox command.
 	iso, err := a.isolatorFn()
@@ -109,11 +130,17 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 	if profileName == "" {
 		profileName = "default"
 	}
+	homeMode := os.Getenv("INNER_VERIFY_HOME_MODE")
 	if p, err := a.loader.LoadProfileAuto(profileName); err == nil {
 		allow = p.Sandbox.Allow
 		custom = p.Verify.Custom.Checks
 		networkEnabled = p.Sandbox.Network
 		shimsExpected = len(p.Noop.Block) > 0 || len(p.Noop.Rewrite) > 0
+		// The env var set by the host side wins: it describes the sandbox that
+		// was actually built, while the profile may not even be readable here.
+		if homeMode == "" {
+			homeMode = p.Sandbox.Home
+		}
 	}
 
 	checker := &sandbox.Checker{
@@ -121,6 +148,7 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 		Custom:         custom,
 		NetworkEnabled: networkEnabled,
 		ShimsExpected:  shimsExpected,
+		HomeIsolated:   homeMode == config.HomeIsolated,
 	}
 
 	report := checker.Run()

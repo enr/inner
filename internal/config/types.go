@@ -1,5 +1,7 @@
 package config
 
+import "path/filepath"
+
 // Profile represents a loaded .toml profile file from ~/.config/inner/profiles/<name>.toml.
 type Profile struct {
 	SchemaVersion string `toml:"schema_version"`
@@ -49,10 +51,63 @@ var ValidAllowKeys = []string{
 	"env-secrets", "shims-active", "network-policy",
 }
 
+// SensitiveResource is a host resource hidden from the sandbox by default.
+// Listing Key in [sandbox] allow keeps the resource visible.
+type SensitiveResource struct {
+	Key  string
+	Path string // absolute host path
+	Dir  bool   // true → hidden with a tmpfs overlay; false → bind of /dev/null
+}
+
+// SensitiveResources returns the resources the isolator hides by default, for
+// a given home directory and numeric uid. It is the single source of truth for
+// the hide list: the isolator emits the mounts, the profile validator uses it
+// to warn when [sandbox] home_allow re-exposes one of them.
+func SensitiveResources(home, uid string) []SensitiveResource {
+	join := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
+	return []SensitiveResource{
+		{"ssh-keys", join(".ssh"), true},
+		{"gpg-keys", join(".gnupg"), true},
+		{"git-credentials", join(".git-credentials"), false},
+		{"netrc", join(".netrc"), false},
+		{"docker-socket", "/var/run/docker.sock", false},
+		{"podman-socket", "/run/user/" + uid + "/podman/podman.sock", false},
+		{"bash-history", join(".bash_history"), false},
+		{"zsh-history", join(".zsh_history"), false},
+		// Cloud provider credentials.
+		{"aws-credentials", join(".aws"), true},
+		{"gcloud-credentials", join(".config", "gcloud"), true},
+		{"kube-config", join(".kube"), true},
+		{"azure-credentials", join(".azure"), true},
+		// Package manager / registry tokens.
+		{"docker-config", join(".docker", "config.json"), false},
+		{"npmrc", join(".npmrc"), false},
+		{"pypirc", join(".pypirc"), false},
+		{"cargo-credentials", join(".cargo", "credentials"), false},
+		// Password managers.
+		{"password-store", join(".password-store"), true},
+	}
+}
+
 // ValidCgroupManagers is the exhaustive set of values accepted in
 // [sandbox] cgroup_manager. Empty (unset) means "auto"; see
 // SandboxConfig.CgroupManager.
 var ValidCgroupManagers = []string{"cgroupfs", "systemd"}
+
+// Home mode values accepted in [sandbox] home. See SandboxConfig.Home.
+const (
+	// HomeHostRO keeps the historical behaviour: $HOME is visible read-only
+	// through the root bind, minus the hard-coded sensitive paths (denylist).
+	HomeHostRO = "host-ro"
+	// HomeIsolated replaces $HOME with an empty tmpfs; only the paths named in
+	// [sandbox] home_allow, the profile [mounts] and the workdir are re-exposed
+	// (allowlist).
+	HomeIsolated = "isolated"
+)
+
+// ValidHomeModes is the exhaustive set of values accepted in [sandbox] home.
+// Empty (unset) means HomeHostRO.
+var ValidHomeModes = []string{HomeHostRO, HomeIsolated}
 
 // ValidCapabilities is the exhaustive set of named capabilities accepted in
 // the profile capabilities field.
@@ -111,6 +166,32 @@ type SandboxConfig struct {
 	// Allow lists sensitive resources that are normally hidden but explicitly
 	// permitted in this sandbox. Valid keys are listed in ValidAllowKeys.
 	Allow []string `toml:"allow"`
+	// Home selects the filesystem model applied to the user's home directory.
+	// Valid values are listed in ValidHomeModes; empty means HomeHostRO.
+	//
+	//   "host-ro"  (default) the host root is bind-mounted read-only, so the
+	//              whole $HOME is readable inside the sandbox except the
+	//              hard-coded sensitive paths hidden by the isolator. This is
+	//              a DENYLIST: anything not on that list (browser profiles,
+	//              ~/.config/gh, .env files, documents) stays readable.
+	//
+	//   "isolated" $HOME is replaced by an empty writable tmpfs. Nothing from
+	//              the host home is visible unless it is re-exposed on purpose
+	//              by [sandbox] home_allow, a profile [mount], a capability, or
+	//              the workdir. This is an ALLOWLIST and is the recommended
+	//              mode for agent profiles.
+	//
+	// Only $HOME inverts: system paths (/usr, /etc, /lib*, …) stay read-only
+	// bind-mounted in both modes so toolchains keep working.
+	Home string `toml:"home"`
+	// HomeAllow lists host paths under $HOME that are re-exposed read-only
+	// inside the isolated home. Entries support ~ and ${VAR} expansion.
+	// Paths that do not exist on the host are skipped silently, so one shared
+	// profile can list the toolchain locations of several machines.
+	//
+	// Ignored (with a validation warning) when home is not "isolated". For a
+	// writable re-exposure use a [mounts] entry with mode "rw" / "safe-rw".
+	HomeAllow []string `toml:"home_allow"`
 	// CgroupManager selects the cgroup manager used by rootless container
 	// runtimes (podman) started INSIDE the sandbox. Only meaningful when
 	// "nested-user-ns" is in Allow. Valid values are listed in

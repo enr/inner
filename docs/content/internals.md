@@ -59,7 +59,20 @@ Profile mounts from `[mounts]` are emitted in two passes: `tmpfs` mounts first, 
 
 ### Home directory
 
-The home directory is not mounted explicitly. It enters the sandbox as part of the base `--ro-bind / /`, which makes the entire host filesystem — including `$HOME` — visible read-only.
+Two models are available, selected by `[sandbox] home` (see [profiles](../profiles/#home-filesystem-model)).
+
+**`host-ro` (default).** The home directory is not mounted explicitly. It enters the sandbox as part of the base `--ro-bind / /`, which makes the entire host filesystem — including `$HOME` — visible read-only. Confidentiality then rests on the sensitive-resource denylist below.
+
+**`isolated`.** `Build` emits `--tmpfs $HOME` immediately after the base filesystem section — before every other mount — and then re-binds the `[sandbox] home_allow` entries read-only:
+
+```
+--tmpfs /home/me                              empty writable home
+--ro-bind /home/me/.local/bin /home/me/.local/bin   allowlist entry
+```
+
+The position in the argv is the whole mechanism: bwrap processes args left-to-right, so profile mounts, capability directories and the workdir bind — all emitted later — land *inside* the tmpfs instead of being erased by it, and bwrap creates their mount points in the tmpfs (they need not exist on the host). Allowlist entries missing on the host are skipped rather than passed to bwrap, which would abort the run.
+
+An unresolvable or unsafe home (`/`, a relative path) is a hard error: silently continuing would produce a sandbox weaker than the profile claims.
 
 To make the home directory (or a subdirectory of it) writable, a profile `[mounts]` entry with `mode = "rw"` is required:
 
@@ -198,9 +211,10 @@ Each entry is skipped when:
 
 - its key is listed in `cfg.Allow` (user explicitly opted in), or
 - the path does not exist on the host (nothing to hide), or
-- a profile-level `tmpfs` mount already covers the path (a bind inside an empty tmpfs would fail and is redundant).
+- a profile-level `tmpfs` mount already covers the path (a bind inside an empty tmpfs would fail and is redundant), or
+- `home = "isolated"` already replaced the subtree with an empty tmpfs **and** nothing re-exposes the path (`isReexposedInHome`): materialising an empty `~/.ssh` inside an isolated home would be misleading noise. A resource carried back in by a mount or a `home_allow` entry — a profile mounting `~/.cargo` also brings `~/.cargo/credentials` — is still hidden, so `[sandbox] allow` remains the single switch governing sensitive resources in both home modes. Paths outside `$HOME` (the docker socket) are unaffected.
 
-The allow key check (`isAllowed`) is a simple `slices.Contains` — no special-casing. Adding a new sensitive resource requires one entry in the `sensitive` slice; adding a new allow key requires one entry in `config.ValidAllowKeys`.
+The allow key check (`isAllowed`) is a simple `slices.Contains` — no special-casing. The table itself lives in `config.SensitiveResources` (`internal/config/types.go`) so that the profile validator can reason about the same list: adding a new sensitive resource requires one entry there, and adding a new allow key one entry in `config.ValidAllowKeys`.
 
 ### Shim directory
 
@@ -236,7 +250,7 @@ Plain interactive shells (bash, zsh) must NOT receive pre-raw mode: they configu
 
 To expose a new sensitive resource:
 
-1. Add an entry to the `sensitive` slice in `BwrapIsolator.Build` (`internal/isolator/bwrap.go`).
+1. Add an entry to `config.SensitiveResources` (`internal/config/types.go`); `BwrapIsolator.Build` and the profile validator both read it.
 2. Add the key to `config.ValidAllowKeys` (`internal/config/types.go`).
 3. Document it in `docs/content/profiles.md` under `[sandbox].allow`.
 

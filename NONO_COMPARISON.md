@@ -57,7 +57,7 @@ worth it for the network proxy and sessions, avoidable for others.
 
 ## 2. Security improvements
 
-### S1. Allowlist filesystem mode (HIGH — confirms SECURITY_REVIEW #1)
+### S1. Allowlist filesystem mode — **IMPLEMENTED** (confirms SECURITY_REVIEW #1)
 
 nono's core promise is "read/write access to the current directory and
 nothing else". inner's `--ro-bind / /` + denylist means everything not on
@@ -76,6 +76,16 @@ keeping the current behaviour as `home = "host-ro"` (default for one
 release, then flip the default for agent profiles). System paths
 (`/usr`, `/etc`, `/lib*`) stay ro-bound so toolchains keep working; only
 `$HOME` inverts. This is the single highest-leverage security change.
+
+**Shipped as proposed**, with the flip done immediately for the built-in agent
+profiles rather than after a release: `home = "host-ro"` stays the default for
+every profile that does not ask (including the two `shell` profiles and every
+profile already installed on a user's machine), while `claude-*`, `gemini-*` and
+`cursor-*` ship isolated. `[sandbox] home_allow` carries the allowlist of paths
+put back read-only — needed in practice because agent CLIs live under `~`
+(`~/.local/bin`, `~/.nvm`, …). `inner verify` asserts the result from inside the
+sandbox (`home-isolated`, HIGH). See `docs/content/profiles.md`
+("home — filesystem model" and the migration section).
 
 ### S2. Network allowlist via a supervised proxy (HIGH)
 
@@ -312,7 +322,7 @@ resident daemon.
 | Priority | Item | Rationale |
 |---|---|---|
 | 1 | S2 network allowlist proxy | biggest real-world risk reduction; unlocks S3 |
-| 2 | S1 isolated-home allowlist mode | closes the known #1 review finding |
+| 2 | ~~S1 isolated-home allowlist mode~~ | **done** — closes the fix-2 half of review #1 |
 | 3 | S3 credential injection | removes the worst `allow` escape hatches |
 | 4 | F1 workspace snapshots/rollback | highest user-visible safety win |
 | 5 | S5 remote profile pinning/consent | cheap, closes review #2 |

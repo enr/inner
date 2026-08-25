@@ -23,7 +23,7 @@ Status of items already handled:
 
 ---
 
-## #1 — [High] The read side of the sandbox is a denylist, not an allowlist
+## #1 — [IMPLEMENTED / partially open] The read side of the sandbox is a denylist, not an allowlist
 
 **Where:** `internal/isolator/bwrap.go` — `--ro-bind / /` (base mount) plus the
 hard-coded `sensitive` list (~`bwrap.go:248`).
@@ -56,6 +56,43 @@ rest. The list will also silently rot as new tools invent new token paths.
 `cat` a planted secret outside the deny-list (e.g. `~/.config/gh/hosts.yml`) and
 asserts the chosen policy (readable under denylist mode, hidden under allowlist
 mode).
+
+### Status — fix 2 implemented (`[sandbox] home = "isolated"`)
+
+The inverted model shipped as a profile mode:
+
+- `[sandbox] home` selects `"host-ro"` (previous behaviour, still the default
+  for any profile that does not ask) or `"isolated"` (`--tmpfs $HOME`, emitted
+  before every other mount so profile mounts, capability dirs and the workdir
+  land inside it).
+- `[sandbox] home_allow` is the allowlist: read-only re-binds of the paths the
+  run needs (agent CLI, runtimes). Paths missing on the host are skipped, so one
+  profile works across machines.
+- The built-in **agent** profiles (`claude-*`, `gemini-*`, `cursor-*`) ship with
+  `home = "isolated"`; the two `shell` profiles stay on `host-ro` on purpose and
+  document the opt-in. Existing user profiles are untouched (`inner init` never
+  overwrites), so this is not a silent behaviour change for current installs.
+- `inner verify` gained the `home-isolated` check (HIGH): it reads
+  `/proc/self/mountinfo` from inside the sandbox and fails unless `$HOME` really
+  is a tmpfs.
+- Guardrails: `inner run` refuses a workdir that covers `$HOME` under
+  `home = "isolated"` (the read-write bind would restore the host home on top of
+  the tmpfs), warns when the entrypoint binary itself lives in the hidden home,
+  and the profile validator rejects an unknown mode, an allowlist entry equal to
+  `$HOME`, and warns when an entry re-exposes a path from the hide list.
+
+Still open:
+
+- **Fix 1 (extend the deny list)** was *not* done: under `home = "host-ro"`
+  `~/.config/gh`, `~/.terraform.d`, `~/.m2`, `~/.config/helm`,
+  `~/.local/share/keyrings` and browser profile directories are still readable.
+  Isolated mode makes this marginal for agent profiles, but the default mode
+  keeps the original weakness.
+- **The e2e verification above is not automated.** Unit coverage asserts the
+  emitted bwrap argv and the checker logic; nobody has yet run a planted-secret
+  test against a real bubblewrap (none is available in the CI container used for
+  this change). Sign this off on a real machine before relying on the mode —
+  same treatment as issue #9.
 
 ---
 
@@ -94,6 +131,21 @@ but a remote profile can disable the net.
 **How to verify:** add a test that a remote profile with
 `inherit_all = true` / `network = true` is rejected (or requires explicit
 consent) by `runSandbox`, and that a checksum mismatch aborts.
+
+### Partial mitigation shipped (not a fix)
+
+Profile validation now *reports* the dangerous settings a remote profile could
+request, and refuses the outright destructive ones: a `rw` mount of `/` (or of
+a path covering `$HOME` under `home = "isolated"`) is an error that blocks the
+run, while `inherit_all = true`, `network = true` combined with credential
+`allow` keys, `pid_namespace = false` and `rw` mounts of system directories
+produce warnings naming the consequence and the fix. Same checks in
+`inner profile validate` and `inner doctor`, so a downloaded profile can be
+inspected before it is run.
+
+This raises the cost of the footgun but does **not** close the issue: warnings
+do not block, `inner run <url>` still executes the downloaded profile without
+consent, and there is still no checksum pin.
 
 ---
 

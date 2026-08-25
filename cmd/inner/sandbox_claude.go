@@ -72,6 +72,13 @@ func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
 		return fmt.Errorf("writing shell-init.sh: %w", err)
 	}
 
+	// innerDir lives under $HOME (~/.config/inner). With home = "isolated" the
+	// home tmpfs would erase the file we just wrote before bash could source it,
+	// so re-expose exactly that one file — not the directory around it.
+	if rc.HomeIsolated() {
+		rc.HomeAllow = append(rc.HomeAllow, initPath)
+	}
+
 	rc.Entrypoint.Args = append([]string{"--init-file", initPath}, rc.Entrypoint.Args...)
 	return nil
 }

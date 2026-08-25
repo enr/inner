@@ -68,7 +68,7 @@ coperto, per evitare che la lista marcisca in silenzio.
 
 ## P1 — Alto impatto
 
-### ISS-04 · Modalità home isolata (filesystem allowlist)
+### ISS-04 · Modalità home isolata (filesystem allowlist) — **FATTO**
 `security` `feature` · **P1** · Size L · Fonti: SECURITY_REVIEW #1 (fix proprio), NONO_COMPARISON S1 · **Enabler** (rende marginale ISS-03)
 
 Oggi tutto ciò che non è nella denylist è leggibile (cookie browser, `.env`,
@@ -80,6 +80,16 @@ release, poi flip per i profili agente).
 
 *Acceptance:* e2e — con `home = "isolated"` un `cat ~/.config/gh/hosts.yml`
 piantato fallisce; toolchain di sistema (`/usr`, `/etc`) ancora funzionanti.
+
+*Stato:* implementato. `[sandbox] home = "host-ro" | "isolated"` +
+`[sandbox] home_allow` (allowlist ro dei path necessari); profili agente
+built-in (`claude-*`, `gemini-*`, `cursor-*`) passati a `isolated`, profili
+`shell` lasciati su `host-ro` con opt-in documentato; profili utente esistenti
+non toccati (`inner init` non sovrascrive). `inner verify` ha il check
+`home-isolated` (HIGH) che legge `/proc/self/mountinfo` dall'interno del
+sandbox. **Acceptance e2e ancora da firmare su macchina reale**: bubblewrap non
+è disponibile nell'ambiente in cui la modifica è stata sviluppata, quindi la
+copertura è a livello di argv bwrap e di unit test (come ISS-07).
 
 ### ISS-05 · Proxy di rete supervisionato con allowlist di domini
 `security` `feature` · **P1** · Size L · Fonte: NONO_COMPARISON S2 · **Enabler** per ISS-06, ISS-18 (eventi rete), ISS-21 (`--allow-domain`)

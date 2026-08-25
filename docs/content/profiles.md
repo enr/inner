@@ -39,6 +39,15 @@ These profiles are embedded in the binary and installed automatically on first r
 | `gemini-one-shot` | Gemini CLI non-interactive, `--yolo` |
 | `cursor-interactive` | Cursor Agent interactive session, network enabled |
 
+The agent profiles (`claude-*`, `gemini-*`, `cursor-*`) run with
+[`home = "isolated"`](#home-filesystem-model): the agent starts on an empty home
+directory and sees only what the profile allowlists. The two `shell` profiles
+keep the default `host-ro` model — they are meant for your own hands, where an
+empty home would hide the dotfiles and tools that make the shell useful.
+
+Existing installations are not modified: `inner init` never overwrites a profile
+you already have. See [migrating an existing profile](#migrating-to-isolated-home).
+
 Inspect any built-in profile:
 
 ```bash
@@ -58,6 +67,14 @@ Additional profiles are available in the [`contrib/profiles/`](https://github.co
 | `gradle-java` | Interactive shell with Java + Gradle + Podman | `shell-containers` |
 | `java-21` | Interactive shell pinned to a specific JDK via `path_prepend` (no container runtime) | `shell` |
 | `opencode` | Interactive OpenCode agent, network enabled | OpenCode |
+
+Contrib profiles that `extends` an agent profile (`claude-containers`,
+`rust-claude`, `shell-with-claude`) inherit its
+[`home = "isolated"`](#home-filesystem-model) and its allowlist, and add the
+mounts their own toolchain needs (`~/.cargo`, `~/.local/share/containers`, …).
+The `opencode` contrib profile declares the same model directly. The shell and
+toolchain profiles (`shell-containers`, `java-*`, `rust`) stay on `host-ro`, like
+the built-in `shell` they extend.
 
 Install a contrib profile (name is derived from the URL automatically):
 
@@ -204,6 +221,8 @@ Controls top-level sandbox behavior.
 | `network` | bool | `false` | Allow network access |
 | `clipboard` | bool | `false` | Forward clipboard (requires display server) |
 | `pid_namespace` | bool | `true` | Give the sandbox a private PID namespace (`--unshare-pid`). See below. |
+| `home` | string | `"host-ro"` | Filesystem model applied to `$HOME`: `"host-ro"` (readable, minus the hidden credential list) or `"isolated"` (empty tmpfs, allowlist). See [`home`](#home-filesystem-model). |
+| `home_allow` | list | `[]` | Paths put back read-only inside an isolated home. Only used with `home = "isolated"`. |
 | `allow` | list | `[]` | Explicitly permit sensitive resources (see below) |
 | `cgroup_manager` | string | auto (`cgroupfs`) | Cgroup manager used by rootless Podman **inside** the sandbox. Only meaningful with `nested-user-ns`. See [`cgroup_manager`](#cgroup_manager-rootless-podman-inside-the-sandbox). |
 | `limits` | table | auto-detected | CPU / memory / process-count caps for the run (see [`[sandbox.limits]`](#sandbox-limits-resource-limits)) |
@@ -226,6 +245,155 @@ pid_namespace = false   # NOT recommended — host processes become visible
 PID isolation does **not** break TUI apps: `inner` never passes
 `--new-session` (the flag that would detach the controlling terminal), so
 `--unshare-pid` is safe for claude, gemini, and interactive shells.
+
+### `home` — filesystem model for the home directory {#home-filesystem-model}
+
+`inner` bind-mounts the host root read-only, so **writes** are contained by
+default. `home` decides what the sandbox can *read* inside `$HOME`.
+
+| Mode | Model | What the sandbox sees under `$HOME` |
+|------|-------|--------------------------------------|
+| `"host-ro"` (default) | **denylist** | Everything, read-only, except the hard-coded credential list (`~/.ssh`, `~/.aws`, `~/.netrc`, …) hidden by the isolator and the keys you leave out of `allow`. |
+| `"isolated"` | **allowlist** | Nothing. `$HOME` is replaced by an empty *writable* tmpfs; only `home_allow` entries, `[mounts]` destinations, capability directories and the workdir are visible. |
+
+Only `$HOME` inverts. System paths (`/usr`, `/etc`, `/lib*`, `/opt`, …) stay
+read-only bind-mounted in both modes, so toolchains keep working.
+
+`host-ro` protects a fixed set of secrets. It does **not** protect the
+confidentiality of the rest of your home: browser cookie databases, `~/.config/gh`,
+`.env` files anywhere in the tree, your documents and your source code are all
+readable, and the hidden list silently rots as tools invent new token paths.
+That is why every built-in agent profile now ships with `home = "isolated"`.
+
+```toml
+[sandbox]
+home = "isolated"
+# Put back, read-only, what the agent actually needs. Entries that do not exist
+# on this machine are skipped, so one list works across machines.
+home_allow = [
+  "~/.local/bin",   # agent CLI installed by a native installer
+  "~/.nvm",         # node runtime
+  "~/.asdf",
+]
+```
+
+Notes:
+
+- The isolated home is **writable**: the agent can create `~/.cache`, `~/.config`
+  and anything else it needs. Those writes live in the tmpfs and disappear with
+  the run.
+- `home_allow` is read-only by design. For a writable re-exposure use a
+  `[mounts]` entry with `mode = "rw"` (or [`safe-rw`](#safe-rw) for a copy).
+- Mount destinations under an isolated home do not need to exist on the host:
+  bubblewrap creates them inside the tmpfs.
+- `home_allow` does **not** override [`allow`](#allow--sensitive-resource-opt-in):
+  a sensitive path carried back into the sandbox — by an allowlist entry, or by a
+  mount of a parent directory (`~/.cargo` brings `~/.cargo/credentials`) — is
+  still hidden unless the matching `allow` key is set. `inner run` warns when a
+  profile expects otherwise.
+- `-w`/`--workdir` still works normally; a workdir under `$HOME` is mounted
+  read-write inside the isolated home. `inner run` **refuses** to start when the
+  workdir *is* your home (or an ancestor): the read-write bind would put the
+  whole host home back on top of the tmpfs.
+- `inner verify` checks the result: the `home-isolated` check fails (HIGH) if
+  `$HOME` is not the tmpfs the profile asked for.
+
+Where does the agent CLI live? If the binary resolves to a path inside the
+home directory and nothing re-exposes it, `inner run` warns before starting and
+prints the `home_allow` entry to add — the failure inside the sandbox would
+otherwise be an opaque `command not found`. Check with:
+
+```console
+$ command -v claude
+/home/me/.local/bin/claude
+$ readlink -f "$(command -v claude)"      # native installers use a symlink
+/home/me/.local/share/claude/versions/1.2.3/claude
+```
+
+Both paths must be covered. `inner run --dry-run` prints the effective mode and
+the allowlist, flagging entries that are missing on this host.
+
+### Migrating an existing profile to `home = "isolated"` {#migrating-to-isolated-home}
+
+Nothing changes for profiles you already have. `inner init` never overwrites an
+existing file, so profiles installed before this release keep `home = "host-ro"`
+(the default) and behave exactly as before. Only fresh installations get the new
+built-in profiles.
+
+**To adopt the new built-in agent profiles as-is**, overwrite the built-ins with
+the versions embedded in the binary. This touches only files whose name matches a
+built-in profile; your own profiles are left alone — but any local edit you made
+to a built-in profile is lost, so diff first:
+
+```console
+$ cp -r ~/.config/inner/profiles ~/.config/inner/profiles.bak   # keep your edits
+$ inner reset                                                   # re-install the built-ins
+$ diff -ru ~/.config/inner/profiles.bak ~/.config/inner/profiles
+```
+
+**To convert a profile you maintain yourself**, do it in four steps:
+
+1. **Find out what the run reads from your home.** Start from the entrypoint
+   binary — it is the one thing that always has to be reachable:
+
+   ```console
+   $ readlink -f "$(command -v claude)"
+   /home/me/.local/share/claude/versions/1.2.3/claude
+   ```
+
+   Anything installed under `~` that the run needs (runtimes, SDK caches, a
+   toolchain pinned with `path_prepend`) is a candidate for `home_allow`.
+
+2. **Add the mode and the allowlist:**
+
+   ```toml
+   [sandbox]
+   home = "isolated"
+   home_allow = [
+     "~/.local/bin",
+     "~/.local/share/claude",
+     "~/.nvm",
+   ]
+   ```
+
+3. **Replace what the tmpfs hides but the run still expects.** Two common ones:
+
+   - `~/.gitconfig` — add a `[git]` section so `inner` injects a sanitized copy
+     (identity kept, credential helpers stripped):
+
+     ```toml
+     [git]
+     strip_sections = ["credential"]
+     ```
+
+   - project or data directories — mount them explicitly, read-write if the run
+     writes to them:
+
+     ```toml
+     [mounts]
+     "~/work/repo" = { dest = "~/work/repo", mode = "rw" }
+     ```
+
+4. **Verify before trusting it:**
+
+   ```console
+   $ inner run -p my-profile --dry-run     # effective mode, allowlist, bwrap argv
+   $ inner verify -p my-profile            # home-isolated check must pass
+   $ inner run -p my-profile -w ~/work/repo -- <a real task>
+   ```
+
+Common breakages and their fix:
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `command not found` for the agent | CLI installed under `~` | add its directory **and** its symlink target to `home_allow` (`inner run` warns about this before starting) |
+| `Author identity unknown` on commit | `~/.gitconfig` hidden | add a `[git]` section (step 3) |
+| Tool re-authenticates every run | credentials were being read from the host home | use the matching capability, or mount the credential file explicitly |
+| `git push` asks for a password, `gpg` cannot sign | an existing `allow` key (`ssh-keys`, `gpg-keys`, …) is neutralised: the tmpfs removed the directory the key was un-hiding | add that path to `home_allow` — `inner run` warns about this by name |
+| `inner run` aborts on the workdir | workdir is `$HOME` itself | pass `-w` with a directory below the home |
+
+To roll back, set `home = "host-ro"` (or delete the two keys): the profile
+returns to the previous behaviour with no other change.
 
 ### `allow` — sensitive resource opt-in
 
@@ -262,6 +430,40 @@ The two socket entries are distinct because they point to different paths: `dock
 network = true
 allow = ["ssh-keys", "git-credentials"]
 ```
+
+### What `inner` refuses, and what it only warns about {#safety-checks}
+
+Every `inner run` validates the effective configuration before building the
+sandbox, and `inner profile validate` / `inner doctor` run the same checks
+without starting anything. Two levels:
+
+**Refused — the run does not start.** These configurations remove the guarantee
+the sandbox exists to provide, and no message would be strong enough:
+
+| Configuration | Why |
+|---|---|
+| A `rw` mount (or `-m SRC:/:rw`) with dest `/` | The whole host filesystem becomes writable from inside the sandbox |
+| `-w /` | The workdir is bind-mounted read-write |
+| A workdir, mount or `home_allow` entry covering `$HOME` while `home = "isolated"` | It is applied *after* the home tmpfs, restoring the host home and cancelling the isolation |
+| An unknown `home` mode, an invalid `cgroup_manager`, a mount source that does not exist | A typo would otherwise produce a sandbox weaker than the profile claims |
+
+**Warned — the run continues.** Legitimate in the right context, but never
+silent, and each message names the fix:
+
+| Configuration | What the message says |
+|---|---|
+| `rw` mount on a system directory (`/usr`, `/etc`, `/var`, …) | Host binaries and configuration become writable, and the changes outlive the run |
+| `rw` mount or workdir covering `$HOME` (under `host-ro`) | Every dotfile becomes writable — a persistence vector. When the workdir came from the current directory rather than an explicit `-w`, `inner` also asks for confirmation |
+| `allow` key neutralised by `home = "isolated"` | The resource was removed with the rest of the home, so the key grants nothing — add the path to `home_allow` or drop the key |
+| Entrypoint binary inside the isolated home, not re-exposed | The sandbox would fail with `command not found`; the message prints the `home_allow` entry to add |
+| `home_allow` without `home = "isolated"` | The list is inert and the whole home is readable |
+| `home_allow` entry covering a hidden credential path | It stays hidden: `allow` is the only switch that declassifies a sensitive resource |
+| `inherit_all = true` | The entire host environment — every exported secret — is handed to the sandbox; with `network = true` it can also leave the machine |
+| `network = true` together with credential `allow` keys | The classic exfiltration setup: the sandbox can read those secrets and send them anywhere |
+| `pid_namespace = false` | Host processes become visible and `/proc/<pid>/environ` readable, defeating the cleared environment |
+
+`--dry-run` prints the same warnings plus the effective mounts, home mode,
+allowlist and the exact bubblewrap command, without executing anything.
 
 ### `cgroup_manager` — rootless Podman inside the sandbox {#cgroup_manager-rootless-podman-inside-the-sandbox}
 

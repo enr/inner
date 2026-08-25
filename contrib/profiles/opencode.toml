@@ -12,6 +12,24 @@ capabilities = ["opencode"]
 network   = true
 clipboard = false
 
+# ── Home isolation (allowlist model) ──────────────────────────────────────────
+# $HOME is replaced by an empty writable tmpfs: nothing from the real home is
+# visible unless it is named below, injected by the capability, or mounted as
+# the workdir. Same model as the built-in agent profiles.
+home = "isolated"
+# Paths put back read-only: the opencode CLI and its runtime live in the home
+# directory on most installs. Missing entries are skipped.
+home_allow = [
+  "~/.opencode/bin",           # opencode install script
+  "~/.local/bin",              # native installers put the CLI here
+  "~/.nvm",                    # node via nvm
+  "~/.npm-global",             # npm --global prefix inside the home
+  "~/.volta",
+  "~/.bun",
+  "~/.asdf",
+  "~/.fnm",
+]
+
 [mounts]
 # Hide host runtime sockets (dbus, systemd, pipewire, …) from the sandbox.
 # OpenCode's Node.js runtime would otherwise find and connect to them,

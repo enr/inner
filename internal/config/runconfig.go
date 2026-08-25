@@ -34,6 +34,13 @@ type RunConfig struct {
 	// Allow lists sensitive resources explicitly permitted in this sandbox.
 	// See SandboxConfig.Allow for valid keys.
 	Allow []string
+	// HomeMode is the filesystem model applied to $HOME, as declared in
+	// [sandbox] home. Empty means HomeHostRO. See SandboxConfig.Home.
+	HomeMode string
+	// HomeAllow are the expanded host paths re-exposed read-only inside the
+	// isolated home. Only consulted when HomeMode is HomeIsolated; entries
+	// that do not exist on the host are skipped by the isolator.
+	HomeAllow []string
 	// Capabilities lists the named tool integrations active for this run.
 	// Populated from Profile.Capabilities; inherited via extends.
 	Capabilities []string
@@ -71,6 +78,39 @@ type RunConfig struct {
 	// inner shows before starting the sandbox (e.g. the OS keyring unlock
 	// message for the claude capability). Set by --yes on the CLI.
 	AutoConfirm bool
+}
+
+// HomeIsolated reports whether this run replaces $HOME with an empty tmpfs
+// (allowlist model) instead of exposing the host home read-only (denylist).
+func (c RunConfig) HomeIsolated() bool {
+	return c.HomeMode == HomeIsolated
+}
+
+// ReexposedInHome reports whether path is put back inside an isolated home by
+// something this run declares: a HomeAllow entry, or a mount destination that
+// is path itself or one of its ancestors. tmpfs mounts do not count — they
+// empty a subtree, they never bring host content back.
+//
+// Two callers rely on it: the isolator, to decide whether a sensitive resource
+// still needs its hide mount (a profile mounting ~/.cargo also carries
+// ~/.cargo/credentials), and `inner run`, to warn when the entrypoint binary
+// itself is left outside the allowlist.
+func (c RunConfig) ReexposedInHome(path string) bool {
+	return PathCoveredBy(c.homeReexposingPrefixes(), path)
+}
+
+// homeReexposingPrefixes returns every subtree this run puts back inside an
+// isolated home: the allowlist entries and the non-tmpfs mount destinations.
+func (c RunConfig) homeReexposingPrefixes() []string {
+	prefixes := make([]string, 0, len(c.HomeAllow)+len(c.Mounts))
+	prefixes = append(prefixes, c.HomeAllow...)
+	for _, m := range c.Mounts {
+		if m.Mode == "tmpfs" {
+			continue // a tmpfs empties a subtree, it never brings host content back
+		}
+		prefixes = append(prefixes, m.Dest)
+	}
+	return prefixes
 }
 
 // Mount describes a single filesystem bind mount.

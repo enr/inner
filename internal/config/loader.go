@@ -514,11 +514,25 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 		Timeout:            p.Output.TimeoutSeconds,
 		Noop:               p.Noop,
 		Allow:              p.Sandbox.Allow,
+		HomeMode:           p.Sandbox.Home,
 		CgroupManager:      p.Sandbox.CgroupManager,
 		Capabilities:       p.Capabilities,
 		VerifyCustomChecks: p.Verify.Custom.Checks,
 		Experimental:       p.Experimental,
 		WorkspacesPath:     workspacesPath,
+	}
+
+	// home_allow: expand ~ / ${VAR} so the isolator receives absolute host
+	// paths. Existence is checked by the isolator (missing entries are skipped)
+	// so a profile can list toolchain paths that only exist on some machines.
+	if len(p.Sandbox.HomeAllow) > 0 {
+		cfg.HomeAllow = make([]string, 0, len(p.Sandbox.HomeAllow))
+		for _, entry := range p.Sandbox.HomeAllow {
+			if entry == "" {
+				continue
+			}
+			cfg.HomeAllow = append(cfg.HomeAllow, ExpandPath(entry))
+		}
 	}
 
 	// Mounts: expand paths, default mode to "ro".

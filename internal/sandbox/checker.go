@@ -163,6 +163,11 @@ type Checker struct {
 	Allow          []string
 	Custom         []config.CustomCheck
 	NetworkEnabled bool // if true, network-policy check is skipped (network intentionally open)
+	// HomeIsolated is true when the profile declares [sandbox] home =
+	// "isolated". The home-isolated check then asserts that $HOME really is the
+	// empty tmpfs the profile asked for, instead of the host home showing
+	// through the read-only root bind.
+	HomeIsolated bool
 	// ShimsExpected is true when the profile declares [noop] block/rewrite
 	// entries, meaning a shim directory should be mounted and active in PATH.
 	// When false the shims-active check passes unconditionally: a profile with
@@ -173,7 +178,15 @@ type Checker struct {
 	HomeDir       string                                                                 // defaults to os.UserHomeDir()
 	UsrDir        string                                                                 // defaults to "/usr"
 	ShimMountPath string                                                                 // defaults to "/tmp/inner-shims"
+	MountInfoPath string                                                                 // defaults to "/proc/self/mountinfo"
 	dialFn        func(network, address string, timeout time.Duration) (net.Conn, error) // defaults to net.DialTimeout
+}
+
+func (c *Checker) mountInfoPath() string {
+	if c.MountInfoPath != "" {
+		return c.MountInfoPath
+	}
+	return "/proc/self/mountinfo"
 }
 
 func (c *Checker) homeDir() string {
@@ -225,6 +238,7 @@ func (c *Checker) Run() Report {
 		c.checkEnvSecrets(),
 		c.checkDockerSocket(),
 		c.checkNetrc(),
+		c.checkHomeIsolated(),
 		c.checkShimsActive(),
 		c.checkNetworkPolicy(),
 	}
@@ -393,6 +407,83 @@ func (c *Checker) checkNetrc() CheckResult {
 	}
 	r.Passed = true
 	return r
+}
+
+// checkHomeIsolated asserts that a profile declaring home = "isolated" really
+// runs on an empty home tmpfs. It is the direct counter-check to the denylist
+// model: if the home mount is anything other than a tmpfs, the host home is
+// showing through the read-only root bind and every path the hide list does not
+// know about (browser profiles, ~/.config/gh, .env files) is readable.
+func (c *Checker) checkHomeIsolated() CheckResult {
+	r := CheckResult{ID: "home-isolated", Name: "home directory isolated (tmpfs)", Severity: SeverityHigh}
+	if !c.HomeIsolated {
+		r.Passed = true
+		r.Detail = `profile does not request home = "isolated"`
+		return r
+	}
+	home := c.homeDir()
+	if home == "" {
+		r.Passed = false
+		r.Detail = "cannot determine home directory"
+		return r
+	}
+	data, err := os.ReadFile(c.mountInfoPath())
+	if err != nil {
+		r.Passed = false
+		r.Detail = fmt.Sprintf("cannot read %s: %v", c.mountInfoPath(), err)
+		return r
+	}
+	fsType, found := mountFsType(string(data), filepath.Clean(home))
+	if !found {
+		r.Passed = false
+		r.Detail = home + " is not a mount point — the host home is visible through the root bind"
+		return r
+	}
+	if fsType != "tmpfs" {
+		r.Passed = false
+		r.Detail = fmt.Sprintf("%s is mounted as %q, expected tmpfs", home, fsType)
+		return r
+	}
+	r.Passed = true
+	return r
+}
+
+// mountFsType returns the filesystem type mounted at mountPoint according to
+// the content of a /proc/<pid>/mountinfo file, and whether such a mount exists.
+// The LAST matching entry wins: mounts are listed in mount order and a later
+// one shadows an earlier one at the same path.
+//
+// Line layout (mountinfo(5)):
+//
+//	36 35 98:0 /src /mount/point rw,… [optional fields] - ext3 /dev/root rw,…
+//	                     ^ field 4                        ^ fstype after "-"
+func mountFsType(mountInfo, mountPoint string) (string, bool) {
+	fsType := ""
+	found := false
+	for _, line := range strings.Split(mountInfo, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		// Mount points are octal-escaped in mountinfo; only the space escape is
+		// plausible in a home path.
+		if strings.ReplaceAll(fields[4], `\040`, " ") != mountPoint {
+			continue
+		}
+		sep := -1
+		for i := 6; i < len(fields); i++ {
+			if fields[i] == "-" {
+				sep = i
+				break
+			}
+		}
+		if sep < 0 || sep+1 >= len(fields) {
+			continue
+		}
+		fsType = fields[sep+1]
+		found = true
+	}
+	return fsType, found
 }
 
 func (c *Checker) checkShimsActive() CheckResult {
