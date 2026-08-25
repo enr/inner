@@ -2,8 +2,8 @@
 """Automated PTY test for the network relay's signal and terminal behaviour.
 
 This is the automatable half of SECURITY_REVIEW.md #9 step 2. It drives the
-probe in probe.sh through a real pseudo-terminal: it sends Ctrl-C as the tty
-would, resizes the terminal as a window manager would, and reads back what the
+probe in probe.sh through a real pseudo-terminal: it resizes the terminal as a
+window manager would, sends Ctrl-C as the tty would, and reads back what the
 sandboxed process actually received.
 
 What it does NOT do is judge a rendered UI. See README.md for why that part
@@ -18,6 +18,12 @@ reaches a process through inner's launcher, bwrap and a PID namespace is a
 property that predates the relay. Measuring it and requiring the two runs to
 agree is the honest assertion; the absolute number is reported so a
 pre-existing double delivery is visible rather than baked in.
+
+Ctrl-C is sent last, after the resize and echo checks, because it ends the run:
+the tty signals the whole foreground process group, bwrap is in it with the
+default disposition, and --die-with-parent then takes the sandbox down. That
+too is pre-existing and true of both profiles, so it is reported as a note
+rather than asserted against.
 
 Usage:
     cd manual-tests && ./pty-test
@@ -61,6 +67,7 @@ class Session:
 
     def __init__(self, argv, rows=24, cols=80):
         self.buf = ""
+        self.reaped = False
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             # Child: pty.fork already did setsid() and made the slave our
@@ -108,6 +115,20 @@ class Session:
     def send(self, data):
         os.write(self.fd, data)
 
+    def wait_exit(self, timeout):
+        """Wait for the child to exit; True if it did within the timeout."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                pid, _ = os.waitpid(self.pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                return True
+            if pid:
+                self.reaped = True
+                return True
+            self.read_for(0.2)
+        return False
+
     def close(self):
         try:
             os.close(self.fd)
@@ -117,10 +138,11 @@ class Session:
             os.kill(self.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        try:
-            os.waitpid(self.pid, 0)
-        except (ChildProcessError, OSError):
-            pass
+        if not self.reaped:
+            try:
+                os.waitpid(self.pid, 0)
+            except (ChildProcessError, OSError):
+                pass
 
 
 # Both patterns use [ \t] rather than \s on purpose. \s matches newlines, so
@@ -149,14 +171,15 @@ def measure(profile, label):
 
         header = session.buf
 
-        # Three separate keypresses, spaced so each is delivered on its own.
-        # If a hop in the chain duplicated them, the counter would reach 6.
-        for _ in range(3):
-            session.send(CTRL_C)
-            session.read_for(0.6)
-        session.expect(">>> SIGINT", timeout=3)
-        sigint = last_total(session.buf, "SIGINT")
-
+        # Order matters, and not for convenience: Ctrl-C ENDS the run.
+        #
+        # The tty delivers SIGINT to every process in the foreground process
+        # group, and bwrap is in it with the default disposition, so the first
+        # keypress kills bwrap; --die-with-parent then tears the sandbox down
+        # with it. That is a property of the sandbox, not of the relay — both
+        # profiles do it — but it means anything measured after a Ctrl-C is
+        # measured on a corpse. Resize and echo therefore come first, and
+        # Ctrl-C is the last thing the probe is asked to survive.
         session.resize(40, 100)
         session.expect(">>> SIGWINCH", timeout=5)
         sigwinch = last_total(session.buf, "SIGWINCH")
@@ -164,13 +187,19 @@ def measure(profile, label):
         session.send(b"hello\r")
         echoed = session.expect("echo: hello", timeout=5)
 
-        session.send(b"q\r")
-        session.read_for(2)
+        # One keypress. Counting three would only measure how fast the run
+        # dies, and a duplicate delivery is just as visible in a single press:
+        # it would take the counter to 2.
+        session.send(CTRL_C)
+        session.expect(">>> SIGINT", timeout=5)
+        sigint = last_total(session.buf, "SIGINT")
+        ended = session.wait_exit(5)
 
         return {
             "sigint": sigint,
             "sigwinch": sigwinch,
             "echoed": echoed,
+            "ended_on_sigint": ended,
             "tty_ok": "controlling terminal intact" in header,
             "termios": header_field(header, "termios"),
             "parent": header_field(header, "parent"),
@@ -216,13 +245,22 @@ def main():
 
     # The actual claim: the relay changes nothing about signal delivery.
     report(base["sigint"] == relay["sigint"],
-           f"Ctrl-C reaches the entrypoint the same number of times "
-           f"(baseline {base['sigint']}, relay {relay['sigint']}, for 3 keypresses)")
-    if base["sigint"] != 3:
-        print(f"  [NOTE] the baseline delivers {base['sigint']} SIGINT for 3 keypresses. "
-              f"That is not caused by the relay, but it is worth knowing: a TUI whose "
-              f"quit gesture is 'press Ctrl-C twice' would see each press as "
-              f"{base['sigint'] / 3:g}.")
+           f"one Ctrl-C reaches the entrypoint the same number of times "
+           f"(baseline {base['sigint']}, relay {relay['sigint']})")
+    if base["sigint"] != 1:
+        print(f"  [NOTE] one keypress delivered {base['sigint']} SIGINT in the BASELINE, "
+              f"where there is no relay to blame. A TUI whose quit gesture is "
+              f"'press Ctrl-C twice' would see one press as {base['sigint']}.")
+
+    # Not the relay's doing either, but the reason the checks above run before
+    # the keypress rather than after it. Reported so the next reader does not
+    # have to rediscover it.
+    if base["ended_on_sigint"] or relay["ended_on_sigint"]:
+        print(f"  [NOTE] the run ends on the first Ctrl-C "
+              f"(baseline {'yes' if base['ended_on_sigint'] else 'no'}, "
+              f"relay {'yes' if relay['ended_on_sigint'] else 'no'}): the tty signals the "
+              f"whole foreground process group, bwrap included, and --die-with-parent "
+              f"takes the sandbox down with it. Pre-existing, not caused by the relay.")
 
     report(base["sigwinch"] > 0 and relay["sigwinch"] > 0,
            f"a resize reaches the entrypoint in both runs "

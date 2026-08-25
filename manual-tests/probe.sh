@@ -48,10 +48,12 @@ printf 'proxy:    HTTPS_PROXY=%s\r\n' "${HTTPS_PROXY:-<unset>}"
 printf '/proc:    %s numeric entries\r\n' "$(ls /proc 2>/dev/null | grep -c '^[0-9]\+$' || echo '?')"
 
 printf '\r\nNow exercise the terminal:\r\n'
-printf '  Ctrl-C          → expect EXACTLY ONE "SIGINT received" per keypress\r\n'
 printf '  resize window   → expect "SIGWINCH received" with the new size\r\n'
 printf '  type + Enter    → expect the line echoed back\r\n'
-printf '  q + Enter       → quit\r\n\r\n'
+printf '  q + Enter       → quit\r\n'
+printf '  Ctrl-C          → expect EXACTLY ONE "SIGINT received", and note that\r\n'
+printf '                    it ends the run: the tty signals the whole foreground\r\n'
+printf '                    process group, bwrap included. Do it last.\r\n\r\n'
 
 while true; do
     if read -r -t 1 line; then

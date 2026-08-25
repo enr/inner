@@ -41,8 +41,8 @@ part that genuinely does.
 ./pty-test
 ```
 
-Drives the probe below through a real pseudo-terminal: it sends Ctrl-C as the
-tty would, resizes the terminal as a window manager would, and reads back what
+Drives the probe below through a real pseudo-terminal: it resizes the terminal
+as a window manager would, sends Ctrl-C as the tty would, and reads back what
 the sandboxed process actually received — for the baseline profile and the
 relay profile in turn, then compares them.
 
@@ -54,6 +54,16 @@ launcher, bwrap and a PID namespace is a property that predates the relay;
 measuring it in both runs and requiring them to agree is the honest assertion.
 The absolute number is printed, so a pre-existing double delivery is visible
 rather than baked into an expectation.
+
+Ctrl-C comes last in each run, and the checks that need a live process come
+before it, because **the first Ctrl-C ends the run**: the tty delivers SIGINT
+to the whole foreground process group, bwrap sits in that group with the
+default disposition, and `--die-with-parent` then tears the sandbox down with
+it. Both profiles do this, so it is not the relay's doing — the test prints it
+as a note rather than failing on it. It does not show up with `tui = true`
+profiles because raw mode clears `ISIG` and Ctrl-C never becomes a signal at
+all; it bites non-raw entrypoints that do not take the terminal foreground for
+themselves the way an interactive shell does.
 
 Exit codes: `0` all checks passed, `1` a check failed, `77` no pseudo-terminal
 available here (inside a container or another sandbox `/dev/pts/ptmx` is often
@@ -87,11 +97,15 @@ In each run:
 
 | Action | Expected |
 |---|---|
-| Press **Ctrl-C** once | exactly **one** `SIGINT received` line, and the probe keeps running |
-| Press **Ctrl-C** three times | total reaches exactly **3**, never 6 |
 | **Resize** the window | `SIGWINCH received` with the new size, once per resize |
 | Type a line + **Enter** | the line is echoed back |
 | `q` + **Enter** | clean exit, summary printed |
+| Press **Ctrl-C** (do this **last**) | exactly **one** `SIGINT received` line, never two |
+
+Do the Ctrl-C at the end: it takes the whole run down with it, for the reason
+given under `./pty-test` above. What is being checked is the count on that one
+press — two would mean a hop in the chain duplicated it — not that the probe
+survives it.
 
 Also compare the header the probe prints at startup:
 
@@ -101,9 +115,10 @@ Also compare the header the probe prints at startup:
   is the extra hop, made visible;
 - `proxy:` shows `HTTPS_PROXY` set only in the relay run.
 
-**A failure looks like:** SIGINT counting up by two per keypress, SIGWINCH not
-arriving, or `/dev/tty` unopenable in the relay run when the baseline could
-open it.
+**A failure looks like:** SIGINT counting up by two on one keypress, SIGWINCH
+not arriving, or `/dev/tty` unopenable in the relay run when the baseline could
+open it. The run ending on Ctrl-C is not a failure: check the baseline does the
+same, and it does.
 
 Note that SIGINT arriving **at all** is itself the check that the child still
 shares the relay's foreground process group — if the relay had put it in its
