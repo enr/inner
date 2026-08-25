@@ -8,8 +8,16 @@ S2 — network allowlist proxy
  rule below, --network/--no-network moving the mode, the isolator switching on
  the mode fail-closed, `inner verify` carrying INNER_VERIFY_NETWORK_MODE, and
  the shared appendHomeAllowIfHidden helper. "allowlist" is a reserved name the
- validator refuses until the proxy ships. Everything below that is not marked
- LANDED is still to build.
+ validator refuses until the proxy ships.
+
+ Also LANDED: internal/netproxy's decision layer — ParseTarget, Policy.AllowsHost
+ (the allowlist gate), Policy.AllowsAddr (the always-deny address list) and the
+ AllowPrivateDestinations test seam. Pure logic, no sockets and no DNS: it is the
+ part every one of the three pre-implementation decisions shapes, and the part
+ where a mistake is a bypass rather than a bug. The server, the relay and the
+ wiring are not written yet.
+
+ Everything below that is not marked LANDED is still to build.
 
  Context
 
@@ -176,8 +184,8 @@ S2 — network allowlist proxy
  "cli". printDryRun and CapabilityExplain (which gains a Network []string
  field, alongside Mounts/PreRun/Notes) render it.
 
- Pattern matching. Fixed semantics, encoded as a table test — every one of
- these is either a bypass or a false negative if left to the implementation:
+ Pattern matching (LANDED). Fixed semantics, encoded as a table test — every one
+ of these is either a bypass or a false negative if left to the implementation:
 
  - Matching is case-insensitive; the CONNECT host is lower-cased and a single
    trailing dot is stripped before matching (api.anthropic.com. resolves to
@@ -217,7 +225,11 @@ S2 — network allowlist proxy
    redirects to an unvalidated host) with a DialContext that connects to the
    pre-validated IP.
 
- Decision chain — the ORDER is load-bearing:
+ Decision chain — the ORDER is load-bearing (LANDED as internal/netproxy.Policy;
+ the two halves take different argument types — a Target for the name gate, a
+ net.IP for the address gate — so a server that resolves before consulting the
+ allowlist has to write code that visibly does that, rather than getting it
+ wrong by accident):
 
    1. Match the hostname (and port) against the effective allowlist.
       REJECT HERE, BEFORE RESOLVING.
@@ -233,8 +245,8 @@ S2 — network allowlist proxy
  then denies the TCP connection. The data is already out. The hostname gate
  must run first.
 
- Always-deny (checked after resolution, independent of Allow, cannot be
- overridden by profile or capability config):
+ Always-deny (LANDED as Policy.AllowsAddr; checked after resolution, independent
+ of Allow, cannot be overridden by profile or capability config):
 
  - 127.0.0.0/8 and ::1 — the proxy runs in the HOST netns, so without this
    the sandbox gains access to every host-local service: the Docker API on
