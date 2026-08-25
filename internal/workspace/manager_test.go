@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +123,34 @@ func TestPrepareRollbackCleansIntermediateDirs(t *testing.T) {
 	} {
 		if _, err := os.Stat(check); !os.IsNotExist(err) {
 			t.Errorf("directory %q still exists after rollback, want removed", check)
+		}
+	}
+}
+
+// TestPrepare_rollsBackDirsCreatedBeforeMidChainFailure reproduces issue #5: a
+// single dest's own os.MkdirAll call can create some of its parent
+// directories on disk and then fail on a deeper one. The over-long final path
+// component (> NAME_MAX, portable across ext4/tmpfs/xfs/btrfs) makes the
+// deepest Mkdir fail with ENAMETOOLONG only after the two shallower
+// directories above it were already created — without going through a
+// separate, already-failing dest the way TestPrepareRollbackCleansIntermediateDirs
+// does.
+func TestPrepare_rollsBackDirsCreatedBeforeMidChainFailure(t *testing.T) {
+	dir := t.TempDir()
+	longName := strings.Repeat("a", 300) // NAME_MAX is 255 on every common Linux fs
+	dest := filepath.Join(dir, "level1", "level2", longName)
+
+	_, err := Prepare(dir, []string{dest}, RunInfo{Profile: "test", Command: "cmd"})
+	if err == nil {
+		t.Fatal("Prepare should have failed: final path component exceeds NAME_MAX")
+	}
+
+	for _, check := range []string{
+		filepath.Join(dir, "level1", "level2"),
+		filepath.Join(dir, "level1"),
+	} {
+		if _, err := os.Stat(check); !os.IsNotExist(err) {
+			t.Errorf("directory %q still exists after the mid-chain failure, want it rolled back", check)
 		}
 	}
 }

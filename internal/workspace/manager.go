@@ -88,16 +88,20 @@ func Prepare(workspacesPath string, dests []string, info RunInfo) (*Manager, err
 		}
 	}
 
-	// Pre-create workspace directories.
+	// Pre-create workspace directories. newDirs is added to created BEFORE
+	// MkdirAll runs, not after it succeeds: MkdirAll can fail partway through
+	// (e.g. permission denied at a deep level, after the shallower parents were
+	// already created), and the rollback below must cover whatever it managed
+	// to create, not just the destinations that fully succeeded.
 	var created []string
 	for _, dest := range dests {
 		if _, err := os.Stat(dest); os.IsNotExist(err) {
 			newDirs := dirsToCreate(dest)
+			created = append(created, newDirs...)
 			if err := os.MkdirAll(dest, 0o755); err != nil {
 				removeDeepestFirst(created)
 				return nil, fmt.Errorf("creating workspace directory %q: %w", dest, err)
 			}
-			created = append(created, newDirs...)
 		}
 	}
 

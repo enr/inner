@@ -13,6 +13,9 @@ Severity legend:
 
 Status of items already handled:
 
+- ✅ **[FIXED] Issue #5 — workspace prep could leak partial directories** —
+  `dirsToCreate` output is now recorded for rollback *before* `MkdirAll` runs,
+  not after it succeeds. See **#5** below.
 - ✅ **[FIXED] Issue #4 — CLI `-m` rejected `safe-rw`** — `parseMount` now
   accepts `safe-rw`; `tmpfs` is explicitly rejected with a pointer to `[mounts]`
   since it has no host source. See **#4** below.
@@ -339,28 +342,38 @@ test covering `ro` (implicit and explicit), `rw`, `safe-rw`, the rejected
 
 ---
 
-## #5 — [Medium] Workspace dir creation can leak partially-created directories
+## #5 — [CLOSED] Workspace dir creation can leak partially-created directories
 
 **Where:** `internal/workspace/manager.go` — `Prepare`, the per-dest loop
 (~`manager.go:93`).
 
-**What is wrong:** for each dest, the list of directories that `MkdirAll` will
-create is computed by `dirsToCreate` **before** the `MkdirAll` call, but it is
-appended to the rollback list `created` only **after** `MkdirAll` succeeds. If
-`MkdirAll` fails partway (e.g. permission denied at a deep level after creating
-the shallower parents), `removeDeepestFirst(created)` runs without this dest's
-just-created directories, so they are left behind on disk.
+**What was wrong:** for each dest, the list of directories that `MkdirAll` would
+create was computed by `dirsToCreate` **before** the `MkdirAll` call, but it was
+appended to the rollback list `created` only **after** `MkdirAll` succeeded. If
+`MkdirAll` failed partway (e.g. permission denied at a deep level after creating
+the shallower parents), `removeDeepestFirst(created)` ran without this dest's
+just-created directories, so they were left behind on disk.
 
-**Why it matters:** failed runs can litter the workspaces directory with empty
-orphan directories. Not catastrophic, but it is a correctness/cleanliness bug in
-the error path that someone will eventually have to debug.
+**Why it matters:** failed runs could litter the workspaces directory with empty
+orphan directories. Not catastrophic, but a correctness/cleanliness bug in the
+error path that someone would eventually have to debug.
 
-**How to fix:** capture `newDirs := dirsToCreate(dest)` and add it to `created`
-**before** calling `MkdirAll`, so the rollback covers a partial failure.
-Alternatively, on `MkdirAll` error, recompute what now exists and clean it up.
+### Fix
 
-**How to verify:** test that injects a mkdir failure mid-chain (e.g. a dest under
-a read-only parent) and asserts no new directories survive.
+`newDirs := dirsToCreate(dest)` is now appended to `created` immediately, before
+`os.MkdirAll(dest, ...)` runs — so a partial failure inside a single dest's own
+`MkdirAll` call is rolled back exactly like a failure on a different dest
+already was.
+
+**Verification:** `TestPrepare_rollsBackDirsCreatedBeforeMidChainFailure`
+(`internal/workspace/manager_test.go`). Reproducing "MkdirAll creates some
+directories then fails deeper in the same call" needed more than a read-only
+parent (that only fails the *first* level, creating nothing — indistinguishable
+from the old code): the test uses a final path component longer than `NAME_MAX`
+(300 bytes; the OS limit is 255 on every common Linux filesystem), so `MkdirAll`
+successfully creates the two shallower directories above it and only then fails
+with `ENAMETOOLONG` on the last one. Confirmed the test fails on the pre-fix code
+(both intermediate directories survive) and passes after the fix.
 
 ---
 
