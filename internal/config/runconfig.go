@@ -19,7 +19,18 @@ type RunConfig struct {
 	// the loader from [sandbox] network_mode / network. Empty only on a
 	// hand-built RunConfig; see EffectiveNetworkMode.
 	NetworkMode string
-	Clipboard   bool
+	// NetworkAllow is the EFFECTIVE allow list: the capability defaults unioned
+	// with what the profile declared along its extends chain. Consulted only
+	// when NetworkMode is NetworkAllowlist. See ResolveNetworkAllow.
+	NetworkAllow []string
+	// NetworkDeny subtracts from that union, per-request rather than by list
+	// subtraction. See SandboxConfig.NetworkDeny.
+	NetworkDeny []string
+	// NetworkAllowOrigin maps each NetworkAllow entry to the layer(s) that
+	// contributed it ("capability:claude", "profile"), so --dry-run and the
+	// remote-profile consent prompt can answer "why is this domain open?".
+	NetworkAllowOrigin map[string]string
+	Clipboard          bool
 	// PidNamespace requests a private PID namespace for the sandbox
 	// (bwrap --unshare-pid). True by default; resolved by toRunConfig from
 	// SandboxConfig.PidNamespace (nil = unset = true).

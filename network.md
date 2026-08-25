@@ -178,6 +178,24 @@ S2 — network allowlist proxy
  dynamic entries — the ordering in cmd_run.go already works (capabilities are
  step 10, applyNetworkProxy is inserted after 11c).
 
+ LANDED: config.ResolveNetworkAllow returns the union plus the origins map, and
+ the loader populates RunConfig.NetworkAllow/NetworkDeny/NetworkAllowOrigin.
+
+ One correction to the formula above. network_deny is NOT subtracted when the
+ config is resolved — the resolved allow list still contains the entry — it is
+ evaluated per-request by netproxy.Policy, which checks the deny patterns
+ before the allow patterns. That is what lets "*.internal.example.com" carve a
+ hole out of "*.example.com": a list subtraction could only remove entries that
+ match a deny string exactly, and would silently drop wildcard denies on the
+ floor. So the formula holds at request time, not at load time.
+
+ CapabilityNetworkAllow currently carries "claude" only. gemini, cursor and
+ opencode are deliberately absent rather than guessed: an invented domain is
+ worse than an absent one, because it looks verified. The validator reports a
+ capability that contributes nothing, so a profile using one of those under
+ allowlist mode is told to list the domains itself instead of failing as an
+ opaque connection error inside the sandbox.
+
  Provenance. With four contributing sources, "why is this domain open?"
  becomes the common question, so record it:
  RunConfig.NetworkAllowOrigin maps host → "capability:claude" | "profile" |

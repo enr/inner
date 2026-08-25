@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -163,4 +165,142 @@ func TestBuild_setsNetworkModeAndBoolCoherently(t *testing.T) {
 	if !rc.Network {
 		t.Error("Network should stay true for a legacy network = true profile")
 	}
+}
+
+// ── Allowlist layers ──────────────────────────────────────────────────────────
+
+// The point of the whole layering: a profile declaring capabilities = ["claude"]
+// inherits the destinations Claude Code needs without knowing what they are, and
+// adds its own on top.
+func TestResolveNetworkAllow_capabilityDefaultsAreInherited(t *testing.T) {
+	sb := SandboxConfig{NetworkAllow: []string{"github.com"}}
+	allow, origins := ResolveNetworkAllow(sb, []string{"claude"})
+
+	if !slices.Contains(allow, "api.anthropic.com") {
+		t.Errorf("the claude capability did not contribute its API endpoint: %v", allow)
+	}
+	if !slices.Contains(allow, "github.com") {
+		t.Errorf("the profile's own entry was dropped: %v", allow)
+	}
+	if got := origins["api.anthropic.com"]; got != "capability:claude" {
+		t.Errorf("origin of the capability entry = %q, want %q", got, "capability:claude")
+	}
+	if got := origins["github.com"]; got != "profile" {
+		t.Errorf("origin of the profile entry = %q, want %q", got, "profile")
+	}
+}
+
+// "Why is this domain open?" must have an answer even when two layers agree,
+// because "the profile also lists it" and "only the capability brings it" call
+// for different edits.
+func TestResolveNetworkAllow_recordsEveryContributingLayer(t *testing.T) {
+	sb := SandboxConfig{NetworkAllow: []string{"api.anthropic.com"}}
+	allow, origins := ResolveNetworkAllow(sb, []string{"claude"})
+
+	if n := countOccurrences(allow, "api.anthropic.com"); n != 1 {
+		t.Errorf("entry appears %d times, want deduplicated to 1: %v", n, allow)
+	}
+	got := origins["api.anthropic.com"]
+	if !strings.Contains(got, "capability:claude") || !strings.Contains(got, "profile") {
+		t.Errorf("origin = %q, want both contributing layers named", got)
+	}
+}
+
+// The effective list is rendered in --dry-run and compared in tests, so it must
+// not depend on the order the profile happened to list its capabilities in.
+func TestResolveNetworkAllow_isDeterministic(t *testing.T) {
+	sb := SandboxConfig{NetworkAllow: []string{"b.example.com", "a.example.com"}}
+	first, _ := ResolveNetworkAllow(sb, []string{"claude", "gemini"})
+	second, _ := ResolveNetworkAllow(sb, []string{"gemini", "claude"})
+	if !slices.Equal(first, second) {
+		t.Errorf("capability order changed the result:\n %v\n %v", first, second)
+	}
+}
+
+func TestResolveNetworkAllow_skipsEmptyEntries(t *testing.T) {
+	sb := SandboxConfig{NetworkAllow: []string{"", "  ", "github.com"}}
+	allow, _ := ResolveNetworkAllow(sb, nil)
+	if !slices.Equal(allow, []string{"github.com"}) {
+		t.Errorf("allow = %v, want only the non-empty entry", allow)
+	}
+}
+
+// network_deny is NOT subtracted here: it is evaluated per-request by the proxy,
+// which is what lets a deny pattern carve a hole out of a broader allow pattern
+// (netproxy.Policy covers that). Pinned so nobody "simplifies" it into a list
+// subtraction and silently loses wildcard denies.
+func TestResolveNetworkAllow_denyIsNotSubtractedFromTheList(t *testing.T) {
+	sb := SandboxConfig{
+		NetworkAllow: []string{"github.com"},
+		NetworkDeny:  []string{"sentry.io"},
+	}
+	allow, _ := ResolveNetworkAllow(sb, []string{"claude"})
+	if !slices.Contains(allow, "sentry.io") {
+		t.Error("the resolved allow list should still carry the entry; the deny is applied by the proxy at request time")
+	}
+}
+
+// A capability with no confirmed egress data must contribute nothing rather than
+// something invented — an invented domain is worse than an absent one, because
+// it looks verified.
+func TestCapabilitiesWithoutNetworkDefaults(t *testing.T) {
+	missing := CapabilitiesWithoutNetworkDefaults([]string{"claude", "gemini"})
+	if slices.Contains(missing, "claude") {
+		t.Error("claude has defaults and must not be reported as missing")
+	}
+	if !slices.Contains(missing, "gemini") {
+		t.Error("gemini has no confirmed defaults and must be reported so the profile lists them by hand")
+	}
+}
+
+// ── merge across extends ──────────────────────────────────────────────────────
+
+// The lists only ever add: a child extends its base's destinations rather than
+// replacing them. Narrowing is a separate, explicit act (network_deny).
+func TestMerge_networkAllowAndDenyUnion(t *testing.T) {
+	dir := t.TempDir()
+	profiles := filepath.Join(dir, "profiles")
+	if err := os.MkdirAll(profiles, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, profiles, "base", `schema_version = "1"
+name = "base"
+[sandbox]
+network_allow = ["github.com"]
+network_deny  = ["sentry.io"]
+`)
+	writeProfile(t, profiles, "child", `schema_version = "1"
+name = "child"
+extends = "base"
+[sandbox]
+network_allow = ["*.githubusercontent.com"]
+network_deny  = ["telemetry.example.com"]
+[entrypoint]
+cmd = "sh"
+`)
+
+	p, err := NewLoader(dir).LoadProfileAuto("child")
+	if err != nil {
+		t.Fatalf("LoadProfileAuto: %v", err)
+	}
+	for _, want := range []string{"github.com", "*.githubusercontent.com"} {
+		if !slices.Contains(p.Sandbox.NetworkAllow, want) {
+			t.Errorf("network_allow = %v, missing %q", p.Sandbox.NetworkAllow, want)
+		}
+	}
+	for _, want := range []string{"sentry.io", "telemetry.example.com"} {
+		if !slices.Contains(p.Sandbox.NetworkDeny, want) {
+			t.Errorf("network_deny = %v, missing %q", p.Sandbox.NetworkDeny, want)
+		}
+	}
+}
+
+func countOccurrences(xs []string, want string) int {
+	n := 0
+	for _, x := range xs {
+		if x == want {
+			n++
+		}
+	}
+	return n
 }

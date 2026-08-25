@@ -110,3 +110,52 @@ func TestValidate_nestedUserNsPlusNetwork_warnsOnlyForFull(t *testing.T) {
 		t.Error("nested-user-ns + network warning should not fire when the network is off")
 	}
 }
+
+// ── network_allow / network_deny ──────────────────────────────────────────────
+
+// Inert keys are never silent, exactly like home_allow under a non-isolated
+// home: a profile listing destinations has assumed a mediated network, and is
+// instead running with no network or a wide-open one.
+func TestValidate_networkAllow_isInertWithoutAllowlistMode(t *testing.T) {
+	p := &config.Profile{
+		Sandbox: config.SandboxConfig{
+			NetworkMode:  config.NetworkFull,
+			NetworkAllow: []string{"github.com"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if !issuesContain(r, LevelWarning, "the list is ignored") {
+		t.Errorf("expected a warning that network_allow is inert, got %v", r.Issues)
+	}
+	if r.HasErrors() {
+		t.Errorf("inert keys are a warning, not an error: %v", r.Issues)
+	}
+}
+
+func TestValidate_networkAllow_silentWhenUnused(t *testing.T) {
+	p := &config.Profile{
+		Sandbox:    config.SandboxConfig{NetworkMode: config.NetworkFull},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	if r := Validate(p, ""); issuesContain(r, LevelWarning, "the list is ignored") {
+		t.Errorf("no network_allow declared, so there is nothing to warn about: %v", r.Issues)
+	}
+}
+
+// The difference between "the profile inherits what its tool needs" and "the
+// tool silently cannot reach its own API" has to be visible before the run.
+func TestValidate_capabilityWithoutEgressDefaultsIsReported(t *testing.T) {
+	p := &config.Profile{
+		Capabilities: []string{"gemini"},
+		Sandbox:      config.SandboxConfig{NetworkMode: config.NetworkFull},
+		Entrypoint:   config.EntrypointConfig{Interactive: true},
+	}
+	// Under "full" there is no allow list to be missing from, so nothing fires;
+	// the warning belongs to allowlist mode, which this build still rejects.
+	// Assert the helper the warning is built on instead, so the rule is covered
+	// the moment the mode is enabled.
+	if missing := config.CapabilitiesWithoutNetworkDefaults(p.Capabilities); len(missing) != 1 || missing[0] != "gemini" {
+		t.Errorf("CapabilitiesWithoutNetworkDefaults = %v, want [gemini]", missing)
+	}
+}

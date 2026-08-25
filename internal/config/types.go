@@ -245,6 +245,37 @@ type SandboxConfig struct {
 	// Ignored (with a validation warning) when home is not "isolated". For a
 	// writable re-exposure use a [mounts] entry with mode "rw" / "safe-rw".
 	HomeAllow []string `toml:"home_allow"`
+	// NetworkAllow lists the egress destinations reachable when NetworkMode is
+	// NetworkAllowlist. Entries are host patterns, not URLs:
+	//
+	//   "example.com"        exactly that name, on ports 443 and 80
+	//   "example.com:8443"   exactly that name, on exactly that port
+	//   "*.example.com"      any subdomain at any depth, but NOT the apex
+	//   "10.0.0.7"           an IP literal
+	//
+	// A bare entry authorising only 443/80 is deliberate: without it,
+	// network_allow = ["github.com"] would also authorise CONNECT github.com:22.
+	//
+	// This is one layer of several. It is unioned with what the profile's
+	// capabilities contribute and with whatever a base profile declared —
+	// see ResolveNetworkAllow. Inherited via extends (union, no duplicates).
+	//
+	// Ignored (with a validation warning) when network_mode is not "allowlist".
+	NetworkAllow []string `toml:"network_allow"`
+	// NetworkDeny subtracts from that union. It is the one valve for dropping
+	// something a capability contributed — opting out of a tool's telemetry
+	// endpoint without losing its API endpoint — since the layers only ever
+	// add.
+	//
+	// Deny entries use the same pattern syntax, with one difference: a bare
+	// host denies EVERY port, not just 443/80. A subtraction being broader than
+	// the matching addition is the safe direction.
+	//
+	// Denies are evaluated per-request, before the allow list, rather than
+	// being string-subtracted from it when the config is loaded: that is what
+	// lets "*.internal.example.com" carve a hole out of "*.example.com", which
+	// no list subtraction could express.
+	NetworkDeny []string `toml:"network_deny"`
 	// CgroupManager selects the cgroup manager used by rootless container
 	// runtimes (podman) started INSIDE the sandbox. Only meaningful when
 	// "nested-user-ns" is in Allow. Valid values are listed in

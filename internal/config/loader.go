@@ -512,10 +512,18 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 		return nil, fmt.Errorf("invalid [sandbox] network_mode %q (valid values: %v)", networkMode, ValidNetworkModes)
 	}
 
+	// The allow list is resolved here, not inside a capability's Apply: dry-run,
+	// the validator and `profile show --explain` must all see the effective
+	// list without executing anything.
+	networkAllow, networkAllowOrigin := ResolveNetworkAllow(p.Sandbox, p.Capabilities)
+
 	cfg := &RunConfig{
-		Name:        p.Name,
-		NetworkMode: networkMode,
-		Network:     networkMode != NetworkOff,
+		Name:               p.Name,
+		NetworkMode:        networkMode,
+		Network:            networkMode != NetworkOff,
+		NetworkAllow:       networkAllow,
+		NetworkDeny:        p.Sandbox.NetworkDeny,
+		NetworkAllowOrigin: networkAllowOrigin,
 		// PID namespace isolation defaults to ON: a nil (unset) value means
 		// true; only an explicit pid_namespace = false in the profile
 		// disables it. See SandboxConfig.PidNamespace for the rationale.

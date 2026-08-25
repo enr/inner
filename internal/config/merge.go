@@ -72,6 +72,15 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("sandbox", "home_allow") {
 		result.Sandbox.HomeAllow = mergeUnique(base.Sandbox.HomeAllow, overlay.Sandbox.HomeAllow)
 	}
+	// network_allow / network_deny are unioned like the other policy lists: a
+	// child profile adds the destinations it needs without restating the base's.
+	// Narrowing is never implicit — that is what network_deny is for.
+	if meta.IsDefined("sandbox", "network_allow") {
+		result.Sandbox.NetworkAllow = mergeUnique(base.Sandbox.NetworkAllow, overlay.Sandbox.NetworkAllow)
+	}
+	if meta.IsDefined("sandbox", "network_deny") {
+		result.Sandbox.NetworkDeny = mergeUnique(base.Sandbox.NetworkDeny, overlay.Sandbox.NetworkDeny)
+	}
 	if meta.IsDefined("sandbox", "cgroup_manager") {
 		result.Sandbox.CgroupManager = overlay.Sandbox.CgroupManager
 	}

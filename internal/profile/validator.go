@@ -147,6 +147,39 @@ func validateNetwork(r *Result, p *config.Profile) {
 	}
 }
 
+// validateNetworkAllow checks [sandbox] network_allow / network_deny against the
+// mode they only mean something in, and reports capabilities whose egress
+// destinations the profile still has to supply by hand.
+func validateNetworkAllow(r *Result, p *config.Profile) {
+	mode := config.ResolveNetworkMode(p.Sandbox)
+	allow, _ := config.ResolveNetworkAllow(p.Sandbox, p.Capabilities)
+
+	if mode != config.NetworkAllowlist {
+		// Not an error — the keys are simply inert — but never silent, exactly
+		// like home_allow under a non-isolated home: a profile listing
+		// destinations has clearly assumed a mediated network, and is instead
+		// running with either no network at all or a wide-open one.
+		if len(p.Sandbox.NetworkAllow) > 0 || len(p.Sandbox.NetworkDeny) > 0 {
+			r.addWarning(fmt.Sprintf(
+				`[sandbox] network_allow/network_deny are set but network_mode = %q: the list is ignored — set network_mode = "allowlist" to apply it`,
+				mode))
+		}
+		return
+	}
+
+	if len(allow) == 0 {
+		r.addWarning(`[sandbox] network_mode = "allowlist" with an empty effective allow list: the sandbox can reach nothing — list destinations in network_allow`)
+	}
+	// A capability that contributes no defaults is the difference between "the
+	// profile inherits what its tool needs" and "the tool silently cannot reach
+	// its own API". Say which one this is.
+	if missing := config.CapabilitiesWithoutNetworkDefaults(p.Capabilities); len(missing) > 0 {
+		r.addWarning(fmt.Sprintf(
+			"capabilities %v carry no default egress destinations, so they contribute nothing to the allow list — list the domains they need in [sandbox] network_allow",
+			missing))
+	}
+}
+
 // effectiveHomeMode renders the home mode for a user-facing message, naming the
 // default explicitly so an unset key never shows up as an empty string.
 func effectiveHomeMode(mode string) string {
@@ -578,6 +611,7 @@ func Validate(p *config.Profile, workDir string) Result {
 	// home mode and the rest of the profile.
 	validateHome(&r, p)
 	validateNetwork(&r, p)
+	validateNetworkAllow(&r, p)
 	validateAllowUnderIsolatedHome(&r, p)
 
 	// 3a-ter. Report mounts that hand out write access to the host system or
