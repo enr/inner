@@ -1,0 +1,32 @@
+schema_version = "1"
+name        = "manual-signal-probe"
+description = "Signal and terminal probe — the relay is NOT in the chain (baseline)"
+
+# Baseline half of the A/B pair. Same probe, no network relay between bwrap and
+# the entrypoint, so whatever this profile does is what the terminal does
+# without the feature under test.
+
+[sandbox]
+network = false
+home    = "host-ro"
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+# The script IS the entrypoint, not an argument to bash. Two reasons:
+#
+#  - a bash entrypoint makes inner inject --init-file to set PS1, which would
+#    both need a writable config dir and change what bash does with a script
+#    argument;
+#  - tui = false is REQUIRED here. tui = true puts the terminal in raw mode
+#    before the child starts, and raw mode disables ISIG — Ctrl-C would arrive
+#    as the byte 0x03 and never become a SIGINT, which would make this probe
+#    silently test nothing.
+cmd         = "./probe.sh"
+interactive = true
+tui         = false
+
+[output]
+timeout_seconds = 0

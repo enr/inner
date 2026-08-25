@@ -1,0 +1,44 @@
+schema_version = "1"
+name         = "manual-tui-allowlist"
+description  = "Real Claude Code TUI with the network relay in the chain"
+capabilities = ["claude"]
+
+# The half of the TUI A/B pair that has `inner __net-relay` between bwrap and
+# claude. Pair it with tui-full.toml, which is identical except for the network
+# mode, so a difference in how the TUI behaves is attributable to the relay.
+#
+# The allow list comes from the claude capability; `inner run --dry-run` on this
+# profile shows what that is. Add anything the session turns out to need — the
+# proxy logs every refusal to stderr with the destination and the reason.
+
+[sandbox]
+network_mode = "allowlist"
+home         = "isolated"
+home_allow = [
+  "~/.local/share/claude",
+  "~/.local/bin",
+  "~/.nvm",
+  "~/.npm-global",
+  "~/.volta",
+  "~/.bun",
+  "~/.asdf",
+  "~/.fnm",
+]
+
+[mounts]
+"/run/user/$UID" = { dest = "/run/user/$UID", mode = "tmpfs" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+
+[entrypoint]
+cmd         = "claude"
+interactive = true
+tui         = true
+
+[git]
+strip_sections = ["credential"]
+
+[output]
+timeout_seconds = 0

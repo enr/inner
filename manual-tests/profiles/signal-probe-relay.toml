@@ -1,0 +1,37 @@
+schema_version = "1"
+name        = "manual-signal-probe-relay"
+description = "Signal and terminal probe — WITH the network relay in the chain"
+
+# The half under test. network_mode = "allowlist" puts `inner __net-relay`
+# between bwrap and the probe, which is the only difference from
+# signal-probe.toml. Any behavioural difference between the two runs is caused
+# by the relay and nothing else.
+#
+# The allow list is deliberately empty of anything useful: this profile tests
+# signals and the terminal, not connectivity.
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["example.com"]
+home          = "host-ro"
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+# The script IS the entrypoint, not an argument to bash. Two reasons:
+#
+#  - a bash entrypoint makes inner inject --init-file to set PS1, which would
+#    both need a writable config dir and change what bash does with a script
+#    argument;
+#  - tui = false is REQUIRED here. tui = true puts the terminal in raw mode
+#    before the child starts, and raw mode disables ISIG — Ctrl-C would arrive
+#    as the byte 0x03 and never become a SIGINT, which would make this probe
+#    silently test nothing.
+cmd         = "./probe.sh"
+interactive = true
+tui         = false
+
+[output]
+timeout_seconds = 0

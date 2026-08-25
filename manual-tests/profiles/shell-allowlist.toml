@@ -1,0 +1,24 @@
+schema_version = "1"
+name        = "manual-shell-allowlist"
+description = "Interactive bash under the allowlist, for poking at the proxy by hand"
+
+# For exploring: curl things, watch which are refused and why, check the
+# environment the isolator injected. Bash rather than a TUI, so paste,
+# up-arrow history and job control are exercised at the same time.
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["example.com", "*.githubusercontent.com"]
+network_deny  = ["raw.githubusercontent.com"]
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd         = "bash"
+interactive = true
+cursor_fix  = "shell"
+
+[output]
+timeout_seconds = 0

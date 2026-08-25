@@ -1,0 +1,41 @@
+schema_version = "1"
+name         = "manual-tui-full"
+description  = "Real Claude Code TUI WITHOUT the relay (baseline)"
+capabilities = ["claude"]
+
+# The baseline half of the TUI A/B pair: the same profile with an open network
+# and therefore no relay between bwrap and claude. Run this first, so you know
+# what the TUI does on this machine and in this terminal BEFORE the feature
+# under test is in the chain.
+
+[sandbox]
+network      = true
+home         = "isolated"
+home_allow = [
+  "~/.local/share/claude",
+  "~/.local/bin",
+  "~/.nvm",
+  "~/.npm-global",
+  "~/.volta",
+  "~/.bun",
+  "~/.asdf",
+  "~/.fnm",
+]
+
+[mounts]
+"/run/user/$UID" = { dest = "/run/user/$UID", mode = "tmpfs" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH", "SHELL"]
+
+[entrypoint]
+cmd         = "claude"
+interactive = true
+tui         = true
+
+[git]
+strip_sections = ["credential"]
+
+[output]
+timeout_seconds = 0

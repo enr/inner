@@ -524,6 +524,13 @@ exactly this checklist to be repeated once the network relay adds a process hop
 between bwrap and the TUI, and that re-run only means something against this
 baseline.
 
+Since this sign-off, steps 1, 4 and 5 have been automated — they never needed a
+human, only a script nobody had written — and live in `.sdlc/e2e` under
+"Process isolation: runtime". What is left needs a real terminal: see
+`manual-tests/`, which has the profiles, an A/B signal probe that covers the
+mechanism without needing a third-party TUI, and the reasons the residue cannot
+honestly be scripted.
+
 **Original status:** code change was **done and unit-/dry-run-tested**; what
 remained was a manual smoke test that **cannot be automated in CI** because it
 needs a real controlling terminal and the real TUI binaries.

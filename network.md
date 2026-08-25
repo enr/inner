@@ -28,7 +28,11 @@ S2 — network allowlist proxy
  original proposal and what was deliberately deferred.
 
  What remains: the manual TUI checklist (SECURITY_REVIEW.md §9) re-run with a
- relay in the chain, which needs a real terminal.
+ relay in the chain, which needs a real terminal. manual-tests/ now holds the
+ profiles and the procedure, including an A/B signal probe that covers the
+ mechanism — SIGINT delivered once per keypress and not twice, SIGWINCH, the
+ controlling terminal, the extra process hop — without needing claude, an
+ authenticated session or a golden screenshot of somebody else's UI.
 
  Also LANDED: the relay (cmd/inner/cmd_net_relay.go) and internal/netproxy in full — the decision layer (ParseTarget,
  Policy.AllowsHost, Policy.AllowsAddr, the AllowPrivateDestinations test seam)
