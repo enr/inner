@@ -31,10 +31,38 @@ probe. The obstacles are elsewhere:
   MY terminal emulator", which is a person's call.
 
 The probe below exists to shrink that residue: it covers the *mechanism*
-(signals, terminal state, process shape) deterministically, so the human check
-is only about the parts that genuinely need eyes.
+(signals, terminal state, process shape) deterministically and is driven by
+`./pty-test` with no human in the loop, so the part that needs eyes is only the
+part that genuinely does.
 
-## 1. Signal and terminal probe — the A/B pair
+## 1. Signal and terminal probe — automated
+
+```bash
+./pty-test
+```
+
+Drives the probe below through a real pseudo-terminal: it sends Ctrl-C as the
+tty would, resizes the terminal as a window manager would, and reads back what
+the sandboxed process actually received — for the baseline profile and the
+relay profile in turn, then compares them.
+
+The claim under test is **comparative**: putting `inner __net-relay` between
+bwrap and the entrypoint must not change how signals and terminal state reach
+the entrypoint. The test deliberately does not hard-code "Ctrl-C must arrive
+exactly once". How many times a signal reaches a process through inner's
+launcher, bwrap and a PID namespace is a property that predates the relay;
+measuring it in both runs and requiring them to agree is the honest assertion.
+The absolute number is printed, so a pre-existing double delivery is visible
+rather than baked into an expectation.
+
+Exit codes: `0` all checks passed, `1` a check failed, `77` no pseudo-terminal
+available here (inside a container or another sandbox `/dev/pts/ptmx` is often
+missing — that is a property of where you ran it, not a result).
+
+Run it before and after any change to the relay, the entrypoint wrapping or
+`forwardedSignals`.
+
+## 2. Signal and terminal probe — by hand
 
 **What it is for.** `network_mode = "allowlist"` inserts `inner __net-relay`
 between bwrap and the entrypoint. The relay deliberately forwards only
@@ -43,7 +71,9 @@ so the tty already delivers `SIGINT`, `SIGQUIT`, `SIGTSTP` and `SIGWINCH` to
 both. Forwarding those would deliver each keypress **twice**, and a TUI whose
 quit gesture is "press Ctrl-C twice" would read one press as two.
 
-This pair is what proves that, without needing a TUI at all.
+`./pty-test` above automates exactly this. Run it by hand when you want to see
+the behaviour rather than a verdict, or when the automated run reports
+something you want to reproduce.
 
 Run the baseline first, so you know what this machine and this terminal do
 before the feature under test is in the chain:
@@ -83,7 +113,7 @@ procps resolves it to 0 because the group leader is not visible inside the
 namespace, so comparing that number between runs would look like evidence
 without being any.
 
-## 2. Real TUI — the part that needs eyes
+## 3. Real TUI — the part that needs eyes
 
 The A/B pair above covers the mechanism. This covers everything a rendered UI
 does that the probe does not.
@@ -116,7 +146,7 @@ Add that host to `network_allow` in the profile and note it — a destination
 that turns out to be necessary belongs in `config.CapabilityNetworkAllow`, not
 in every user's profile.
 
-## 3. Interactive bash under the allowlist
+## 4. Interactive bash under the allowlist
 
 For poking at the proxy by hand, and for the paste/history/job-control half of
 the checklist:
@@ -147,7 +177,8 @@ sandbox often does not:
 - **A pseudo-terminal.** Without one, `/dev/tty` cannot be opened and the probe
   says so in its header. That is the probe reporting the environment
   correctly, not a failure of `inner` — but it also means the run proves
-  nothing about signals, so do not record it as a pass.
+  nothing about signals, so do not record it as a pass. `./pty-test` detects
+  this up front and exits 77 rather than reporting failures.
 - **A writable `~/.config/inner`.** `shell-allowlist.toml` uses a `bash`
   entrypoint, which makes `inner` write a `shell-init.sh` there to set the
   sandbox prompt. Where that directory is read-only the run stops before

@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Automated PTY test for the network relay's signal and terminal behaviour.
+
+This is the automatable half of SECURITY_REVIEW.md #9 step 2. It drives the
+probe in probe.sh through a real pseudo-terminal: it sends Ctrl-C as the tty
+would, resizes the terminal as a window manager would, and reads back what the
+sandboxed process actually received.
+
+What it does NOT do is judge a rendered UI. See README.md for why that part
+stays manual.
+
+The claim under test is narrow and comparative: putting `inner __net-relay`
+between bwrap and the entrypoint must not change how signals and terminal
+state reach the entrypoint. So the test measures a BASELINE profile with no
+relay, measures the same profile with one, and compares. It deliberately does
+not hard-code "Ctrl-C must arrive exactly once": how many times a signal
+reaches a process through inner's launcher, bwrap and a PID namespace is a
+property that predates the relay. Measuring it and requiring the two runs to
+agree is the honest assertion; the absolute number is reported so a
+pre-existing double delivery is visible rather than baked in.
+
+Usage:
+    cd manual-tests && ./pty-test
+
+Exit codes: 0 all passed, 1 a check failed, 77 no pseudo-terminal available.
+"""
+
+import fcntl
+import os
+import pty
+import re
+import select
+import signal
+import struct
+import sys
+import termios
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BASELINE = "profiles/signal-probe.toml"
+RELAY = "profiles/signal-probe-relay.toml"
+
+CTRL_C = b"\x03"
+BANNER = "Now exercise the terminal"
+READ_TIMEOUT = 20.0
+
+PASS, FAIL = [], []
+
+
+def report(ok, msg):
+    (PASS if ok else FAIL).append(msg)
+    print(f"  [{'PASS' if ok else 'FAIL'}] {msg}")
+
+
+def skip(msg):
+    print(f"  [SKIP] {msg}")
+
+
+class Session:
+    """A child process attached to its own controlling pseudo-terminal."""
+
+    def __init__(self, argv, rows=24, cols=80):
+        self.buf = ""
+        self.pid, self.fd = pty.fork()
+        if self.pid == 0:
+            # Child: pty.fork already did setsid() and made the slave our
+            # controlling terminal, which is what makes Ctrl-C become a signal
+            # rather than a byte.
+            os.chdir(HERE)
+            try:
+                os.execvp(argv[0], argv)
+            except Exception as exc:  # pragma: no cover - child process
+                sys.stderr.write(f"exec failed: {exc}\n")
+                os._exit(127)
+        self.resize(rows, cols)
+
+    def resize(self, rows, cols):
+        """Resize the terminal. The kernel sends SIGWINCH to the foreground
+        process group, which is how a real window resize reaches an app."""
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+    def read_for(self, seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            try:
+                ready, _, _ = select.select([self.fd], [], [], min(0.2, remaining))
+            except (OSError, ValueError):
+                return
+            if not ready:
+                continue
+            try:
+                chunk = os.read(self.fd, 4096)
+            except OSError:
+                return  # the child closed the slave: it exited
+            if not chunk:
+                return
+            self.buf += chunk.decode("utf-8", "replace")
+
+    def expect(self, needle, timeout=READ_TIMEOUT):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if needle in self.buf:
+                return True
+            self.read_for(0.3)
+        return needle in self.buf
+
+    def send(self, data):
+        os.write(self.fd, data)
+
+    def close(self):
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(self.pid, 0)
+        except (ChildProcessError, OSError):
+            pass
+
+
+# Both patterns use [ \t] rather than \s on purpose. \s matches newlines, so
+# on a header line whose value is EMPTY — which happens whenever stty has no
+# terminal to report — \s+ swallows the line ending and captures the NEXT
+# line instead. That silently compared the wrong field.
+def last_total(text, name):
+    """Return the probe's own counter for a signal, or 0."""
+    totals = re.findall(rf">>> {name}[ \t]+received \(total: (\d+)\)", text)
+    return int(totals[-1]) if totals else 0
+
+
+def header_field(text, key):
+    match = re.search(rf"^{key}:[ \t]*(.*)$", text, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def measure(profile, label):
+    """Drive one probe run and return what it observed."""
+    print(f"\n── {label} ──")
+    session = Session(["inner", "run", "-p", profile])
+    try:
+        if not session.expect(BANNER):
+            report(False, f"{label}: the probe never started (got {len(session.buf)} bytes)")
+            return None
+
+        header = session.buf
+
+        # Three separate keypresses, spaced so each is delivered on its own.
+        # If a hop in the chain duplicated them, the counter would reach 6.
+        for _ in range(3):
+            session.send(CTRL_C)
+            session.read_for(0.6)
+        session.expect(">>> SIGINT", timeout=3)
+        sigint = last_total(session.buf, "SIGINT")
+
+        session.resize(40, 100)
+        session.expect(">>> SIGWINCH", timeout=5)
+        sigwinch = last_total(session.buf, "SIGWINCH")
+
+        session.send(b"hello\r")
+        echoed = session.expect("echo: hello", timeout=5)
+
+        session.send(b"q\r")
+        session.read_for(2)
+
+        return {
+            "sigint": sigint,
+            "sigwinch": sigwinch,
+            "echoed": echoed,
+            "tty_ok": "controlling terminal intact" in header,
+            "termios": header_field(header, "termios"),
+            "parent": header_field(header, "parent"),
+            "proxy": header_field(header, "proxy"),
+            "output": session.buf,
+        }
+    finally:
+        session.close()
+
+
+def main():
+    os.chdir(HERE)
+
+    # A pseudo-terminal is the one thing this test cannot work around: inside a
+    # container or another sandbox /dev/pts/ptmx is often absent.
+    try:
+        master, slave = os.openpty()
+        os.close(master)
+        os.close(slave)
+    except OSError as exc:
+        skip(f"no pseudo-terminal available here ({exc}); cannot run the PTY test")
+        return 77
+
+    print("── PTY test: signals and terminal state through the relay ──")
+
+    base = measure(BASELINE, "baseline (no relay)")
+    if base is None:
+        return 1
+    relay = measure(RELAY, "with the network relay")
+    if relay is None:
+        return 1
+
+    print("\n── comparison ──")
+
+    # The relay must be in the chain at all, or the whole comparison is two
+    # identical runs agreeing about nothing.
+    report("__net-relay" in relay["parent"],
+           f"the relay run really has the relay as its parent ({relay['parent'][:40]!r})")
+    report("__net-relay" not in base["parent"],
+           "the baseline run has no relay in the chain")
+    report(relay["proxy"].startswith("HTTPS_PROXY=http://"),
+           f"the relay run has the proxy environment set ({relay['proxy']})")
+
+    # The actual claim: the relay changes nothing about signal delivery.
+    report(base["sigint"] == relay["sigint"],
+           f"Ctrl-C reaches the entrypoint the same number of times "
+           f"(baseline {base['sigint']}, relay {relay['sigint']}, for 3 keypresses)")
+    if base["sigint"] != 3:
+        print(f"  [NOTE] the baseline delivers {base['sigint']} SIGINT for 3 keypresses. "
+              f"That is not caused by the relay, but it is worth knowing: a TUI whose "
+              f"quit gesture is 'press Ctrl-C twice' would see each press as "
+              f"{base['sigint'] / 3:g}.")
+
+    report(base["sigwinch"] > 0 and relay["sigwinch"] > 0,
+           f"a resize reaches the entrypoint in both runs "
+           f"(baseline {base['sigwinch']}, relay {relay['sigwinch']})")
+
+    report(base["tty_ok"] and relay["tty_ok"],
+           "the controlling terminal survives in both runs")
+    report(base["echoed"] and relay["echoed"],
+           "typed input is echoed back in both runs")
+    # Comparing two empty strings would be a vacuous pass: stty reports nothing
+    # when it has no terminal, and "they match" would then mean "neither run
+    # measured anything". Require a value before treating the comparison as
+    # evidence.
+    if not base["termios"] or not relay["termios"]:
+        report(False, "terminal settings could not be read (stty reported nothing) — "
+                      "the comparison would prove nothing")
+    else:
+        report(base["termios"] == relay["termios"],
+               "terminal settings are identical in both runs: the relay does not touch termios"
+               if base["termios"] == relay["termios"] else
+               f"terminal settings DIFFER: baseline {base['termios']!r} vs relay {relay['termios']!r}")
+
+    print("\n────────────────────────────────")
+    print(f"Result: {len(PASS)} passed, {len(FAIL)} failed")
+    if FAIL:
+        print("\nFailed checks:")
+        for f in FAIL:
+            print(f"  - {f}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
