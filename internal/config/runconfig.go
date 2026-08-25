@@ -30,6 +30,10 @@ type RunConfig struct {
 	// contributed it ("capability:claude", "profile"), so --dry-run and the
 	// remote-profile consent prompt can answer "why is this domain open?".
 	NetworkAllowOrigin map[string]string
+	// NetProxySocketPath is the HOST path of the allowlist proxy's unix socket.
+	// Set by cmd/inner when NetworkMode is NetworkAllowlist; the isolator
+	// bind-mounts it into the sandbox. Empty means no proxy is running.
+	NetProxySocketPath string
 	Clipboard          bool
 	// PidNamespace requests a private PID namespace for the sandbox
 	// (bwrap --unshare-pid). True by default; resolved by toRunConfig from

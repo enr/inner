@@ -10,6 +10,18 @@ S2 — network allowlist proxy
  the shared appendHomeAllowIfHidden helper. "allowlist" is a reserved name the
  validator refuses until the proxy ships.
 
+ Also LANDED: the wiring — applyNetworkProxy in prepareSandbox, the socket bind
+ and proxy environment in bwrap.go, the dry-run output — so
+ network_mode = "allowlist" is accepted and enforced. Verified against a real
+ bwrap on this machine: the socket is bind-mounted and HTTP(S)_PROXY point at
+ the relay; a direct connection bypassing the proxy fails (no route, no DNS);
+ an allowed domain returns 200 through the proxy; a domain outside the list is
+ refused with its reason; the cloud metadata endpoint and host loopback are
+ refused even when listed in network_allow; network_deny overrides an allow
+ entry; and `inner verify` reports "network restricted" as a pass. What the
+ .sdlc/e2e section below still owes is that same sequence as an automated,
+ repeatable script.
+
  Also LANDED: the relay (cmd/inner/cmd_net_relay.go) and internal/netproxy in full — the decision layer (ParseTarget,
  Policy.AllowsHost, Policy.AllowsAddr, the AllowPrivateDestinations test seam)
  and the CONNECT/plain-HTTP server on top of it, with its timeouts, concurrency
@@ -537,12 +549,20 @@ S2 — network allowlist proxy
    or an allowlist profile would report an open network and SKIP the probe.
    The Checker field is now NetworkMode (NetworkEnabled is gone); an empty
    value means "unknown" and the probe runs, which is the safe default.
- - Verify and run now share prepareSandbox (cmd/inner/sandbox_prepare.go,
-   LANDED), so the sandbox the checks are judged against is the one a run
-   actually gets, and the places the two commands differ are named fields on
-   sandboxOptions with the reason recorded on each. That is where the proxy
-   step goes: it cannot silently skip verify the way capability mounts and
-   safe-rw mounts had.
+ - Verify and run share prepareSandbox (cmd/inner/sandbox_prepare.go, LANDED),
+   so the sandbox the checks are judged against is the one a run actually gets,
+   and the places the two commands differ are named fields on sandboxOptions
+   with the reason recorded on each.
+
+   RESOLVED: verify DOES get the socket and the relay. The objection that keeps
+   capability handlers out of it does not apply — the proxy has no side effects
+   outside the run (a listener on a unix socket in a private temp directory,
+   removed when the run ends), and a conformance check that certifies a
+   materially different sandbox than the user runs is not a weaker check, it is
+   false assurance. This required making the entrypoint final BEFORE
+   prepareSandbox in runVerifyOutside: the proxy step wraps the entrypoint, and
+   verify used to replace it afterwards, which would have thrown the relay away
+   and left a socket nothing routed to.
 
    The one difference that is a real decision rather than an omission:
    capability handlers do NOT run under verify. They are not pure mount
@@ -553,12 +573,11 @@ S2 — network allowlist proxy
    mounts; closing that means splitting each handler's mount injection from its
    pre-flight actions, which is its own change.
 
-   Still to decide for the proxy specifically: whether verify gets the socket
-   and the relay. Without them the network-policy check under allowlist passes
-   trivially and proves only the floor (no direct socket escape), never the
-   proxy path. Explicitly out of scope either way: asserting that a specific
-   allowed domain is actually reachable — that is environment dependent and not
-   what a static conformance check should assert.
+   The network-policy check still proves only the floor (no direct socket
+   escape), which is the right scope for it: asserting that a specific allowed
+   domain is actually reachable is environment dependent and not what a static
+   conformance check should assert. The difference is that it now proves that
+   floor about the sandbox the user really gets.
  - cmd_run.go printDryRun: extend the network: %v line to show the mode and,
    for allowlist, the effective allow list WITH its provenance
    (api.anthropic.com [capability:claude], github.com [profile]) — without

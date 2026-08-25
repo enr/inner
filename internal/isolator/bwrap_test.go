@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/enr/inner/internal/config"
+	"github.com/enr/inner/internal/netproxy"
 	"github.com/enr/inner/internal/runtime"
 )
 
@@ -1148,4 +1149,137 @@ func TestBuild_containersConf_setenvAfterClearenv(t *testing.T) {
 	if setenv < clearenv {
 		t.Errorf("--setenv CONTAINERS_CONF_OVERRIDE must come after --clearenv, got %v", args)
 	}
+}
+
+// ── Network allowlist proxy ───────────────────────────────────────────────────
+
+// In allowlist mode the sandbox keeps its private namespace AND gets the one
+// socket that leads out of it, plus every environment variable an HTTP client
+// might consult to find the proxy.
+func TestBuild_allowlistBindsTheProxySocketAndSetsTheProxyEnv(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		NetworkMode:        config.NetworkAllowlist,
+		NetProxySocketPath: "/tmp/inner-net-abc/proxy.sock",
+		Entrypoint:         config.Entrypoint{Cmd: "sh"},
+	})
+
+	if !hasFlag(args, "--unshare-net") {
+		t.Error("allowlist mode must still isolate the network namespace")
+	}
+	if !hasPair(args, "--ro-bind", "/tmp/inner-net-abc/proxy.sock") {
+		t.Errorf("proxy socket was not bind-mounted: %v", args)
+	}
+	if !hasPair(args, "--dir", "/tmp/inner") {
+		t.Errorf("the mount point directory was not created: %v", args)
+	}
+
+	// All four spellings: Go checks the upper and lower case forms, and non-Go
+	// tools are split between them. Missing one is a tool with no network.
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if v := setenvValue(args, key); v != netproxy.ProxyURL() {
+			t.Errorf("%s = %q, want %q", key, v, netproxy.ProxyURL())
+		}
+	}
+	// Forced empty so a profile-set NO_PROXY cannot punch a bypass.
+	for _, key := range []string{"NO_PROXY", "no_proxy"} {
+		if v := setenvValue(args, key); v != "" {
+			t.Errorf("%s = %q, want it forced empty", key, v)
+		}
+	}
+	// Node 26+ ignores the proxy env for fetch()/undici without this.
+	if v := setenvValue(args, "NODE_USE_ENV_PROXY"); v != "1" {
+		t.Errorf("NODE_USE_ENV_PROXY = %q, want \"1\"", v)
+	}
+}
+
+// bwrap applies --clearenv when it parses it, wiping every --setenv that came
+// before. The proxy variables would be silently erased if this block were
+// emitted too early — and the symptom would be an agent with no network and no
+// explanation.
+func TestBuild_proxyEnvIsEmittedAfterClearenv(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		NetworkMode:        config.NetworkAllowlist,
+		NetProxySocketPath: "/tmp/inner-net-abc/proxy.sock",
+		Entrypoint:         config.Entrypoint{Cmd: "sh"},
+	})
+
+	clearenv := indexOfFlag(args, "--clearenv")
+	if clearenv < 0 {
+		t.Fatal("expected --clearenv by default")
+	}
+	proxy := indexOfSetenv(args, "HTTP_PROXY")
+	if proxy < 0 {
+		t.Fatal("HTTP_PROXY was not set")
+	}
+	if proxy < clearenv {
+		t.Errorf("HTTP_PROXY at %d is emitted before --clearenv at %d: bwrap would wipe it", proxy, clearenv)
+	}
+}
+
+// Without a socket path there is no proxy to point at, so pointing HTTP_PROXY
+// at one would leave every request failing for a reason nothing explains.
+func TestBuild_allowlistWithoutASocketSetsNoProxyEnv(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		NetworkMode: config.NetworkAllowlist,
+		Entrypoint:  config.Entrypoint{Cmd: "sh"},
+	})
+	if !hasFlag(args, "--unshare-net") {
+		t.Error("the namespace must still be isolated")
+	}
+	if indexOfSetenv(args, "HTTP_PROXY") >= 0 {
+		t.Error("HTTP_PROXY must not be set when no proxy socket is available")
+	}
+}
+
+func TestBuild_fullModeBindsNoProxySocket(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		NetworkMode:        config.NetworkFull,
+		NetProxySocketPath: "/tmp/inner-net-abc/proxy.sock",
+		Entrypoint:         config.Entrypoint{Cmd: "sh"},
+	})
+	if indexOfSetenv(args, "HTTP_PROXY") >= 0 {
+		t.Error("full mode reaches the network directly; it must not be pointed at a proxy")
+	}
+}
+
+// hasPair reports whether flag is immediately followed by value.
+func hasPair(args []string, flag, value string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func indexOfFlag(args []string, flag string) int {
+	for i, a := range args {
+		if a == flag {
+			return i
+		}
+	}
+	return -1
+}
+
+// indexOfSetenv returns the position of the LAST "--setenv key" for key, since
+// bwrap honours the last one it parses.
+func indexOfSetenv(args []string, key string) int {
+	last := -1
+	for i := 0; i < len(args)-2; i++ {
+		if args[i] == "--setenv" && args[i+1] == key {
+			last = i
+		}
+	}
+	return last
+}
+
+func setenvValue(args []string, key string) string {
+	if i := indexOfSetenv(args, key); i >= 0 {
+		return args[i+2]
+	}
+	return "\x00absent"
 }

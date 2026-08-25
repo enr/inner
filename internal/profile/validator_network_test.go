@@ -35,20 +35,48 @@ func TestValidate_network_unknownModeIsAnError(t *testing.T) {
 	}
 }
 
-// The name is reserved so the merge and resolution rules could be written once,
-// but this build cannot enforce it — so it must be refused loudly rather than
-// degrade into "off" (a broken agent) or "full" (a false sense of protection).
-func TestValidate_network_allowlistIsReservedNotSilent(t *testing.T) {
+// allowlist is accepted now that the proxy, the relay and the wiring exist.
+// An empty effective list is a warning, not an error: it is a real
+// configuration (a sandbox that can reach nothing) and there are legitimate
+// reasons to start from it, but it is never what someone meant to write.
+func TestValidate_network_allowlistIsAccepted(t *testing.T) {
+	p := &config.Profile{
+		Sandbox: config.SandboxConfig{
+			NetworkMode:  config.NetworkAllowlist,
+			NetworkAllow: []string{"api.anthropic.com"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	if r := Validate(p, ""); r.HasErrors() {
+		t.Errorf("allowlist mode should be accepted, got %v", r.Issues)
+	}
+}
+
+func TestValidate_allowlistWithNothingReachableWarns(t *testing.T) {
 	p := &config.Profile{
 		Sandbox:    config.SandboxConfig{NetworkMode: config.NetworkAllowlist},
 		Entrypoint: config.EntrypointConfig{Interactive: true},
 	}
 	r := Validate(p, "")
-	if !r.HasErrors() {
-		t.Fatalf("expected an error for the not-yet-implemented allowlist mode, got %v", r.Issues)
+	if r.HasErrors() {
+		t.Errorf("an empty allow list is a warning, not an error: %v", r.Issues)
 	}
-	if !issuesContain(r, LevelError, "not implemented yet") {
-		t.Errorf("error should say the mode is not implemented yet, got %v", r.Issues)
+	if !issuesContain(r, LevelWarning, "can reach nothing") {
+		t.Errorf("expected a warning about the empty effective list, got %v", r.Issues)
+	}
+}
+
+// A capability supplies the list, so declaring no network_allow of your own is
+// the normal case and must not warn.
+func TestValidate_allowlistWithCapabilityDefaultsDoesNotWarn(t *testing.T) {
+	p := &config.Profile{
+		Capabilities: []string{"claude"},
+		Sandbox:      config.SandboxConfig{NetworkMode: config.NetworkAllowlist},
+		Entrypoint:   config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if issuesContain(r, LevelWarning, "can reach nothing") {
+		t.Errorf("the claude capability supplies the list; this must not warn: %v", r.Issues)
 	}
 }
 

@@ -130,5 +130,16 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 		cleanups = append(cleanups, cleanupSafe)
 	}
 
+	// Last: the network proxy rewrites the entrypoint, so nothing after it may
+	// inspect rc.Entrypoint expecting the profile's own command. Shared by both
+	// commands — see applyNetworkProxy for why, unlike the capability handlers,
+	// verify gets this one too.
+	cleanupProxy, err := applyNetworkProxy(rc)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	cleanups = append(cleanups, cleanupProxy)
+
 	return cleanup, nil
 }

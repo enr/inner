@@ -11,6 +11,7 @@ import (
 
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/containers"
+	"github.com/enr/inner/internal/netproxy"
 	"github.com/enr/inner/internal/runtime"
 )
 
@@ -479,6 +480,42 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// ── Working directory ────────────────────────────────────────────────────
 	if cfg.Workdir != "" {
 		args = append(args, "--chdir", cfg.Workdir)
+	}
+
+	// ── Network allowlist proxy socket ───────────────────────────────────────
+	// In allowlist mode the sandbox has no route to anything (--unshare-net,
+	// emitted above). The only way out is this one unix socket, bind-mounted
+	// from the host, where the CONNECT proxy that enforces the allow list is
+	// listening. A read-only bind is enough: the EROFS check in the kernel's
+	// inode_permission covers regular files, directories and symlinks, not
+	// sockets, so connect(2) still succeeds.
+	//
+	// Like the containers.conf block above, this MUST stay after the environment
+	// section: bwrap applies --clearenv when it parses it, wiping every --setenv
+	// that came earlier.
+	if cfg.EffectiveNetworkMode() == config.NetworkAllowlist && cfg.NetProxySocketPath != "" {
+		// /tmp is already a writable tmpfs at this point, so --dir creates the
+		// directory without touching the read-only root, and the host's temp
+		// layout is not leaked into the sandbox.
+		args = append(args, "--dir", filepath.Dir(netproxy.SandboxSocketPath))
+		args = append(args, "--ro-bind", cfg.NetProxySocketPath, netproxy.SandboxSocketPath)
+
+		// All four spellings: Go's http.ProxyFromEnvironment checks the upper
+		// and lower case forms, and non-Go tools are split roughly evenly
+		// between them. Missing one means a tool that silently has no network.
+		for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+			args = append(args, "--setenv", key, netproxy.ProxyURL())
+		}
+		// Forced empty rather than left alone. With --clearenv there is nothing
+		// to inherit, so the case this actually covers is a profile that sets
+		// NO_PROXY in [env] set or turns on inherit_all: this block is emitted
+		// after the environment section, so it wins by position.
+		args = append(args, "--setenv", "NO_PROXY", "")
+		args = append(args, "--setenv", "no_proxy", "")
+		// Node 26+ ignores the proxy environment for fetch()/undici unless this
+		// is set, which would make an agent's HTTP calls bypass the proxy — and
+		// with no route out of the namespace, simply fail.
+		args = append(args, "--setenv", "NODE_USE_ENV_PROXY", "1")
 	}
 
 	// ── Entrypoint ───────────────────────────────────────────────────────────

@@ -125,9 +125,7 @@ func validateHome(r *Result, p *config.Profile) {
 //
 // An unknown mode is an error for the same reason an unknown home mode is:
 // falling back to a default would let a typo ("allowist", "none") produce a
-// sandbox whose network reach differs from what the profile claims. A mode
-// that is known but not yet enforceable by this build is an error too — it
-// must never degrade silently into either "off" or "full".
+// sandbox whose network reach differs from what the profile claims.
 //
 // The legacy [sandbox] network bool needs no check of its own: mergeProfiles
 // collapses the two fields into a coherent pair along the extends chain, so a
@@ -141,9 +139,6 @@ func validateNetwork(r *Result, p *config.Profile) {
 	if !slices.Contains(config.ValidNetworkModes, mode) {
 		r.addError(fmt.Sprintf("invalid [sandbox] network_mode %q (valid values: %v)", mode, config.ValidNetworkModes))
 		return
-	}
-	if mode == config.NetworkAllowlist {
-		r.addError(`[sandbox] network_mode = "allowlist" is reserved but not implemented yet in this build — use "off" or "full"`)
 	}
 }
 

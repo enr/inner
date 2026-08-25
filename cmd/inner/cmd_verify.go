@@ -28,15 +28,6 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 		return err
 	}
 
-	// Host-side sandbox preparation, shared with `inner run` so the sandbox
-	// these checks are judged against is the one a run actually gets. The steps
-	// verify opts out of, and why, are on sandboxOptions.
-	cleanupPrep, err := prepareSandbox(rc, verifySandboxOptions())
-	if err != nil {
-		return err
-	}
-	defer cleanupPrep()
-
 	// Resolve the inner binary path so it can be invoked inside the sandbox.
 	// os.Executable() returns the real path; with --ro-bind / / it is accessible
 	// at the same path inside.
@@ -61,6 +52,20 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 		Args:        innerArgs,
 		Interactive: false,
 	}
+
+	// Only now is the entrypoint final, which is what prepareSandbox requires:
+	// under network_mode = "allowlist" it wraps the entrypoint in the relay, so
+	// anything that replaces rc.Entrypoint afterwards would throw the relay away
+	// and leave the sandbox with a proxy socket nothing routes to.
+	//
+	// Host-side sandbox preparation, shared with `inner run` so the sandbox
+	// these checks are judged against is the one a run actually gets. The steps
+	// verify opts out of, and why, are on sandboxOptions.
+	cleanupPrep, err := prepareSandbox(rc, verifySandboxOptions())
+	if err != nil {
+		return err
+	}
+	defer cleanupPrep()
 
 	// Pass context to the inside invocation via environment.
 	if rc.Env.Set == nil {

@@ -17,14 +17,12 @@ const (
 	// network = true.
 	NetworkFull = "full"
 	// NetworkAllowlist gives the sandbox a private network namespace like
-	// NetworkOff and routes its HTTP(S) traffic through a host-side proxy that
-	// enforces a domain allowlist.
+	// NetworkOff, and routes its HTTP(S) traffic through a host-side proxy that
+	// enforces a domain allowlist (see internal/netproxy and network.md).
 	//
-	// RESERVED, NOT IMPLEMENTED YET (see network.md / NONO_COMPARISON.md §S2).
-	// The name is defined here so the merge and resolution rules below are
-	// written once and stay stable; the validator rejects it until the proxy
-	// ships. Every consumer that switches on a mode must treat it as
-	// fail-closed (no network) rather than falling through to NetworkFull.
+	// Every consumer that switches on a mode must treat anything that is not
+	// NetworkFull as fail-closed (no direct network), so a mode a given binary
+	// cannot enforce can never silently mean "open network".
 	NetworkAllowlist = "allowlist"
 )
 

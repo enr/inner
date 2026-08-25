@@ -742,6 +742,24 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 	}
 	fmt.Fprintf(w, "home:        %s\n", homeMode)
 	fmt.Fprintf(w, "network:     %s\n", rc.EffectiveNetworkMode())
+	if rc.EffectiveNetworkMode() == config.NetworkAllowlist {
+		// With four layers feeding the list, "why is this domain open?" is the
+		// question this output exists to answer, so each entry names the layer
+		// that contributed it.
+		if len(rc.NetworkAllow) == 0 {
+			fmt.Fprintln(w, "  allow: (empty — the sandbox can reach nothing)")
+		}
+		for _, entry := range rc.NetworkAllow {
+			if origin := rc.NetworkAllowOrigin[entry]; origin != "" {
+				fmt.Fprintf(w, "  allow: %s [%s]\n", entry, origin)
+			} else {
+				fmt.Fprintf(w, "  allow: %s\n", entry)
+			}
+		}
+		for _, entry := range rc.NetworkDeny {
+			fmt.Fprintf(w, "  deny:  %s\n", entry)
+		}
+	}
 	fmt.Fprintf(w, "pid-ns:      %v\n", rc.PidNamespace)
 	if rc.ContainersConfPath != "" {
 		fmt.Fprintf(w, "containers:  cgroup_manager override at %s\n", rc.ContainersConfPath)
