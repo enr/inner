@@ -28,6 +28,7 @@ weight: 7
 | Clone a profile | `inner profile clone <src> <dest>` |
 | Validate all profiles | `inner profile validate --all` |
 | Install from URL | `inner profile install <url>` |
+| Install pinned to a digest | `inner profile install <url> --sha256 <digest>` |
 
 ## Running Sandboxes
 

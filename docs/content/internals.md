@@ -34,6 +34,81 @@ CLI overrides (`applyOverrides` in `cmd_run.go`) are applied on top of the loade
 
 ---
 
+## The trust boundary: profiles downloaded from a URL
+
+A local profile is trusted: the user wrote it, or installed it deliberately. A
+profile fetched by `inner run <https://…>` is not — and it controls **every**
+input of layer 1: the entrypoint that executes, the network, whether the host
+environment is forwarded (`inherit_all`), which credentials stay visible
+(`[sandbox] allow`), the mounts. Without a boundary, one URL means "run this
+command on my machine with my secrets", which is precisely what the sandbox
+exists to prevent.
+
+The boundary lives in `cmd/inner/remote_profile.go` and is applied in
+`runSandbox` **after** `Loader.Build()` (so it sees the merged config, `extends`
+included) and **before** `applyOverrides` (so the user's own CLI flags are
+applied on top of the hardened profile, never underneath it):
+
+```
+fetch bytes ─► --sha256 pin ─► temp file ─► Loader.Build ─► gateRemoteProfile ─► applyOverrides ─► …
+                                                             │
+                                          hardenRemoteProfile ┴ consent prompt
+```
+
+### What the hardening removes
+
+`hardenRemoteProfile(rc *config.RunConfig)` mutates the built `RunConfig` and
+returns one line per change, which the gate prints:
+
+| Setting requested by the profile | Result | Why |
+|----------------------------------|--------|-----|
+| `[env] inherit_all = true` | ignored | forwards every exported host secret (`AWS_*`, `GITHUB_TOKEN`, …) |
+| `[env] inherit = [...]` with a secret-looking name (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*PASSWD*`, `*CREDENTIAL*`, `*KEY*`, `*AUTH*`, `*SESSION*`) | entry dropped | otherwise the profile just names the secret it wants instead of asking for all of them |
+| `[sandbox] allow` key in `config.CredentialAllowKeys` | key dropped | un-hides a readable credential from the [hide table](#sensitive-resource-hiding) |
+| `[sandbox] allow = ["docker-socket" \| "podman-socket" \| "nested-user-ns"]` | key dropped | a container socket is root on the host; nested user namespaces grant caps |
+| `[sandbox] pid_namespace = false` | ignored | host `/proc/<pid>/environ` is readable, defeating `--clearenv` (see [process isolation](#process-isolation---unshare-pid)) |
+
+The remaining allow keys (`env-secrets`, `shims-active`, `network-policy`) only
+downgrade an `inner verify` check and carry no host privilege, so they survive.
+
+### What the hardening deliberately keeps
+
+`network`, the entrypoint and its args, mounts and capabilities are **not**
+stripped. They are what a profile exists to describe — forcing `network = false`
+would break every remote agent profile — and the hardening above already removes
+the host secrets that make an open network an exfiltration channel. They are
+reported by `remoteProfileRequests` and gated by consent instead.
+
+### Consent and pinning
+
+`gateRemoteProfile` prints the source URL, the sha256 of the exact bytes
+fetched, each hardening applied, and what the profile still asks for; then it
+blocks on `run this downloaded profile? [y/N]`.
+
+- `--yes` does **not** answer it. That flag skips routine confirmations (keyring
+  unlock, implicit workdir); treating it as blanket trust for downloaded code
+  would make the gate disappear from every script that already passes it.
+- `--allow-remote` is the explicit consent, and the only way through in a
+  non-interactive run: with no terminal on stdin and no flag, the run is
+  **refused**, never silently accepted (`stdinIsTerminal`, overridable in tests).
+- `--trust-remote` skips the hardening *and* counts as consent.
+- `--dry-run` prints the summary and proceeds — nothing executes.
+- `--sha256 <digest>` (bare or `sha256:`-prefixed, any case) is checked against
+  the fetched bytes before they are ever parsed; a mismatch aborts. The digest is
+  printed after every download, so pinning is a copy-paste. Passing `--sha256`
+  with a local profile is an error, not a silent no-op.
+
+### Why `inner profile install` is not gated
+
+`inner profile install <url>` writes the TOML into `~/.config/inner/profiles/`,
+and from that moment it is a **local** profile: `inner run -p <name>` applies
+neither the hardening nor the prompt. That is intentional — installing is the
+explicit act of trust, and re-asking on every run would train the user to answer
+`y`. To keep the decision informed, the install prints the sha256 and every
+validation warning the profile produces, and accepts the same `--sha256` pin.
+
+---
+
 ## How bwrap flags are decided
 
 `Build` assembles args in sections, in this order:

@@ -42,6 +42,10 @@ inner run [flags] [-- extra-args]
 | `--limit-cpu` | | string | resolved (see profiles) | Override the CPU cap (`"200%"` or `"2.0"` cores). |
 | `--limit-pids` | | int | resolved (see profiles) | Override the max process count (`0` = no override, keep the resolved value). |
 | `--dry-run` | | bool | false | Print the resolved config and `bwrap` command without executing |
+| `--yes` | `-y` | bool | false | Skip the routine confirmation prompts (keyring unlock, implicit workdir). Deliberately does **not** consent to a profile downloaded from a URL |
+| `--allow-remote` | | bool | false | Consent to running a profile downloaded from a URL, without the interactive prompt. Required when there is no terminal on stdin |
+| `--trust-remote` | | bool | false | Run a downloaded profile **unhardened** (implies `--allow-remote`) |
+| `--sha256` | | string | — | Pin the sha256 of a profile downloaded from a URL; abort on mismatch. Rejected for a local profile |
 
 ### Extra arguments
 
