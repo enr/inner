@@ -233,13 +233,58 @@ Display the TOML content of a profile:
 inner profile show claude-interactive
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--explain` | Append an explanation of each declared capability (injected mounts, pre-run actions, notes) |
+With no argument it shows the **current profile** — the one a bare `inner run`
+would use: `default_profile` from the project config in the conventional path
+(`.config/inner.toml`, `.config/inner/config.toml`, `inner.toml`, …), then the
+user config, falling back to `default`. A header line names the profile and the
+file it was read from:
 
 ```bash
-# Show profile content with capability details
+inner profile show
+# current profile: project-shell (/home/me/projects/myapp/.config/inner/profiles/project-shell.toml)
+```
+
+The raw TOML is followed by the **resolved network settings** as TOML comments.
+Many profiles (especially ones written before `network_mode` existed) say nothing
+about network at all; silence resolves to `off` — a private, empty network
+namespace — and this line is the only place that is visible:
+
+```toml
+schema_version = "1"
+name = "legacy"
+
+[entrypoint]
+cmd = "bash"
+
+# resolved network: off — private empty netns, no outbound connection possible
+```
+
+In `allowlist` mode the comments also list every effective destination with the
+layer that contributed it. The block is comments, so the output stays valid TOML.
+
+| Flag | Description |
+|------|-------------|
+| `--explain` | Append the effective network settings and an explanation of each declared capability (injected mounts, pre-run actions, notes) |
+| `--resolved` | Print the effective profile after resolving `extends`, capabilities and the network allow list |
+
+```bash
+# Show profile content with network and capability details
 inner profile show claude-interactive --explain
+```
+
+The network section of `--explain` shows the model actually applied and, in
+`allowlist` mode, every destination with the layer that contributed it — the
+capability defaults, a `@group` reference, or the profile itself:
+
+```
+── network ───────────────────────────────────────────────────────
+  mode: allowlist
+  allow:
+    api.anthropic.com                        [capability:claude]
+    registry.npmjs.org                       [group:npm]
+    example.com                              [profile]
+  deny:
+    telemetry.example.com
 ```
 
 ### `inner profile new`

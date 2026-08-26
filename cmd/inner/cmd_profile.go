@@ -185,9 +185,31 @@ func (a *App) profileList(w io.Writer, wide bool) error {
 	return tw.Flush()
 }
 
-// profileShow writes the raw TOML content of a named profile to w.
+// profileShow writes the raw TOML content of a named profile to w, followed by
+// the resolved network settings as TOML comments.
 // nameOrPath may be a profile name or an explicit file path.
+//
+// The trailing comment block exists for the profiles that say nothing about
+// network at all: silence resolves to network_mode = "off" (the legacy
+// network = false), and a profile written before the field existed gives the
+// reader no way to know that from its own text. Comments keep the output
+// pipeable as TOML.
 func (a *App) profileShow(w io.Writer, nameOrPath string) error {
+	if err := a.profileShowRaw(w, nameOrPath); err != nil {
+		return err
+	}
+	p, err := a.loader.LoadProfileAuto(nameOrPath)
+	if err != nil {
+		return nil // graceful degradation: raw TOML already shown
+	}
+	fmt.Fprintln(w)
+	printProfileNetworkComment(w, p)
+	return nil
+}
+
+// profileShowRaw writes the raw TOML content of a named profile to w and
+// nothing else.
+func (a *App) profileShowRaw(w io.Writer, nameOrPath string) error {
 	path := a.loader.ResolveProfilePath(nameOrPath)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -211,6 +233,12 @@ func (a *App) profileShowResolved(w io.Writer, nameOrPath string) error {
 	if err != nil {
 		return fmt.Errorf("resolving profile %q: %w", nameOrPath, err)
 	}
+	// The network settings a run actually applies are not the ones written in
+	// the file: the mode may come from the legacy bool, and the allow list is
+	// the union of capability defaults, "@group" references and profile
+	// entries. Resolve them here so "resolved" means resolved for network too.
+	p.Sandbox.NetworkMode = config.ResolveNetworkMode(p.Sandbox)
+	p.Sandbox.NetworkAllow, _ = config.ResolveNetworkAllow(p.Sandbox, p.Capabilities)
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {
 		return fmt.Errorf("encoding resolved profile: %w", err)
@@ -228,15 +256,26 @@ func (a *App) profileShowResolved(w io.Writer, nameOrPath string) error {
 // capabilities inherited via extends). If the merged profile cannot be loaded,
 // the capability section is silently omitted so the raw TOML is always shown.
 func (a *App) profileShowExplain(w io.Writer, nameOrPath string) error {
-	// 1. Print the raw TOML file (same as profileShow).
-	if err := a.profileShow(w, nameOrPath); err != nil {
+	// 1. Print the raw TOML file, without the network comment block: the
+	//    section printed below says the same thing in full.
+	if err := a.profileShowRaw(w, nameOrPath); err != nil {
 		return err
 	}
 
 	// 2. Load the merged profile to resolve inherited capabilities.
 	p, err := a.loader.LoadProfileAuto(nameOrPath)
-	if err != nil || len(p.Capabilities) == 0 {
+	if err != nil {
 		return nil // graceful degradation: raw TOML already shown
+	}
+
+	// The effective network settings first: they are the part of a profile
+	// least visible in the raw TOML, because the mode can come from the legacy
+	// bool and the allow list from capabilities and "@group" references.
+	fmt.Fprintln(w)
+	printProfileNetwork(w, p)
+
+	if len(p.Capabilities) == 0 {
+		return nil
 	}
 
 	fmt.Fprintln(w)
@@ -250,15 +289,97 @@ func (a *App) profileShowExplain(w io.Writer, nameOrPath string) error {
 	return nil
 }
 
-// printCapabilityExplain writes a formatted capability section to w.
-func printCapabilityExplain(w io.Writer, name string, e CapabilityExplain) {
+// printProfileNetwork writes the effective network settings of a merged
+// profile: the resolved mode and, in allowlist mode, every destination with the
+// layer that contributed it ("why is this domain open?").
+func printProfileNetwork(w io.Writer, p *config.Profile) {
+	printExplainHeader(w, "network")
+
+	mode := config.ResolveNetworkMode(p.Sandbox)
+	fmt.Fprintf(w, "  mode: %s (%s)\n", mode, networkModeSummary(mode))
+	if mode != config.NetworkAllowlist {
+		return
+	}
+
+	allow, origins := config.ResolveNetworkAllow(p.Sandbox, p.Capabilities)
+	if len(allow) == 0 {
+		fmt.Fprintln(w, "  allow: (empty — the sandbox can reach nothing)")
+	} else {
+		fmt.Fprintln(w, "  allow:")
+		for _, entry := range allow {
+			if origin := origins[entry]; origin != "" {
+				fmt.Fprintf(w, "    %-40s [%s]\n", entry, origin)
+			} else {
+				fmt.Fprintf(w, "    %s\n", entry)
+			}
+		}
+	}
+	if len(p.Sandbox.NetworkDeny) > 0 {
+		fmt.Fprintln(w, "  deny:")
+		for _, entry := range p.Sandbox.NetworkDeny {
+			fmt.Fprintf(w, "    %s\n", entry)
+		}
+	}
+	if missing := config.CapabilitiesWithoutNetworkDefaults(p.Capabilities); len(missing) > 0 {
+		fmt.Fprintf(w, "  note: no egress defaults for capability %s — list its domains in network_allow\n",
+			strings.Join(missing, ", "))
+	}
+}
+
+// printProfileNetworkComment writes the resolved network settings as TOML
+// comments: the one-line answer to "what does this profile do about network?",
+// for the default (raw) output of `profile show`.
+func printProfileNetworkComment(w io.Writer, p *config.Profile) {
+	mode := config.ResolveNetworkMode(p.Sandbox)
+	fmt.Fprintf(w, "# resolved network: %s — %s\n", mode, networkModeSummary(mode))
+
+	if mode != config.NetworkAllowlist {
+		return
+	}
+	allow, origins := config.ResolveNetworkAllow(p.Sandbox, p.Capabilities)
+	if len(allow) == 0 {
+		fmt.Fprintln(w, "#   allow: (empty — the sandbox can reach nothing)")
+	}
+	for _, entry := range allow {
+		if origin := origins[entry]; origin != "" {
+			fmt.Fprintf(w, "#   allow: %s [%s]\n", entry, origin)
+			continue
+		}
+		fmt.Fprintf(w, "#   allow: %s\n", entry)
+	}
+	for _, entry := range p.Sandbox.NetworkDeny {
+		fmt.Fprintf(w, "#   deny:  %s\n", entry)
+	}
+}
+
+// networkModeSummary returns the one-line description of a resolved mode.
+func networkModeSummary(mode string) string {
+	switch mode {
+	case config.NetworkOff:
+		return "private empty netns, no outbound connection possible"
+	case config.NetworkFull:
+		return "host network, the sandbox reaches anything the host reaches"
+	case config.NetworkAllowlist:
+		return "private netns, HTTP(S) egress via the allowlist proxy"
+	default:
+		return "unrecognised mode — treated as fail-closed (no direct network)"
+	}
+}
+
+// printExplainHeader writes a "── <title> ───…" rule of a fixed width.
+func printExplainHeader(w io.Writer, title string) {
 	const lineWidth = 70
-	header := "── capability: " + name + " "
+	header := "── " + title + " "
 	dashes := lineWidth - len(header)
 	if dashes < 4 {
 		dashes = 4
 	}
 	fmt.Fprintf(w, "%s%s\n", header, strings.Repeat("─", dashes))
+}
+
+// printCapabilityExplain writes a formatted capability section to w.
+func printCapabilityExplain(w io.Writer, name string, e CapabilityExplain) {
+	printExplainHeader(w, "capability: "+name)
 
 	if len(e.Mounts) > 0 {
 		fmt.Fprintln(w, "  mounts injected at runtime:")
@@ -523,22 +644,33 @@ func (a *App) profileListCmd() *cobra.Command {
 func (a *App) profileShowCmd() *cobra.Command {
 	var explain, resolved bool
 	cmd := &cobra.Command{
-		Use:   "show NAME|PATH",
-		Short: "Print the contents of a profile (name or file path)",
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return fmt.Errorf("requires a profile name or path\n\nUsage: %s", cmd.UseLine())
-			}
-			return cobra.ExactArgs(1)(cmd, args)
-		},
+		Use:   "show [NAME|PATH]",
+		Short: "Print the contents of a profile (default: the current profile)",
+		Long: "Print the contents of a profile (name or file path).\n\n" +
+			"With no argument it shows the current profile: the one a bare `inner run`\n" +
+			"would use, i.e. default_profile from the project config in the conventional\n" +
+			"path (.config/inner.toml, .config/inner/config.toml, inner.toml, …), then the\n" +
+			"user config, falling back to \"default\".",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			w := cmd.OutOrStdout()
+			target := ""
+			if len(args) > 0 {
+				target = args[0]
+			} else {
+				// No argument: show the profile this working directory is
+				// currently on, and say which one that is — otherwise the
+				// output gives no clue where it came from.
+				target = a.loader.DefaultProfileName()
+				fmt.Fprintf(w, "# current profile: %s (%s)\n", target, a.loader.ResolveProfilePath(target))
+			}
 			switch {
 			case resolved:
-				return a.profileShowResolved(cmd.OutOrStdout(), args[0])
+				return a.profileShowResolved(w, target)
 			case explain:
-				return a.profileShowExplain(cmd.OutOrStdout(), args[0])
+				return a.profileShowExplain(w, target)
 			default:
-				return a.profileShow(cmd.OutOrStdout(), args[0])
+				return a.profileShow(w, target)
 			}
 		},
 	}

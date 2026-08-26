@@ -78,10 +78,12 @@ empty home would hide the dotfiles and tools that make the shell useful.
 Existing installations are not modified: `inner init` never overwrites a profile
 you already have. See [migrating an existing profile](#migrating-to-isolated-home).
 
-Inspect any built-in profile:
+Inspect any built-in profile — or, with no argument, the current one (the
+profile a bare `inner run` would use):
 
 ```bash
 inner profile show claude-interactive
+inner profile show
 ```
 
 ## Contrib Profiles
@@ -1206,7 +1208,7 @@ Capabilities compose with `extends`: if a base profile declares `capabilities = 
 inner profile show claude-interactive --explain
 ```
 
-The `--explain` flag appends a `── capability: <name> ───` section to the output that lists the mounts injected, any pre-run actions (e.g. token refresh), and notes about the capability's behaviour.
+The `--explain` flag appends a `── network ───` section (the effective network model, and in `allowlist` mode every destination with the layer that contributed it) followed by a `── capability: <name> ───` section per capability, listing the mounts injected, any pre-run actions (e.g. token refresh), and notes about the capability's behaviour. A capability's egress defaults are the reason the two belong in the same output: they are added to the allow list without appearing anywhere in the profile file.
 
 ### Validator checks
 

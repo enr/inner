@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/enr/inner/internal/config"
 )
 
@@ -929,5 +930,241 @@ func TestProfileInstallFromURL_nameFromURLSegment(t *testing.T) {
 		if _, err := os.Stat(dest); err != nil {
 			t.Errorf("URL %s: expected file at %s: %v", tt.urlPath, dest, err)
 		}
+	}
+}
+
+// ── profile show: no argument, network section ───────────────────────────────
+
+// `inner profile show` with no argument shows the profile a bare `inner run`
+// would use: default_profile from the project config in the conventional path.
+func TestProfileShowCmd_noArgs_usesCurrentProfile(t *testing.T) {
+	app, dir, workDir := newTestAppWithWorkDir(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "other.toml"), `name = "other"`)
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner.toml"), `default_profile = "project-one"`)
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "project-one.toml"), `name = "project-one"`)
+
+	root := buildRootCmd(app)
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"profile", "show"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("profile show: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `name = "project-one"`) {
+		t.Errorf("expected the current profile's content, got:\n%s", out)
+	}
+	if !strings.Contains(out, "# current profile: project-one") {
+		t.Errorf("expected a header naming the current profile, got:\n%s", out)
+	}
+}
+
+// With no default_profile configured anywhere, the current profile is "default";
+// when that does not exist the command must say so rather than print nothing.
+func TestProfileShowCmd_noArgs_noDefaultProfile(t *testing.T) {
+	app, _ := newTestApp(t)
+
+	root := buildRootCmd(app)
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"profile", "show"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected an error when the current profile does not exist")
+	}
+	if !strings.Contains(err.Error(), `"default"`) {
+		t.Errorf("error should name the missing profile, got: %v", err)
+	}
+}
+
+// The allow list a run enforces is assembled from capability defaults, "@group"
+// references and profile entries; --explain must show that effective list, with
+// the layer each entry came from, since none of it is visible in the raw TOML.
+func TestProfileShowExplain_showsEffectiveNetwork(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "netprof.toml"), `
+schema_version = "1"
+name           = "netprof"
+capabilities   = ["claude"]
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["@npm", "example.com"]
+network_deny  = ["telemetry.example.com"]
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowExplain(&buf, "netprof"); err != nil {
+		t.Fatalf("profileShowExplain: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"── network ",
+		"mode: allowlist",
+		"api.anthropic.com",
+		"[capability:claude]",
+		"registry.npmjs.org",
+		"[group:npm]",
+		"example.com",
+		"[profile]",
+		"telemetry.example.com",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("explain output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// A profile with no capabilities still gets the network section: "mode: off" is
+// the answer to "what does this profile do about network?".
+func TestProfileShowExplain_noCapabilities_stillShowsNetwork(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "plain.toml"), `
+schema_version = "1"
+name = "plain"
+
+[sandbox]
+network = false
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowExplain(&buf, "plain"); err != nil {
+		t.Fatalf("profileShowExplain: %v", err)
+	}
+	if !strings.Contains(buf.String(), "mode: off") {
+		t.Errorf("expected the network section, got:\n%s", buf.String())
+	}
+}
+
+// --resolved is the effective profile, so its network_allow must be the resolved
+// union (groups expanded, capability defaults included), not the raw entries.
+func TestProfileShowResolved_expandsNetworkAllow(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "netprof.toml"), `
+schema_version = "1"
+name           = "netprof"
+capabilities   = ["claude"]
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["@npm"]
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowResolved(&buf, "netprof"); err != nil {
+		t.Fatalf("profileShowResolved: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "@npm") {
+		t.Errorf("group reference should be expanded in the resolved profile:\n%s", out)
+	}
+	for _, want := range []string{"registry.npmjs.org", "api.anthropic.com"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("resolved profile missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// A legacy profile that says nothing about network still resolves to a network
+// model — "off", fail-closed — and plain `profile show` must say so, since the
+// file itself gives the reader no clue.
+func TestProfileShow_legacyProfile_showsResolvedNetwork(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "legacy.toml"), `
+schema_version = "1"
+name = "legacy"
+
+[entrypoint]
+cmd = "bash"
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShow(&buf, "legacy"); err != nil {
+		t.Fatalf("profileShow: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "# resolved network: off") {
+		t.Errorf("expected the resolved network comment, got:\n%s", out)
+	}
+	// The block must stay comments so the output is still parseable as TOML.
+	if _, err := toml.Decode(out, &config.Profile{}); err != nil {
+		t.Errorf("show output is no longer valid TOML: %v\n%s", err, out)
+	}
+}
+
+// The legacy network = true bool resolves to "full"; plain show must name the
+// resolved mode, not echo the bool.
+func TestProfileShow_legacyNetworkBool_showsFull(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "legacy-net.toml"), `
+schema_version = "1"
+name = "legacy-net"
+
+[sandbox]
+network = true
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShow(&buf, "legacy-net"); err != nil {
+		t.Fatalf("profileShow: %v", err)
+	}
+	if !strings.Contains(buf.String(), "# resolved network: full") {
+		t.Errorf("expected mode full, got:\n%s", buf.String())
+	}
+}
+
+// In allowlist mode the comment block carries the effective destinations and
+// the layer each came from, like the --explain section.
+func TestProfileShow_allowlist_commentsListDestinations(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "al.toml"), `
+schema_version = "1"
+name           = "al"
+capabilities   = ["claude"]
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = ["@npm"]
+network_deny  = ["telemetry.example.com"]
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShow(&buf, "al"); err != nil {
+		t.Fatalf("profileShow: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"# resolved network: allowlist",
+		"#   allow: api.anthropic.com [capability:claude]",
+		"#   allow: registry.npmjs.org [group:npm]",
+		"#   deny:  telemetry.example.com",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("show output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// --explain prints its own network section; the raw TOML above it must not
+// repeat the same thing as comments.
+func TestProfileShowExplain_doesNotRepeatNetworkComment(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "plain2.toml"), `
+schema_version = "1"
+name = "plain2"
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileShowExplain(&buf, "plain2"); err != nil {
+		t.Fatalf("profileShowExplain: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "# resolved network:") {
+		t.Errorf("--explain should print the network section only once:\n%s", out)
+	}
+	if !strings.Contains(out, "mode: off") {
+		t.Errorf("expected the network section, got:\n%s", out)
 	}
 }
