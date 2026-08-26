@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"net"
 	"os"
 	"path/filepath"
@@ -119,6 +120,21 @@ func TestApplyNetworkProxy_resolvesAnEmptyEntrypointLikeTheIsolatorDoes(t *testi
 	}
 }
 
+// Under `go test` stderr is a pipe, never a terminal, so this pins the half of
+// the condition a test can observe: a TUI entrypoint alone does not defer.
+// Deferring when nothing can be corrupted would only delay the diagnosis of a
+// run whose stderr was redirected to a file on purpose.
+func TestDeferDenyLog_needsATerminalAsWellAsATUI(t *testing.T) {
+	tui := &config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "claude", TUI: true}}
+	if deferDenyLog(tui) {
+		t.Error("refusals were deferred although stderr is not a terminal")
+	}
+	shell := &config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "bash", Interactive: true}}
+	if deferDenyLog(shell) {
+		t.Error("refusals were deferred for a line-oriented entrypoint, where they are useful immediately")
+	}
+}
+
 // verify certifies the sandbox a run gets, so it must build the same one. The
 // objection that keeps capability handlers out of verify does not apply: the
 // proxy touches nothing outside the run.
@@ -140,5 +156,43 @@ func TestPrepareSandbox_verifyAlsoGetsTheNetworkProxy(t *testing.T) {
 	}
 	if len(rc.Entrypoint.Args) == 0 || rc.Entrypoint.Args[0] != "__net-relay" {
 		t.Errorf("verify's entrypoint was not wrapped in the relay: %v", rc.Entrypoint.Args)
+	}
+}
+
+// The dry-run answers "what can this run reach, and why". A "@group" entry
+// standing in for four hosts would defeat that, so it is rendered expanded,
+// with the group as each entry's origin.
+func TestPrintDryRun_expandsNetworkGroups(t *testing.T) {
+	sb := config.SandboxConfig{
+		NetworkMode:  config.NetworkAllowlist,
+		NetworkAllow: []string{"@github", "internal.example.com"},
+		NetworkDeny:  []string{"@npm"},
+	}
+	allow, origins := config.ResolveNetworkAllow(sb, nil)
+	rc := &config.RunConfig{
+		Name:               "grouped",
+		NetworkMode:        config.NetworkAllowlist,
+		NetworkAllow:       allow,
+		NetworkAllowOrigin: origins,
+		NetworkDeny:        config.ExpandNetworkGroups(sb.NetworkDeny),
+		Entrypoint:         config.Entrypoint{Cmd: "sh"},
+	}
+
+	var out bytes.Buffer
+	printDryRun(&out, "/dev/null", "/dev/null", "", rc, []string{"bwrap"})
+
+	got := out.String()
+	for _, want := range []string{
+		"allow: github.com [group:github]",
+		"allow: codeload.github.com [group:github]",
+		"allow: internal.example.com [profile]",
+		"deny:  registry.npmjs.org",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dry-run does not show %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "@github") || strings.Contains(got, "@npm") {
+		t.Errorf("dry-run shows a group name instead of what it opens:\n%s", got)
 	}
 }

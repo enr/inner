@@ -181,6 +181,24 @@ func remoteProfileRequests(rc *config.RunConfig) []string {
 		out = append(out, "network: disabled")
 	case config.NetworkFull:
 		out = append(out, "network: full — the sandboxed process can reach the internet")
+	case config.NetworkAllowlist:
+		// The destinations, not just the mode, and expanded: a capability
+		// keyword and a "@group" reference each stand for several hosts, and a
+		// remote profile must not be able to smuggle one past this prompt
+		// behind a name the user has no way to look up here. The provenance
+		// comes along because "the profile asked for it" and "the tool needs
+		// it" are different things to consent to.
+		out = append(out, "network: allowlist — the sandboxed process can reach only:")
+		if len(rc.NetworkAllow) == 0 {
+			out = append(out, "  (nothing)")
+		}
+		for _, entry := range rc.NetworkAllow {
+			if origin := rc.NetworkAllowOrigin[entry]; origin != "" {
+				out = append(out, fmt.Sprintf("  %s [%s]", entry, origin))
+			} else {
+				out = append(out, "  "+entry)
+			}
+		}
 	default:
 		out = append(out, "network: "+mode)
 	}

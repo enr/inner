@@ -187,3 +187,42 @@ func TestValidate_capabilityWithoutEgressDefaultsIsReported(t *testing.T) {
 		t.Errorf("CapabilitiesWithoutNetworkDefaults = %v, want [gemini]", missing)
 	}
 }
+
+// A group reference nobody defined expands to nothing, so the profile asks for
+// destinations it will not get and finds out as a connection error inside the
+// sandbox. Same treatment as an unknown mode: an error that names the typo.
+func TestValidate_network_unknownGroupIsAnError(t *testing.T) {
+	p := &config.Profile{
+		Sandbox: config.SandboxConfig{
+			NetworkMode:  config.NetworkAllowlist,
+			NetworkAllow: []string{"@nmp"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if !r.HasErrors() {
+		t.Fatalf("expected an error for an unknown network group, got %v", r.Issues)
+	}
+	if !issuesContain(r, LevelError, "@nmp") {
+		t.Errorf("error should name the offending group, got %v", r.Issues)
+	}
+}
+
+// A group is a real list of destinations, so a profile whose whole allow list
+// comes from one must not be told it can reach nothing.
+func TestValidate_network_aGroupIsNotAnEmptyList(t *testing.T) {
+	p := &config.Profile{
+		Sandbox: config.SandboxConfig{
+			NetworkMode:  config.NetworkAllowlist,
+			NetworkAllow: []string{"@github"},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	if r.HasErrors() {
+		t.Fatalf("unexpected errors: %v", r.Issues)
+	}
+	if issuesContain(r, LevelWarning, "can reach nothing") {
+		t.Errorf("a profile allowing @github was told its list is empty: %v", r.Issues)
+	}
+}

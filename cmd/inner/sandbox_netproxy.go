@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/term"
+
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/netproxy"
 )
@@ -60,11 +62,13 @@ func applyNetworkProxy(rc *config.RunConfig) (func(), error) {
 		return nil, fmt.Errorf("network proxy: listening on %s: %w", sockPath, err)
 	}
 
+	denyLog := &netproxy.DenyLog{W: os.Stderr, Deferred: deferDenyLog(rc)}
 	proxy := &netproxy.Proxy{
 		Policy: netproxy.Policy{
 			Allow: rc.NetworkAllow,
 			Deny:  rc.NetworkDeny,
 		},
+		Log: denyLog,
 	}
 	go func() { _ = proxy.Serve(listener) }()
 
@@ -72,9 +76,33 @@ func applyNetworkProxy(rc *config.RunConfig) (func(), error) {
 	rewriteEntrypointThroughRelay(rc, innerBin)
 
 	return func() {
+		// Close first, then flush: the listener is what produces new lines, so
+		// closing it is what makes the summary below the whole story.
 		_ = listener.Close()
+		denyLog.Flush()
 		_ = os.RemoveAll(dir)
 	}, nil
+}
+
+// deferDenyLog reports whether refusals must be held until the run is over
+// instead of printed as they happen.
+//
+// Both conditions are needed, and each one alone is the wrong answer:
+//
+//   - The entrypoint is a full-screen TUI. It positions the cursor and redraws
+//     regions on its own terms; a line we write mid-frame is painted into its
+//     output and stays there. A line-oriented entrypoint has no such problem —
+//     the refusal simply scrolls past, where it is most useful, immediately.
+//   - Our stderr is that same terminal. With stderr redirected to a file or a
+//     pipe there is nothing to corrupt, and deferring would only delay the
+//     diagnosis the user redirected the stream to collect.
+//
+// An interactive shell that later launches a TUI child is deliberately NOT
+// covered: the entrypoint we can see is the shell, the user is at a prompt for
+// most of the session, and holding every refusal until the shell exits would
+// make the proxy silent exactly when someone is poking at it by hand.
+func deferDenyLog(rc *config.RunConfig) bool {
+	return rc.Entrypoint.TUI && term.IsTerminal(int(os.Stderr.Fd()))
 }
 
 // rewriteEntrypointThroughRelay wraps the real entrypoint in `inner __net-relay`.

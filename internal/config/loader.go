@@ -512,17 +512,30 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 		return nil, fmt.Errorf("invalid [sandbox] network_mode %q (valid values: %v)", networkMode, ValidNetworkModes)
 	}
 
+	// A "@name" group reference that names no group is refused for the same
+	// reason an unknown mode is: it would expand to nothing and fail later as a
+	// connection error inside the sandbox, which says nothing about the typo
+	// that caused it. Authoritative here — the validator reports it too, but it
+	// runs best-effort in `inner run`.
+	if unknown := UnknownNetworkGroups(p.Sandbox.NetworkAllow, p.Sandbox.NetworkDeny); len(unknown) > 0 {
+		return nil, fmt.Errorf("unknown network group %v in [sandbox] network_allow/network_deny (known groups: %v)",
+			unknown, NetworkGroupNames())
+	}
+
 	// The allow list is resolved here, not inside a capability's Apply: dry-run,
 	// the validator and `profile show --explain` must all see the effective
 	// list without executing anything.
 	networkAllow, networkAllowOrigin := ResolveNetworkAllow(p.Sandbox, p.Capabilities)
 
 	cfg := &RunConfig{
-		Name:               p.Name,
-		NetworkMode:        networkMode,
-		Network:            networkMode != NetworkOff,
-		NetworkAllow:       networkAllow,
-		NetworkDeny:        p.Sandbox.NetworkDeny,
+		Name:         p.Name,
+		NetworkMode:  networkMode,
+		Network:      networkMode != NetworkOff,
+		NetworkAllow: networkAllow,
+		// Expanded like the allow list: the proxy matches patterns, and a bare
+		// "@github" would match nothing at all — a deny that silently denies
+		// nothing is the most dangerous shape this file can produce.
+		NetworkDeny:        ExpandNetworkGroups(p.Sandbox.NetworkDeny),
 		NetworkAllowOrigin: networkAllowOrigin,
 		// PID namespace isolation defaults to ON: a nil (unset) value means
 		// true; only an explicit pid_namespace = false in the profile

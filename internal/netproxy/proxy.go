@@ -75,7 +75,9 @@ type Proxy struct {
 
 	// Resolver defaults to the system resolver.
 	Resolver Resolver
-	// Log receives one line per denied request. Defaults to os.Stderr.
+	// Log receives one line per denied request, in ONE Write call — see deny.
+	// Defaults to os.Stderr. Production wraps it in a DenyLog, which needs that
+	// one-write-per-refusal contract to deduplicate and to defer under a TUI.
 	// Structured audit logging is out of scope (NONO_COMPARISON.md §S4).
 	Log io.Writer
 
@@ -334,12 +336,18 @@ func (p *Proxy) denyErr(conn net.Conn, err error) {
 	p.deny(conn, "", err.Error())
 }
 
+// deny renders one refusal to the client and to the log.
+//
+// The log line is composed first and written in a single call, deliberately:
+// Log is normally a DenyLog, which identifies a refusal BY its line — one
+// message per Write. A second Fprintf appending to the same line would be
+// counted as a separate refusal and would never be deduplicated.
 func (p *Proxy) deny(conn net.Conn, target, reason string) {
-	if target == "" {
-		fmt.Fprintf(p.logw(), "inner: network-allowlist: refused a request (%s)\n", reason)
-	} else {
-		fmt.Fprintf(p.logw(), "inner: network-allowlist: blocked %s (%s)\n", target, reason)
+	line := fmt.Sprintf("inner: network-allowlist: refused a request (%s)\n", reason)
+	if target != "" {
+		line = fmt.Sprintf("inner: network-allowlist: blocked %s (%s)\n", target, reason)
 	}
+	_, _ = io.WriteString(p.logw(), line)
 	p.writeStatus(conn, http.StatusForbidden, reason)
 }
 

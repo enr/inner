@@ -162,12 +162,19 @@ what the run can actually reach and why:
 ```
 network:     allowlist
   allow: api.anthropic.com [capability:claude]
-  allow: console.anthropic.com [capability:claude]
-  allow: statsig.anthropic.com [capability:claude]
-  allow: sentry.io [capability:claude]
-  allow: github.com [profile]
-  deny:  sentry.io
+  allow: claude.ai [capability:claude]
+  allow: platform.claude.com [capability:claude]
+  allow: downloads.claude.ai [capability:claude]
+  allow: http-intake.logs.us5.datadoghq.com [capability:claude]
+  allow: github.com [group:github]
+  allow: api.github.com [group:github]
+  allow: internal.example.com [profile]
+  deny:  http-intake.logs.us5.datadoghq.com
 ```
+
+A `"@group"` entry in `network_allow` is shown expanded, one line per
+destination, with the group named as its origin — the dry-run answers "what can
+this run reach", so a name standing in for four hosts would defeat it.
 
 See [network — allowlist mode](profiles.md#network-allowlist-mode).
 
