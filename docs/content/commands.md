@@ -166,9 +166,15 @@ network:     allowlist
   allow: platform.claude.com [capability:claude]
   allow: downloads.claude.ai [capability:claude]
   allow: http-intake.logs.us5.datadoghq.com [capability:claude]
-  allow: github.com [profile]
+  allow: github.com [group:github]
+  allow: api.github.com [group:github]
+  allow: internal.example.com [profile]
   deny:  http-intake.logs.us5.datadoghq.com
 ```
+
+A `"@group"` entry in `network_allow` is shown expanded, one line per
+destination, with the group named as its origin — the dry-run answers "what can
+this run reach", so a name standing in for four hosts would defeat it.
 
 See [network — allowlist mode](profiles.md#network-allowlist-mode).
 

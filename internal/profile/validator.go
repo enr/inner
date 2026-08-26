@@ -149,6 +149,15 @@ func validateNetworkAllow(r *Result, p *config.Profile) {
 	mode := config.ResolveNetworkMode(p.Sandbox)
 	allow, _ := config.ResolveNetworkAllow(p.Sandbox, p.Capabilities)
 
+	// An error, not a warning, and reported whatever the mode is: a "@name"
+	// nobody defined expands to nothing, so the profile asks for destinations it
+	// will not get and finds out as a connection error inside the sandbox.
+	if unknown := config.UnknownNetworkGroups(p.Sandbox.NetworkAllow, p.Sandbox.NetworkDeny); len(unknown) > 0 {
+		r.addError(fmt.Sprintf(
+			"unknown network group %v in [sandbox] network_allow/network_deny (known groups: %v)",
+			unknown, config.NetworkGroupNames()))
+	}
+
 	if mode != config.NetworkAllowlist {
 		// Not an error — the keys are simply inert — but never silent, exactly
 		// like home_allow under a non-isolated home: a profile listing

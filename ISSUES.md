@@ -112,6 +112,13 @@ non rompono più la TUI: `netproxy.DenyLog` deduplica le ripetizioni e, quando
 l'entrypoint è una TUI sul nostro stesso terminale, rimanda tutto a fine
 sessione. Dettagli in `network.md`.
 
+Aggiunti anche i **gruppi**: `network_allow = ["@npm", "@maven", "@github"]`
+espande a load time (anche in `network_deny`), con provenienza `group:<nome>` in
+`--dry-run` e nel prompt di consenso dei profili remoti — che ora mostra le
+destinazioni effettive invece del solo `network: allowlist`. Un `@nome`
+sconosciuto è errore, non espansione vuota. Un gruppo = un ecosistema: niente
+bundle tematici, la composizione la fa il profilo. Motivazioni in `network.md`.
+
 La rete oggi è on/off e i profili agente richiedono `network = true` → rete
 aperta verso ovunque. Nuovo modo `[sandbox.network] mode = "allowlist"`:
 sandbox con `--unshare-net` + socket verso un proxy CONNECT nel processo

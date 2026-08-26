@@ -283,3 +283,34 @@ func TestRunSandbox_localProfile_rejectsChecksumPin(t *testing.T) {
 		t.Fatalf("err = %v, want --sha256 to be rejected for a local profile", err)
 	}
 }
+
+// The consent prompt is the one place a user decides whether to trust an
+// untrusted profile, so "allowlist" alone is not enough: a capability keyword
+// and a "@group" reference each stand for several destinations, and the user
+// cannot look either of them up from the prompt.
+func TestRemoteProfileRequests_allowlistShowsTheDestinations(t *testing.T) {
+	sb := config.SandboxConfig{
+		NetworkMode:  config.NetworkAllowlist,
+		NetworkAllow: []string{"@github"},
+	}
+	allow, origins := config.ResolveNetworkAllow(sb, []string{"claude"})
+	rc := &config.RunConfig{
+		NetworkMode:        config.NetworkAllowlist,
+		NetworkAllow:       allow,
+		NetworkAllowOrigin: origins,
+		Entrypoint:         config.Entrypoint{Cmd: "claude"},
+	}
+
+	got := strings.Join(remoteProfileRequests(rc), "\n")
+	for _, want := range []string{
+		"github.com [group:github]",             // the group, expanded and attributed
+		"api.anthropic.com [capability:claude]", // what the capability brought in
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the prompt does not show %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "@github") {
+		t.Errorf("the prompt shows a group name instead of what it opens:\n%s", got)
+	}
+}

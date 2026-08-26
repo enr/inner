@@ -260,6 +260,62 @@ S2 — network allowlist proxy
  comment on the table asks for — a list that only ever grows is a list nobody
  re-checked.
 
+ Groups (LANDED, fast-follow)
+
+ An entry in network_allow / network_deny starting with "@" names a curated
+ group instead of a destination: network_allow = ["@npm", "@github"]. Shipped
+ with @npm, @maven and @github; config.NetworkGroups, expanded in
+ ResolveNetworkAllow (allow, with origin "group:<name>") and in the loader
+ (deny, where an unexpanded reference would be a deny that denies NOTHING —
+ the most dangerous shape this config can take).
+
+ Not a new layer: expansion happens where the profile's own entries are read,
+ so L1/L2/L3 and the deny-at-request-time rule are unchanged. Groups do not
+ nest, and capability lists do not reference them — both would buy a level of
+ indirection nobody asked for.
+
+ Why "@": it cannot occur in a hostname (netproxy's validHostname rejects it),
+ so a reference that somehow reached Policy.Allow unexpanded matches no target
+ rather than some target. A bug in the expansion can only make the sandbox
+ reach LESS. A "group:" prefix or a bare name would not have that property.
+ Pinned by TestNetworkGroupPrefix_cannotOccurInAHostname.
+
+ Three rules, and they are what make a group acceptable rather than just
+ convenient:
+
+   1. ONE ecosystem per group, never a themed bundle. The request that prompted
+      this asked for a "language packages" group holding npm + GitHub + Maven
+      Central together; that would open npm for every Java profile. The
+      composition belongs to the profile — ["@maven", "@github"] — which is the
+      only place that knows what the run builds.
+   2. An unknown name is an ERROR (loader, authoritative; validator, for
+      context), never an empty expansion. Silence here means an opaque
+      connection failure inside the sandbox, which is the failure mode this
+      whole file exists to avoid.
+   3. The expansion is visible EVERYWHERE the list is shown: --dry-run with
+      "[group:github]" per entry, and — new with this change — the remote
+      profile consent prompt, which until now said only "network: allowlist"
+      and showed no destinations at all. That gap was already noted below under
+      "Interaction with remote (untrusted) profiles"; groups make it
+      unacceptable, because one unreadable name would stand for four hosts.
+
+ Deliberately NOT built: user-defined groups in the profile TOML. A remote
+ profile would define @safe = ["evil.com"] and the prompt would show a
+ reassuring name; and for local reuse `extends` already unions network_allow
+ along the chain. The real gap `extends` leaves is that it has a SINGLE parent,
+ so npm + maven + github cannot be composed per-profile without a chain of
+ artificial base profiles — that, not verbosity, is the argument these built-in
+ groups answer.
+
+ Group contents are vendor data with the same rot risk as
+ CapabilityNetworkAllow, and carry the same VERIFY BEFORE TRUSTING comment.
+ @github uses *.githubusercontent.com rather than an enumeration on purpose:
+ GitHub moves content between subdomains (release downloads went from
+ objects. to release-assets.), and a list that rots silently is worse here than
+ one broad name whose content is user content either way. What each group
+ leaves out is named in a comment next to it (git-lfs on S3, ghcr.io, the
+ Gradle Plugin Portal, nodejs.org) so opening one holds no surprises.
+
  Provenance. With four contributing sources, "why is this domain open?"
  becomes the common question, so record it:
  RunConfig.NetworkAllowOrigin maps host → "capability:claude" | "profile" |
@@ -562,6 +618,9 @@ S2 — network allowlist proxy
  (LANDED); the allowlist branch must additionally render the effective allow
  list with its provenance, so a remote profile cannot smuggle a domain past
  the prompt by inheriting it from a capability the user did not read about.
+ LANDED with the groups change, which is what forced it: a "@github" the user
+ cannot look up from the prompt would have stood for four hosts. The branch now
+ prints every effective destination with its origin, expanded.
 
  hardenRemoteProfile is the open decision, and it must be made before the
  config surface ships. Three options, in increasing strictness:

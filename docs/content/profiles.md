@@ -250,7 +250,7 @@ Controls top-level sandbox behavior.
 |-----|------|---------|-------------|
 | `network` | bool | `false` | Legacy on/off switch. Still honoured; `network_mode` is the field to reach for. |
 | `network_mode` | string | from `network` | `"off"`, `"full"` or `"allowlist"`. See [network — allowlist mode](#network-allowlist-mode). |
-| `network_allow` | list | `[]` | Destinations reachable in allowlist mode. Unioned with what the profile's capabilities contribute. |
+| `network_allow` | list | `[]` | Destinations reachable in allowlist mode, or `"@group"` references. Unioned with what the profile's capabilities contribute. |
 | `network_deny` | list | `[]` | Destinations subtracted from that union. The only way to narrow it. |
 | `clipboard` | bool | `false` | Forward clipboard (requires display server) |
 | `pid_namespace` | bool | `true` | Give the sandbox a private PID namespace (`--unshare-pid`). See below. |
@@ -484,6 +484,39 @@ channel.
 
 Names must be ASCII. Internationalised (IDN) hostnames are rejected rather than
 converted.
+
+#### Groups: `@npm`, `@maven`, `@github`
+
+Nobody remembers that `pip` also needs `files.pythonhosted.org`, or that a `go
+get` from GitHub goes to `codeload.github.com`. An entry starting with `@` names
+a curated group instead of a destination:
+
+```toml
+network_allow = ["@npm", "@github", "internal.example.com"]
+```
+
+| Group | Opens |
+|-------|-------|
+| `@npm` | `registry.npmjs.org`, `registry.yarnpkg.com` |
+| `@maven` | `repo.maven.apache.org`, `repo1.maven.org` |
+| `@github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
+
+Groups work in `network_deny` too, and compose in the profile — which is the
+point. There is no `@language-packages` bundle holding npm *and* Maven *and*
+PyPI: a Java build has no reason to reach npm, so the profile that knows what it
+builds picks the groups, one ecosystem at a time.
+
+What a group **is not**: a shortcut past the prompt. `--dry-run` and the
+consent prompt for a remote profile both show the expanded destinations with
+`[group:npm]` next to each, never the group name alone. A `@` name that matches
+no group is an error at load — an empty expansion would fail later as a
+connection error that says nothing about the typo.
+
+Two things groups deliberately leave out, so that opening one is not a surprise:
+`@github` does not include `github-cloud.s3.amazonaws.com` (git-lfs objects) or
+`ghcr.io`, and `@maven` covers Maven Central only, not the Gradle Plugin Portal.
+Add those by hand when a run needs them. And a group grants ports 443 and 80
+like any bare entry, so `@github` is not an SSH push channel.
 
 #### Capabilities bring their own destinations
 
