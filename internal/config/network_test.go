@@ -190,6 +190,38 @@ func TestResolveNetworkAllow_capabilityDefaultsAreInherited(t *testing.T) {
 	}
 }
 
+// The endpoints a real Claude Code session was observed to need but the first
+// list did not carry: an update check, the changelog fetch after it, and the
+// telemetry intake. Each one cost a user a blocked request and a corrupted TUI
+// before it was found, so pin them — dropping one must be a decision, not a
+// side effect of tidying the list.
+func TestResolveNetworkAllow_claudeCarriesTheEndpointsASessionActuallyUses(t *testing.T) {
+	allow, _ := ResolveNetworkAllow(SandboxConfig{}, []string{"claude"})
+	for _, host := range []string{
+		"api.anthropic.com",
+		"platform.claude.com",                // OAuth exchange/refresh: without it the session 401s mid-run
+		"downloads.claude.ai",                // update checks and the native updater
+		"raw.githubusercontent.com",          // the changelog shown after updating
+		"http-intake.logs.us5.datadoghq.com", // telemetry intake
+	} {
+		if !slices.Contains(allow, host) {
+			t.Errorf("the claude capability no longer contributes %q: %v", host, allow)
+		}
+	}
+}
+
+// A capability default is an egress destination granted to every profile that
+// names the capability, so the broad ones stay opt-in. Both of these are real
+// rows of the vendor's table, deliberately left out; see the comment there.
+func TestResolveNetworkAllow_claudeDoesNotOpenTheBroadThirdPartyHosts(t *testing.T) {
+	allow, _ := ResolveNetworkAllow(SandboxConfig{}, []string{"claude"})
+	for _, host := range []string{"storage.googleapis.com", "registry.npmjs.org"} {
+		if slices.Contains(allow, host) {
+			t.Errorf("%q is granted by default; a profile that wants it must list it: %v", host, allow)
+		}
+	}
+}
+
 // "Why is this domain open?" must have an answer even when two layers agree,
 // because "the profile also lists it" and "only the capability brings it" call
 // for different edits.
@@ -230,12 +262,13 @@ func TestResolveNetworkAllow_skipsEmptyEntries(t *testing.T) {
 // (netproxy.Policy covers that). Pinned so nobody "simplifies" it into a list
 // subtraction and silently loses wildcard denies.
 func TestResolveNetworkAllow_denyIsNotSubtractedFromTheList(t *testing.T) {
+	const telemetry = "http-intake.logs.us5.datadoghq.com" // contributed by the claude capability
 	sb := SandboxConfig{
 		NetworkAllow: []string{"github.com"},
-		NetworkDeny:  []string{"sentry.io"},
+		NetworkDeny:  []string{telemetry},
 	}
 	allow, _ := ResolveNetworkAllow(sb, []string{"claude"})
-	if !slices.Contains(allow, "sentry.io") {
+	if !slices.Contains(allow, telemetry) {
 		t.Error("the resolved allow list should still carry the entry; the deny is applied by the proxy at request time")
 	}
 }

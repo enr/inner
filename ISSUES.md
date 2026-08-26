@@ -103,6 +103,15 @@ always-deny esteso a loopback/LAN/CGNAT (il proxy gira nel netns dell'host),
 scoping delle porte. Niente session token — socket unix `0700`, non porta TCP:
 motivazione in `NONO_COMPARISON.md` §S2 e `network.md`.
 
+Follow-up dalla prima sessione TUI reale (`manual-tests/`): la lista egress
+della capability `claude` è stata riverificata sulla tabella "Network access
+requirements" del vendor (mancavano `downloads.claude.ai`,
+`raw.githubusercontent.com` e l'intake telemetria; rimosse `statsig.anthropic.com`,
+`sentry.io`, `console.anthropic.com`, uscite dalla tabella), e i log dei rifiuti
+non rompono più la TUI: `netproxy.DenyLog` deduplica le ripetizioni e, quando
+l'entrypoint è una TUI sul nostro stesso terminale, rimanda tutto a fine
+sessione. Dettagli in `network.md`.
+
 La rete oggi è on/off e i profili agente richiedono `network = true` → rete
 aperta verso ovunque. Nuovo modo `[sandbox.network] mode = "allowlist"`:
 sandbox con `--unshare-net` + socket verso un proxy CONNECT nel processo

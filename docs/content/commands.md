@@ -162,11 +162,12 @@ what the run can actually reach and why:
 ```
 network:     allowlist
   allow: api.anthropic.com [capability:claude]
-  allow: console.anthropic.com [capability:claude]
-  allow: statsig.anthropic.com [capability:claude]
-  allow: sentry.io [capability:claude]
+  allow: claude.ai [capability:claude]
+  allow: platform.claude.com [capability:claude]
+  allow: downloads.claude.ai [capability:claude]
+  allow: http-intake.logs.us5.datadoghq.com [capability:claude]
   allow: github.com [profile]
-  deny:  sentry.io
+  deny:  http-intake.logs.us5.datadoghq.com
 ```
 
 See [network — allowlist mode](profiles.md#network-allowlist-mode).

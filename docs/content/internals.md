@@ -271,6 +271,22 @@ spellings of the proxy variable are set, `NO_PROXY` is forced empty, and
 `NODE_USE_ENV_PROXY=1` is set because Node 26+ otherwise ignores the proxy
 environment for `fetch()`.
 
+**Refusals share the user's terminal.** The proxy is a host-side goroutine, so
+its `stderr` is the terminal the sandboxed process is using. A full-screen TUI
+positions the cursor and redraws regions on its own terms and has no idea a
+second writer exists, so a refusal written mid-frame is painted into its output
+and stays there. `netproxy.DenyLog` handles both halves of that: it counts and
+suppresses repeats of a line already reported (a tool retrying a blocked
+telemetry endpoint emits one every few seconds), and when the entrypoint is a
+TUI *and* our stderr is a terminal it holds every line until `Flush`, called by
+the proxy cleanup once the child has exited. Deferring changes only what reaches
+the terminal — the sandbox still gets its `403` at the moment of the request.
+
+The deferred summary replays the lines the live path would have written,
+verbatim plus an attempt count, so the two forms are recognisably the same
+output. That contract is why `Proxy.deny` composes its message and writes it in
+a single call: `DenyLog` identifies a refusal *by its line*.
+
 **No session token.** The socket lives in a `0700` temp directory owned by the
 user, so the processes that can reach the proxy are exactly the ones that could
 run `inner` in the first place. A token would authenticate that set to itself.

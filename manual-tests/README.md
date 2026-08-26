@@ -151,15 +151,23 @@ resize the window (it must redraw); exit and confirm the cursor and prompt are
 left in a sane state.
 
 If the allowlist run cannot reach something the tool needs, the proxy says so
-on stderr:
+on stderr — for a TUI entrypoint, as one block **after** the session exits,
+because a line written while the TUI owns the screen lands inside its frame:
 
 ```
-inner: network-allowlist: blocked <host>:443 (not in the allow list)
+inner: network-allowlist: 1 destination was refused while the session was running:
+inner: network-allowlist: blocked <host>:443 (not in the allow list) (x3)
+inner: network-allowlist: add what the tool needs to network_allow in the profile.
 ```
 
 Add that host to `network_allow` in the profile and note it — a destination
 that turns out to be necessary belongs in `config.CapabilityNetworkAllow`, not
 in every user's profile.
+
+Part of the check: nothing from the proxy appears **during** the TUI session,
+and the summary appears once afterwards. Run the same profile with stderr
+redirected (`inner run -p profiles/tui-allowlist.toml 2>blocked.log`) to get the
+lines live instead, which is what a non-TUI entrypoint always gets.
 
 ## 4. Interactive bash under the allowlist
 

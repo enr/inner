@@ -27,6 +27,14 @@ S2 — network allowlist proxy
  ISSUES.md ISS-05 are marked done, both recording what shipped beyond the
  original proposal and what was deliberately deferred.
 
+ Also LANDED, out of the first real TUI run of manual-tests: the claude
+ capability's egress list re-checked against the vendor's current table (three
+ destinations were missing, three stale ones removed — see "Allowlist layers"),
+ and netproxy.DenyLog, which deduplicates refusals and defers them until the
+ session ends when the entrypoint is a TUI sharing our terminal (see "Refusal
+ logging vs. the TUI"). The run that produced both is exactly what the checklist
+ below exists for.
+
  What remains: the manual TUI checklist (SECURITY_REVIEW.md §9) re-run with a
  relay in the chain, which needs a real terminal. manual-tests/ now holds the
  profiles and the procedure, including an A/B signal probe that covers the
@@ -184,10 +192,13 @@ S2 — network allowlist proxy
    // toRunConfig, the same way CapabilityHostDirs is the source of truth for
    // the host directories a capability sandboxes.
    var CapabilityNetworkAllow = map[string][]string{
-       "claude": {"api.anthropic.com", "console.anthropic.com",
-                  "statsig.anthropic.com", "sentry.io"},
+       "claude": {"api.anthropic.com", "claude.ai", "platform.claude.com",
+                  "downloads.claude.ai", ...},
        ...
    }
+
+ (The shipped list is longer and is discussed below, under "CapabilityNetworkAllow
+ currently carries claude only" — this is the shape, not the content.)
 
  The per-capability lists MUST be checked against each vendor's current
  documented egress domains before being committed, and re-checked when a
@@ -219,6 +230,35 @@ S2 — network allowlist proxy
  capability that contributes nothing, so a profile using one of those under
  allowlist mode is told to list the domains itself instead of failing as an
  opaque connection error inside the sandbox.
+
+ The "claude" list, re-checked 2026-08-26 against Claude Code's own "Network
+ access requirements" table (code.claude.com/docs/en/network-config) after a
+ real TUI session was refused three destinations the first list did not carry
+ (raw.githubusercontent.com, downloads.claude.ai,
+ http-intake.logs.us5.datadoghq.com). It now covers what a session does on its
+ own: the API host, the sign-in and token-refresh hosts (claude.ai,
+ claude.com, platform.claude.com — the last one does the OAuth exchange for
+ BOTH account kinds, so without it a session that starts fine 401s mid-run),
+ the update/plugin download host, the changelog fetch, the claude.ai MCP
+ connector proxy, artifact content reads, doc lookups, and the two Datadog
+ telemetry intakes.
+
+ Two rows of that table are deliberately excluded, and the exclusion is the
+ point of having a capability default at all: storage.googleapis.com (one name
+ covering every GCS bucket in existence) and registry.npmjs.org (the whole npm
+ registry, i.e. arbitrary package installs). A keyword should not hand the
+ sandbox a general-purpose host; a profile that wants either says so. Also
+ excluded: bridge.claudeusercontent.com (no browser extension in a sandbox) and
+ formulae.brew.sh (Linux-only tool).
+
+ Three entries from the original list were REMOVED by the same re-check, having
+ left the vendor's table: statsig.anthropic.com and sentry.io (feature flags
+ and error reporting now go to api.anthropic.com and the Datadog hosts) and
+ console.anthropic.com (Console auth is platform.claude.com now). Recorded here
+ rather than dropped silently: a profile pinned to an older CLI can list them
+ in network_allow, and the removal is exactly what the "VERIFY BEFORE TRUSTING"
+ comment on the table asks for — a list that only ever grows is a list nobody
+ re-checked.
 
  Provenance. With four contributing sources, "why is this domain open?"
  becomes the common question, so record it:
@@ -328,6 +368,44 @@ S2 — network allowlist proxy
  Denied/blocked attempts are logged to stderr with the reason
  (inner: network-allowlist: blocked CONNECT to %s (not in allow list)) —
  audit-log integration is out of scope (that's NONO_COMPARISON.md §S4).
+
+ Refusal logging vs. the TUI (LANDED, from the first real TUI run)
+
+ The first manual run of profiles/tui-allowlist.toml with claude showed the
+ hole in "log it to stderr": the proxy is a host-side goroutine writing to the
+ same terminal the sandboxed TUI is drawing on. claude owns the screen and has
+ no idea a second writer exists, so refusals were painted into its prompt box
+ and its status line, and the retrying telemetry endpoint kept re-painting.
+ Two distinct faults, and either one alone still ruins the display:
+
+   - VOLUME. Only the first occurrence of a given refusal carries information.
+     A tool retrying a blocked endpoint emits the same line every few seconds.
+   - PLACEMENT. Any host-side write during a full-screen session lands inside
+     a frame the TUI believes it owns.
+
+ netproxy.DenyLog (an io.Writer for Proxy.Log) fixes both: it counts and
+ suppresses repeats, and with Deferred set it holds every line until Flush,
+ which the applyNetworkProxy cleanup calls after the child has exited. The
+ deferred block replays the same lines with an attempt count, so a user who has
+ seen the live form recognises the deferred one.
+
+ Deferred is set only when the entrypoint is a TUI AND our stderr is a
+ terminal. Each condition alone is the wrong answer: with stderr redirected
+ there is nothing to corrupt and deferring would only delay a diagnosis the
+ user redirected the stream to collect, and a line-oriented entrypoint wants
+ the refusal at the moment it happens. An interactive SHELL that later launches
+ a TUI child is deliberately not covered — the entrypoint we can see is the
+ shell, the user is at a prompt for most of the session, and holding every
+ refusal until the shell exits would make the proxy silent exactly when
+ somebody is poking at it by hand (manual-tests §4 is that session).
+
+ This is why Proxy.deny composes its line and writes it in ONE call: DenyLog
+ identifies a refusal by its line, so a message split across two writes would
+ be counted as two refusals and would never deduplicate. Pinned by
+ TestDenyIsOneWritePerRefusal.
+
+ Not done, and not needed for this: routing the refusals somewhere other than
+ stderr (a file, a fd), which is the audit-log question §S4 owns.
 
  Testability vs. the always-deny list — decide this BEFORE writing the proxy,
  because it shapes the struct. Every test target reachable from a developer

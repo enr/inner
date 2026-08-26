@@ -119,6 +119,21 @@ func TestApplyNetworkProxy_resolvesAnEmptyEntrypointLikeTheIsolatorDoes(t *testi
 	}
 }
 
+// Under `go test` stderr is a pipe, never a terminal, so this pins the half of
+// the condition a test can observe: a TUI entrypoint alone does not defer.
+// Deferring when nothing can be corrupted would only delay the diagnosis of a
+// run whose stderr was redirected to a file on purpose.
+func TestDeferDenyLog_needsATerminalAsWellAsATUI(t *testing.T) {
+	tui := &config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "claude", TUI: true}}
+	if deferDenyLog(tui) {
+		t.Error("refusals were deferred although stderr is not a terminal")
+	}
+	shell := &config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "bash", Interactive: true}}
+	if deferDenyLog(shell) {
+		t.Error("refusals were deferred for a line-oriented entrypoint, where they are useful immediately")
+	}
+}
+
 // verify certifies the sandbox a run gets, so it must build the same one. The
 // objection that keeps capability handlers out of verify does not apply: the
 // proxy touches nothing outside the run.

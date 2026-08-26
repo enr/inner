@@ -74,14 +74,59 @@ func ResolveNetworkMode(sb SandboxConfig) string {
 // Only entries actually confirmed against vendor documentation belong here —
 // an invented domain is worse than an absent one, because it looks verified.
 var CapabilityNetworkAllow = map[string][]string{
+	// Checked against Claude Code's "Network access requirements" table
+	// (code.claude.com/docs/en/network-config) on 2026-08-26. Every entry here
+	// is a row of that table; every row NOT here is listed in the comment at
+	// the end, with the reason, so the next re-check compares two lists rather
+	// than re-deriving the decision.
 	"claude": {
-		// Needed to work at all.
+		// Needed to work at all: model traffic, feature flags and the WebFetch
+		// domain-safety preflight all go to the API host.
 		"api.anthropic.com",
-		"console.anthropic.com",
-		// Feature flags; the CLI degrades but keeps working without it.
-		"statsig.anthropic.com",
-		// Telemetry. Safe to drop with network_deny = ["sentry.io"].
-		"sentry.io",
+		// Sign-in and token lifecycle. platform.claude.com does the OAuth
+		// exchange/refresh/revoke for BOTH claude.ai and Console accounts, so a
+		// session that starts fine still 401s mid-run without it.
+		"claude.ai",
+		"claude.com",
+		"platform.claude.com",
+		// Update checks, the native updater, and plugin executables. Without it
+		// the CLI works but reports "Auto-update failed".
+		"downloads.claude.ai",
+		// The changelog the CLI shows after updating, and /release-notes.
+		"raw.githubusercontent.com",
+		// MCP connectors from claude.ai, which are on by default for claude.ai
+		// accounts. Drop with network_deny + ENABLE_CLAUDEAI_MCP_SERVERS=false.
+		"mcp-proxy.anthropic.com",
+		// Artifact content reads, when the Artifact tool is enabled for the
+		// account. Drop with network_deny + CLAUDE_CODE_DISABLE_ARTIFACT=1.
+		"*.frame.claudeusercontent.com",
+		// Documentation lookups by the built-in claude-code-guide agent and by
+		// pre-approved WebFetch requests.
+		"code.claude.com",
+		// Operational telemetry and error reports. Safe to drop with
+		// network_deny = ["*.datadoghq.com", "browser-intake-us5-datadoghq.com"]
+		// — or in the tool itself with DISABLE_TELEMETRY=1.
+		"http-intake.logs.us5.datadoghq.com",
+		"browser-intake-us5-datadoghq.com",
+
+		// Deliberately NOT included, though the vendor table lists them:
+		//
+		//   storage.googleapis.com  plugin metadata, and the native installer
+		//                           before v2.1.116. One name covering every
+		//                           Google Cloud Storage bucket in existence is
+		//                           too broad to hand out by default.
+		//   registry.npmjs.org      plugin installs, npx-launched MCP servers,
+		//                           npm/bun self-updates. A profile that wants
+		//                           the sandbox installing packages says so.
+		//   bridge.claudeusercontent.com  the Claude in Chrome bridge; there is
+		//                           no browser extension inside the sandbox.
+		//   formulae.brew.sh        Homebrew update checks; inner is Linux-only.
+		//
+		// Also removed on the 2026-08-26 re-check, having left that table:
+		// statsig.anthropic.com and sentry.io (feature flags and error
+		// reporting now go to api.anthropic.com and the Datadog intake hosts),
+		// and console.anthropic.com (Console auth is platform.claude.com now).
+		// A profile pinned to an older CLI can list them in network_allow.
 	},
 	// gemini / cursor / opencode: intentionally absent until their egress
 	// domains are confirmed from vendor documentation. Profiles using them

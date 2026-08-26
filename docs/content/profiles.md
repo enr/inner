@@ -503,17 +503,29 @@ network_allow = ["github.com"]     # added to what the claude capability brings
 ```
 network:     allowlist
   allow: api.anthropic.com [capability:claude]
-  allow: console.anthropic.com [capability:claude]
-  allow: statsig.anthropic.com [capability:claude]
-  allow: sentry.io [capability:claude]
+  allow: claude.ai [capability:claude]
+  allow: platform.claude.com [capability:claude]
+  allow: downloads.claude.ai [capability:claude]
+  allow: http-intake.logs.us5.datadoghq.com [capability:claude]
   allow: github.com [profile]
 ```
+
+The `claude` capability covers what a session does on its own: model traffic,
+sign-in and token refresh, update checks, the changelog, and its telemetry. Two
+destinations from the vendor's own list are deliberately **not** included,
+because one capability keyword should not hand the sandbox a general-purpose
+host — list them yourself if the profile needs them:
+
+| Destination | Needed for |
+|-------------|------------|
+| `storage.googleapis.com` | plugin metadata in `/plugin` (every Google Cloud Storage bucket lives behind this one name) |
+| `registry.npmjs.org` | plugin installs, `npx`-launched MCP servers, npm self-update |
 
 The layers only ever **add**. To remove something — a tool's telemetry endpoint,
 say — use `network_deny`:
 
 ```toml
-network_deny = ["sentry.io"]
+network_deny = ["*.datadoghq.com"]
 ```
 
 A deny entry wins over any allow entry, and a bare host in `network_deny` covers
@@ -563,6 +575,33 @@ to stderr naming the destination and the reason:
 ```
 inner: network-allowlist: blocked www.example.org:443 (not in the allow list)
 ```
+
+A destination is reported the first time it is refused and not again: a tool
+that retries a blocked endpoint every few seconds would otherwise bury
+everything else.
+
+#### Refusals under a TUI
+
+The proxy runs on the host and writes to the same terminal the sandboxed
+process is drawing on. For a full-screen TUI (`[entrypoint] tui = true`) that
+is a problem: it owns the screen, so a line arriving mid-frame is painted into
+its output and stays there.
+
+So when the entrypoint is a TUI **and** stderr is that terminal, refusals are
+held until the session ends and printed together afterwards:
+
+```
+inner: network-allowlist: 2 destinations were refused while the session was running:
+inner: network-allowlist: blocked downloads.claude.ai:443 (not in the allow list) (x3)
+inner: network-allowlist: blocked www.example.org:443 (not in the allow list)
+inner: network-allowlist: add what the tool needs to network_allow in the profile.
+```
+
+Same lines, same reasons, with the number of attempts — only after the terminal
+is free. Redirect stderr (`inner run … 2>blocked.log`) and they are written as
+they happen instead, since there is then nothing to corrupt. An interactive
+shell entrypoint also gets them live: you are at a prompt, where the immediate
+answer is the useful one.
 
 ### `allow` — sensitive resource opt-in
 
