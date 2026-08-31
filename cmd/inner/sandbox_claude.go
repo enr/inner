@@ -96,6 +96,66 @@ func sandboxPS1(profileName string) string {
 	return `\[\033[1;33m\](inner)\[\033[0m\] \[\033[1;32m\]\u@` + profileName + `\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ `
 }
 
+// ── Cross-session messaging socket ────────────────────────────────────────────
+
+// claudeMessagingSocketPath is where a claude entrypoint is told to put its
+// cross-session messaging socket inside the sandbox. The parent directory does
+// not exist on the sandbox tmpfs: claude creates it itself with mode 0700,
+// which is exactly what its own vetting demands of that directory.
+const claudeMessagingSocketPath = "/tmp/inner-claude-messaging/cc.sock"
+
+// prepareClaudeMessaging injects --messaging-socket-path into a claude
+// entrypoint so the CLI stops refusing its cross-session messaging socket and
+// printing this at every start:
+//
+//	Cross-session messaging is off: its socket directory could not be set up:
+//	'/' is not owned by you or root (owner 65534:65534, mode 0755)
+//
+// The default socket directory is /tmp/cc-socks-<uid>, and before binding there
+// the CLI walks every component of the path and requires each one to be owned
+// by the user or by root. Inside the sandbox that walk reaches "/", which is
+// the host root bind-mounted into an unprivileged user namespace where host uid
+// 0 is not mapped: it shows up as 65534 (nobody) and the check fails. No
+// environment variable avoids this — XDG_RUNTIME_DIR and CLAUDE_CODE_TMPDIR
+// only move the leaf, and every absolute path still has "/" as a component.
+//
+// Passing the path explicitly takes a different branch in the CLI: there it
+// stops walking at the first ancestor that exists, so only /tmp is inspected —
+// a tmpfs created by bwrap and owned by the sandbox user — and "/" is never
+// looked at.
+//
+// The socket lives on the sandbox tmpfs, so messaging stays confined to this
+// sandbox and dies with it: no channel is opened towards claude sessions on the
+// host, which is precisely the isolation the sandbox exists to provide.
+//
+// The CLI validates an explicit path eagerly and does not degrade to a warning
+// if it is unusable, so the chosen directory must never pre-exist with the
+// wrong owner or mode. /tmp is a fresh tmpfs on every run (see the isolator),
+// so nothing under it survives from a previous run; a profile that mounts
+// something over /tmp/inner-claude-messaging would have to pass its own
+// --messaging-socket-path.
+//
+// No-op unless the entrypoint is claude itself: a profile that starts a shell
+// and lets the user launch claude by hand (contrib/shell-with-claude) would
+// otherwise get the flag handed to bash.
+func prepareClaudeMessaging(rc *config.RunConfig) {
+	if filepath.Base(rc.Entrypoint.Cmd) != "claude" {
+		return
+	}
+	// Respect an explicit --messaging-socket-path already set in the profile.
+	for _, arg := range rc.Entrypoint.Args {
+		if arg == "--messaging-socket-path" || strings.HasPrefix(arg, "--messaging-socket-path=") {
+			return
+		}
+	}
+	// Prepended, not appended: the profile args may end with a positional
+	// prompt, and flags belong before it.
+	rc.Entrypoint.Args = append(
+		[]string{"--messaging-socket-path", claudeMessagingSocketPath},
+		rc.Entrypoint.Args...,
+	)
+}
+
 // claudeTokenExpired reports whether the OAuth token in credPath appears to be
 // expired based on a Unix-timestamp "expires_at" field in the JSON. Returns
 // (false, nil) if the file cannot be read, cannot be parsed, or contains no
@@ -457,6 +517,11 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 			}
 		}
 	}
+
+	// ── Cross-session messaging socket ────────────────────────────────────────
+	// Silences the "Cross-session messaging is off" warning the CLI prints at
+	// every start inside the sandbox. See prepareClaudeMessaging.
+	prepareClaudeMessaging(rc)
 
 	var cleanups []func()
 

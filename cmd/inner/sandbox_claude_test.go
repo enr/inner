@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -375,6 +376,61 @@ func TestPrepareInteractiveShell_noopIfInitFileAlreadySet(t *testing.T) {
 	}
 	if rc.Entrypoint.Args[0] != "--init-file" || rc.Entrypoint.Args[1] != "/custom/rc" {
 		t.Errorf("should not override existing --init-file, got: %v", rc.Entrypoint.Args)
+	}
+}
+
+// ── prepareClaudeMessaging ────────────────────────────────────────────────────
+
+func TestPrepareClaudeMessaging_injectsSocketPath(t *testing.T) {
+	rc := &config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "claude", Args: []string{"--verbose"}},
+	}
+	prepareClaudeMessaging(rc)
+	want := []string{"--messaging-socket-path", claudeMessagingSocketPath, "--verbose"}
+	if !slices.Equal(rc.Entrypoint.Args, want) {
+		t.Errorf("args = %v, want %v", rc.Entrypoint.Args, want)
+	}
+}
+
+func TestPrepareClaudeMessaging_prependsBeforePositionalPrompt(t *testing.T) {
+	// The prompt is appended to the profile args, so the flag must go first or
+	// it would be parsed as part of the prompt.
+	rc := &config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "/home/me/.local/bin/claude", Args: []string{"-p", "fix the tests"}},
+	}
+	prepareClaudeMessaging(rc)
+	if rc.Entrypoint.Args[0] != "--messaging-socket-path" {
+		t.Errorf("expected the flag first, got: %v", rc.Entrypoint.Args)
+	}
+	if got := rc.Entrypoint.Args[len(rc.Entrypoint.Args)-1]; got != "fix the tests" {
+		t.Errorf("prompt should stay last, got: %v", rc.Entrypoint.Args)
+	}
+}
+
+func TestPrepareClaudeMessaging_noopForNonClaudeEntrypoint(t *testing.T) {
+	// A profile that starts a shell and lets the user launch claude by hand
+	// must not get the flag handed to bash.
+	rc := &config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "/bin/bash", Interactive: true},
+	}
+	prepareClaudeMessaging(rc)
+	if len(rc.Entrypoint.Args) != 0 {
+		t.Errorf("should be no-op for a non-claude entrypoint, got args: %v", rc.Entrypoint.Args)
+	}
+}
+
+func TestPrepareClaudeMessaging_noopIfSocketPathAlreadySet(t *testing.T) {
+	for _, args := range [][]string{
+		{"--messaging-socket-path", "/tmp/custom/cc.sock"},
+		{"--messaging-socket-path=/tmp/custom/cc.sock"},
+	} {
+		rc := &config.RunConfig{
+			Entrypoint: config.Entrypoint{Cmd: "claude", Args: args},
+		}
+		prepareClaudeMessaging(rc)
+		if !slices.Equal(rc.Entrypoint.Args, args) {
+			t.Errorf("should not override an explicit socket path, got: %v", rc.Entrypoint.Args)
+		}
 	}
 }
 

@@ -1257,12 +1257,56 @@ Run 'claude' on the host machine to renew it, then relaunch inner.
 
 To manually renew the token, run `claude auth login` on the host. If the OAuth **refresh token** is still valid, Claude will refresh silently without opening a browser; otherwise the full browser-based login flow runs.
 
+### Cross-session messaging socket
+
+Claude Code opens a Unix socket for its cross-session messaging (talking to other
+Claude sessions on the same machine). Before binding it, the CLI walks **every
+component** of the socket path — by default `/tmp/cc-socks-<uid>` — and requires
+each one to be owned by the user or by root. Inside the sandbox that walk reaches
+`/`, which is the host root bind-mounted into an unprivileged user namespace where
+host uid 0 is not mapped: it shows up as `65534` (`nobody`) and the check fails:
+
+```
+Cross-session messaging is off: its socket directory could not be set up:
+'/' is not owned by you or root (owner 65534:65534, mode 0755)
+```
+
+Environment variables do not help here: `XDG_RUNTIME_DIR` and `CLAUDE_CODE_TMPDIR`
+only move the leaf directory, and every absolute path still has `/` as a component.
+
+So when the entrypoint is `claude`, `inner` passes the path explicitly:
+
+```
+claude --messaging-socket-path /tmp/inner-claude-messaging/cc.sock …
+```
+
+With an explicit path the CLI takes a different branch: it stops walking at the
+first ancestor that exists — `/tmp`, a tmpfs created by bwrap and owned by the
+sandbox user — and creates the socket directory itself with mode `0700`. `/` is
+never inspected and the warning disappears.
+
+The socket lives on the sandbox tmpfs, so messaging stays confined to the sandbox
+and dies with it: **no channel is opened towards Claude sessions running on the
+host**, which is the isolation the sandbox exists to provide.
+
+The CLI validates an explicit path eagerly and does not fall back to a warning if
+it is unusable, so the directory must never pre-exist with the wrong owner or mode.
+`/tmp` is a fresh tmpfs on every run, so nothing survives there between runs; a
+profile that mounts something over `/tmp/inner-claude-messaging` must pass its own
+`--messaging-socket-path`.
+
+A profile that sets `--messaging-socket-path` itself keeps its own value. Profiles
+whose entrypoint is a shell (`shell-with-claude`) get nothing injected — the flag
+would go to `bash` — so a `claude` launched by hand there still prints the warning;
+pass the flag yourself if you want it silenced.
+
 ### Lifecycle
 
 ```
 inner run -p claude-interactive
   └─ applyClaude()
        ├─ claude auth status   (host; unlocks OS credential store, refreshes token)
+       ├─ inject --messaging-socket-path /tmp/inner-claude-messaging/cc.sock (claude entrypoints only)
        ├─ prepareClaude()
        │    ├─ create /tmp/inner-claude-XXXXXX/
        │    ├─ copy .credentials.json  (from ~/.claude)
