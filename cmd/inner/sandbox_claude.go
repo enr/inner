@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -61,6 +62,13 @@ func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
 	content := "# inner sandbox — shell initialization\n" +
 		"PS1=" + fmt.Sprintf("%q", ps1) + "\n"
 
+	// A shell profile does not get --messaging-socket-path on its entrypoint
+	// (that would hand the flag to bash), so wrap the claude the user launches
+	// by hand instead.
+	if slices.Contains(rc.Capabilities, "claude") {
+		content += claudeShellWrapper
+	}
+
 	// Pre-populate shell history so the user can recall useful commands
 	// immediately with the up-arrow key. Commands are injected oldest-first
 	// so the last entry in the list sits at the top of the history stack.
@@ -103,6 +111,24 @@ func sandboxPS1(profileName string) string {
 // not exist on the sandbox tmpfs: claude creates it itself with mode 0700,
 // which is exactly what its own vetting demands of that directory.
 const claudeMessagingSocketPath = "/tmp/inner-claude-messaging/cc.sock"
+
+// claudeShellWrapper is a bash function sourced into interactive shell
+// entrypoints of profiles that declare the "claude" capability. It gives the
+// claude the user launches by hand the same --messaging-socket-path the
+// capability injects into a claude entrypoint (see prepareClaudeMessaging for
+// why the flag is needed at all), without overriding an explicit flag typed on
+// the command line.
+const claudeShellWrapper = `
+# inner sandbox — cross-session messaging socket for claude
+claude() {
+  case " $* " in
+    *" --messaging-socket-path "*|*" --messaging-socket-path="*)
+      command claude "$@" ;;
+    *)
+      command claude --messaging-socket-path ` + claudeMessagingSocketPath + ` "$@" ;;
+  esac
+}
+`
 
 // prepareClaudeMessaging injects --messaging-socket-path into a claude
 // entrypoint so the CLI stops refusing its cross-session messaging socket and

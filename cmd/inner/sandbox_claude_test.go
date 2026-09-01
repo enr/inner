@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -333,6 +334,74 @@ func TestPrepareInteractiveShell_injectsBashInitFile(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "PS1=") {
 		t.Error("init file should set PS1")
+	}
+}
+
+// A shell profile with the claude capability must ship the claude wrapper in
+// its init file, so the claude the user launches by hand gets the messaging
+// socket path the capability cannot put on a bash entrypoint.
+func TestPrepareInteractiveShell_claudeWrapper(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		caps  []string
+		wants bool
+	}{
+		{"with claude capability", []string{"claude"}, true},
+		{"without claude capability", []string{"gemini"}, false},
+		{"no capabilities", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			rc := &config.RunConfig{
+				Capabilities: tc.caps,
+				Entrypoint:   config.Entrypoint{Cmd: "/bin/bash", Interactive: true},
+			}
+			if err := prepareInteractiveShell(rc, dir, "(inner) $ "); err != nil {
+				t.Fatalf("prepareInteractiveShell: %v", err)
+			}
+			content, err := os.ReadFile(rc.Entrypoint.Args[1])
+			if err != nil {
+				t.Fatalf("reading init file: %v", err)
+			}
+			got := strings.Contains(string(content), claudeMessagingSocketPath)
+			if got != tc.wants {
+				t.Errorf("claude wrapper present = %v, want %v; init file:\n%s", got, tc.wants, content)
+			}
+		})
+	}
+}
+
+// The wrapper is a bash function: it must be syntactically valid, must not
+// recurse into itself, and must leave an explicit --messaging-socket-path alone.
+func TestClaudeShellWrapper_behaviour(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	// A fake `claude` on PATH that just echoes the args it received.
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "claude"),
+		[]byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+		t.Fatalf("writing fake claude: %v", err)
+	}
+
+	run := func(cmd string) string {
+		c := exec.Command("bash", "-c", claudeShellWrapper+"\n"+cmd)
+		c.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"))
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bash %q: %v (%s)", cmd, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	if got, want := run("claude -p hi"), "--messaging-socket-path "+claudeMessagingSocketPath+" -p hi"; got != want {
+		t.Errorf("plain invocation: got %q, want %q", got, want)
+	}
+	if got, want := run("claude --messaging-socket-path /tmp/mine.sock"), "--messaging-socket-path /tmp/mine.sock"; got != want {
+		t.Errorf("explicit flag: got %q, want %q", got, want)
+	}
+	if got, want := run("claude --messaging-socket-path=/tmp/mine.sock"), "--messaging-socket-path=/tmp/mine.sock"; got != want {
+		t.Errorf("explicit flag (= form): got %q, want %q", got, want)
 	}
 }
 
