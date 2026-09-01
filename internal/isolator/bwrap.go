@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/containers"
@@ -25,6 +26,9 @@ type BwrapIsolator struct {
 	// evalSymlinksFn resolves symlinks to a canonical path. Defaults to
 	// filepath.EvalSymlinks. Overridable in tests.
 	evalSymlinksFn func(string) (string, error)
+	// ptmxUsableFn reports whether the host's /dev/pts/ptmx is openable.
+	// Defaults to hostPtmxUsable. Overridable in tests.
+	ptmxUsableFn func() bool
 }
 
 // pathExists reports whether the path exists on the host.
@@ -35,6 +39,26 @@ func (b *BwrapIsolator) pathExists(path string) bool {
 	}
 	_, err := stat(path)
 	return err == nil
+}
+
+// hostPtmxUsable reports whether the host's /dev/pts/ptmx can be opened by the
+// current user. Indirected through a package variable so tests can pin it.
+var hostPtmxUsable = func() bool {
+	f, err := os.OpenFile("/dev/pts/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
+}
+
+// ptmxUsable reports whether the host's pty multiplexer is usable inside the
+// sandbox, i.e. whether binding the host's /dev/pts keeps forkpty(3) working.
+func (b *BwrapIsolator) ptmxUsable() bool {
+	if b.ptmxUsableFn != nil {
+		return b.ptmxUsableFn()
+	}
+	return hostPtmxUsable()
 }
 
 // homeDir resolves the user's home directory. Indirected through a package
@@ -141,15 +165,26 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	args = append(args, "--proc", "/proc")
 	args = append(args, "--dev", "/dev")
 	// Expose the host's /dev/pts entries inside the sandbox so that interactive
-	// TUI apps can resolve the controlling-terminal path returned by ttyname_r().
-	args = append(args, "--bind", "/dev/pts", "/dev/pts")
-	// Ensure /dev/ptmx is accessible. bwrap --dev creates /dev/ptmx as a symlink
-	// to pts/ptmx. Since we bound the host's /dev/pts, /dev/pts/ptmx is the host's
-	// one. If the host has ptmxmode=000 (common on Debian/Ubuntu), opening it
-	// directly via the symlink fails. Binding the host's /dev/ptmx ensures we
-	// use the global ptmx node which the kernel handles correctly.
-	if b.pathExists("/dev/ptmx") {
-		args = append(args, "--dev-bind", "/dev/ptmx", "/dev/ptmx")
+	// TUI apps can resolve the controlling-terminal path returned by ttyname_r()
+	// (e.g. /dev/pts/3) — but only when the host's own multiplexer node,
+	// /dev/pts/ptmx, is openable by this user.
+	//
+	// Why the condition: binding the host's devpts shadows the fresh instance
+	// bwrap --dev mounts, and /dev/ptmx inside the sandbox is a symlink to
+	// pts/ptmx, so every pty allocation goes through the host node. Where devpts
+	// is mounted with ptmxmode=000 (Arch, Debian, Ubuntu) that open fails with
+	// EACCES and forkpty(3) breaks. The node cannot be replaced either: bwrap
+	// >= 0.11 refuses "--dev-bind /dev/ptmx /dev/ptmx" outright ("Can't mount on
+	// symlink destination"), and on older versions mount(2) resolved the symlink
+	// and bound the host node at /dev/pts/ptmx, where the kernel can no longer
+	// find the matching devpts instance (ENOENT) — so that workaround never
+	// really worked.
+	//
+	// When the host node is not usable we keep bwrap's own devpts instead:
+	// forkpty(3) works there, and the inherited terminal stays reachable as
+	// /dev/console and /dev/tty.
+	if b.ptmxUsable() {
+		args = append(args, "--bind", "/dev/pts", "/dev/pts")
 	}
 	args = append(args, "--tmpfs", "/tmp")
 

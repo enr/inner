@@ -15,13 +15,18 @@ import (
 
 // testIsolator creates a BwrapIsolator without requiring bwrap on the host.
 func testIsolator(info runtime.RuntimeInfo) *BwrapIsolator {
-	return newBwrapIsolatorWithInfo("/fake/bwrap", info)
+	iso := newBwrapIsolatorWithInfo("/fake/bwrap", info)
+	// Pin the pty-multiplexer probe so the emitted args do not depend on how
+	// the host mounted devpts. Both branches are covered by their own tests.
+	iso.ptmxUsableFn = func() bool { return true }
+	return iso
 }
 
 // testIsolatorAllExist creates a BwrapIsolator where every path is reported as existing.
 // Used to test sensitive resource hiding without needing real filesystem paths.
 func testIsolatorAllExist(info runtime.RuntimeInfo) *BwrapIsolator {
 	iso := newBwrapIsolatorWithInfo("/fake/bwrap", info)
+	iso.ptmxUsableFn = func() bool { return true }
 	iso.statFn = func(string) (os.FileInfo, error) { return nil, nil }
 	// Return the path unchanged so tests are deterministic regardless of the
 	// host filesystem layout (e.g. whether /var/run is a symlink to /run).
@@ -32,6 +37,7 @@ func testIsolatorAllExist(info runtime.RuntimeInfo) *BwrapIsolator {
 // testIsolatorNoneExist creates a BwrapIsolator where no path exists.
 func testIsolatorNoneExist(info runtime.RuntimeInfo) *BwrapIsolator {
 	iso := newBwrapIsolatorWithInfo("/fake/bwrap", info)
+	iso.ptmxUsableFn = func() bool { return true }
 	iso.statFn = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	return iso
 }
@@ -92,14 +98,7 @@ func indexSeq(args []string, needle ...string) int {
 // ── Base flags ────────────────────────────────────────────────────────────────
 
 func TestBuild_baseFlags(t *testing.T) {
-	// Mock /dev/ptmx to test its inclusion.
 	iso := testIsolator(runtime.RuntimeInfo{})
-	iso.statFn = func(path string) (os.FileInfo, error) {
-		if path == "/dev/ptmx" {
-			return nil, nil
-		}
-		return nil, os.ErrNotExist
-	}
 
 	args := cmdArgs(t, iso, config.RunConfig{
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
@@ -110,13 +109,49 @@ func TestBuild_baseFlags(t *testing.T) {
 		{"--proc", "/proc"},
 		{"--dev", "/dev"},
 		{"--bind", "/dev/pts", "/dev/pts"},
-		{"--dev-bind", "/dev/ptmx", "/dev/ptmx"},
 		{"--tmpfs", "/tmp"},
 		{"--die-with-parent"},
 	} {
 		if !hasSeq(args, seq...) {
 			t.Errorf("expected %v in args %v", seq, args)
 		}
+	}
+}
+
+// The host's /dev/ptmx must never be bind-mounted: inside the sandbox that
+// path is a symlink to pts/ptmx, which bwrap >= 0.11 refuses to mount over
+// ("Can't mount on symlink destination /dev/ptmx").
+func TestBuild_neverBindsDevPtmx(t *testing.T) {
+	for _, usable := range []bool{true, false} {
+		iso := testIsolator(runtime.RuntimeInfo{})
+		iso.ptmxUsableFn = func() bool { return usable }
+
+		args := cmdArgs(t, iso, config.RunConfig{
+			Entrypoint: config.Entrypoint{Cmd: "sh"},
+		})
+
+		if i := indexSeq(args, "/dev/ptmx"); i != -1 {
+			t.Errorf("ptmxUsable=%v: unexpected /dev/ptmx mount in args %v", usable, args)
+		}
+	}
+}
+
+// Where devpts is mounted with ptmxmode=000 the host's multiplexer cannot be
+// opened, so binding the host's /dev/pts would break forkpty(3). bwrap's own
+// devpts instance is kept instead.
+func TestBuild_hostPtsNotBound_whenPtmxUnusable(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	iso.ptmxUsableFn = func() bool { return false }
+
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	if hasSeq(args, "--bind", "/dev/pts", "/dev/pts") {
+		t.Errorf("unexpected host /dev/pts bind when ptmx is not usable, got %v", args)
+	}
+	if !hasSeq(args, "--dev", "/dev") {
+		t.Errorf("expected --dev /dev in args %v", args)
 	}
 }
 
