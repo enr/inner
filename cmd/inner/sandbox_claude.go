@@ -62,13 +62,6 @@ func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
 	content := "# inner sandbox — shell initialization\n" +
 		"PS1=" + fmt.Sprintf("%q", ps1) + "\n"
 
-	// A shell profile does not get --messaging-socket-path on its entrypoint
-	// (that would hand the flag to bash), so wrap the claude the user launches
-	// by hand instead.
-	if slices.Contains(rc.Capabilities, "claude") {
-		content += claudeShellWrapper
-	}
-
 	// Pre-populate shell history so the user can recall useful commands
 	// immediately with the up-arrow key. Commands are injected oldest-first
 	// so the last entry in the list sits at the top of the history stack.
@@ -112,23 +105,24 @@ func sandboxPS1(profileName string) string {
 // which is exactly what its own vetting demands of that directory.
 const claudeMessagingSocketPath = "/tmp/inner-claude-messaging/cc.sock"
 
-// claudeShellWrapper is a bash function sourced into interactive shell
-// entrypoints of profiles that declare the "claude" capability. It gives the
-// claude the user launches by hand the same --messaging-socket-path the
-// capability injects into a claude entrypoint (see prepareClaudeMessaging for
-// why the flag is needed at all), without overriding an explicit flag typed on
-// the command line.
-const claudeShellWrapper = `
-# inner sandbox — cross-session messaging socket for claude
-claude() {
-  case " $* " in
-    *" --messaging-socket-path "*|*" --messaging-socket-path="*)
-      command claude "$@" ;;
-    *)
-      command claude --messaging-socket-path ` + claudeMessagingSocketPath + ` "$@" ;;
-  esac
-}
+// claudeShimScript returns a shim script that calls the real claude at
+// realPath with --messaging-socket-path added, unless the caller passed the
+// flag itself. It is installed as "claude" in the shim directory, which the
+// isolator mounts at /tmp/inner-shims and prepends to PATH, so it also covers
+// a claude started from a script or a non-bash shell inside the sandbox.
+//
+// realPath must be absolute: the shim shadows "claude" on PATH, so calling it
+// by name here would make the script exec itself.
+func claudeShimScript(realPath string) string {
+	return `#!/bin/sh
+# inner sandbox — cross-session messaging socket for claude (see the claude capability)
+case " $* " in
+  *" --messaging-socket-path "*|*" --messaging-socket-path="*) ;;
+  *) set -- --messaging-socket-path ` + claudeMessagingSocketPath + ` "$@" ;;
+esac
+exec ` + realPath + ` "$@"
 `
+}
 
 // prepareClaudeMessaging injects --messaging-socket-path into a claude
 // entrypoint so the CLI stops refusing its cross-session messaging socket and
@@ -161,11 +155,15 @@ claude() {
 // something over /tmp/inner-claude-messaging would have to pass its own
 // --messaging-socket-path.
 //
-// No-op unless the entrypoint is claude itself: a profile that starts a shell
-// and lets the user launch claude by hand (contrib/shell-with-claude) would
-// otherwise get the flag handed to bash.
+// The flag can only go on the entrypoint when the entrypoint IS claude: a
+// profile that starts a shell and lets the user launch claude by hand
+// (contrib/shell-with-claude) would otherwise hand the flag to bash. Those
+// profiles get a claude shim on PATH instead — see claudeShimScript — which
+// covers every way claude is started inside the sandbox, not just an
+// interactive shell.
 func prepareClaudeMessaging(rc *config.RunConfig) {
 	if filepath.Base(rc.Entrypoint.Cmd) != "claude" {
+		registerClaudeShim(rc)
 		return
 	}
 	// Respect an explicit --messaging-socket-path already set in the profile.
@@ -180,6 +178,34 @@ func prepareClaudeMessaging(rc *config.RunConfig) {
 		[]string{"--messaging-socket-path", claudeMessagingSocketPath},
 		rc.Entrypoint.Args...,
 	)
+}
+
+// registerClaudeShim adds the claude shim to rc.Shims, to be written into the
+// shim directory by prepareSandbox.
+//
+// The real binary is resolved on the host, with the host PATH: the sandbox
+// sees the same filesystem through the root bind, and a profile that cannot
+// reach that path could not have run claude in the first place. A profile that
+// already redirects claude through [noop] keeps its own shim: overriding it
+// would silently undo what the profile asked for.
+func registerClaudeShim(rc *config.RunConfig) {
+	if _, taken := rc.Noop.Rewrite["claude"]; taken {
+		return
+	}
+	if slices.Contains(rc.Noop.Block, "claude") {
+		return
+	}
+	realPath, err := exec.LookPath("claude")
+	if err != nil {
+		// Nothing to wrap: claude is not installed on the host, so the sandbox
+		// has nothing to start either. Silent — applyClaude already warns about
+		// a missing claude where it matters.
+		return
+	}
+	if rc.Shims == nil {
+		rc.Shims = make(map[string]string)
+	}
+	rc.Shims["claude"] = claudeShimScript(realPath)
 }
 
 // claudeTokenExpired reports whether the OAuth token in credPath appears to be

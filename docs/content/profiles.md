@@ -1297,27 +1297,29 @@ profile that mounts something over `/tmp/inner-claude-messaging` must pass its o
 
 A profile that sets `--messaging-socket-path` itself keeps its own value.
 
-Profiles whose entrypoint is an interactive `bash` (`shell-with-claude`, and any
-profile that declares `capabilities = ["claude"]` and starts a shell) cannot get
-the flag on the entrypoint — it would go to `bash`. There `inner` sources a small
-`claude()` wrapper into the generated `shell-init.sh` instead, so the `claude` the
-user launches by hand gets the same socket path:
+Profiles whose entrypoint is not claude (`shell-with-claude`, and any profile that
+declares `capabilities = ["claude"]` and starts a shell) cannot get the flag on the
+entrypoint — it would go to `bash`. There the capability installs a `claude` shim in
+the shim directory instead, which the isolator mounts at `/tmp/inner-shims` and
+prepends to `PATH`:
 
 ```sh
-claude() {
-  case " $* " in
-    *" --messaging-socket-path "*|*" --messaging-socket-path="*)
-      command claude "$@" ;;
-    *)
-      command claude --messaging-socket-path /tmp/inner-claude-messaging/cc.sock "$@" ;;
-  esac
-}
+#!/bin/sh
+case " $* " in
+  *" --messaging-socket-path "*|*" --messaging-socket-path="*) ;;
+  *) set -- --messaging-socket-path /tmp/inner-claude-messaging/cc.sock "$@" ;;
+esac
+exec /home/you/.local/bin/claude "$@"
 ```
 
-An explicit flag typed on the command line wins, and `command claude` bypasses the
-wrapper entirely. The wrapper is a bash function, so it exists only in that
-interactive shell: a `claude` started from a script inside the sandbox still prints
-the warning unless it passes the flag itself.
+Being on `PATH`, it covers every way claude is started inside the sandbox — an
+interactive shell, a script, a non-bash shell. An explicit `--messaging-socket-path`
+on the command line is left alone, and the real binary can still be called by its
+absolute path to bypass the shim entirely.
+
+The path to the real binary is resolved on the host with the host `PATH`. A profile
+that already covers `claude` through [`[noop]`](#noop) — `block` or `rewrite` —
+keeps its own shim: the capability does not override it.
 
 ### Lifecycle
 
@@ -1326,7 +1328,7 @@ inner run -p claude-interactive
   └─ applyClaude()
        ├─ claude auth status   (host; unlocks OS credential store, refreshes token)
        ├─ inject --messaging-socket-path /tmp/inner-claude-messaging/cc.sock (claude entrypoints;
-       │    interactive bash entrypoints get the claude() wrapper in shell-init.sh instead)
+       │    other entrypoints get a claude shim on PATH instead)
        ├─ prepareClaude()
        │    ├─ create /tmp/inner-claude-XXXXXX/
        │    ├─ copy .credentials.json  (from ~/.claude)

@@ -84,16 +84,6 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 		return nil, fmt.Errorf(format, err)
 	}
 
-	// Shim dir from [noop] config: blocked/rewritten commands.
-	if len(rc.Noop.Block) > 0 || len(rc.Noop.Rewrite) > 0 {
-		shimDir, err := shim.Builder{}.Build(rc.Noop)
-		if err != nil {
-			return fail("building shim dir: %w", err)
-		}
-		rc.ShimDir = shimDir
-		cleanups = append(cleanups, func() { _ = os.RemoveAll(shimDir) })
-	}
-
 	// containers.conf override for rootless podman inside the sandbox.
 	// A no-op unless nested-user-ns is allowed, and shared by both commands so
 	// [verify.custom] checks see the same environment a run would.
@@ -119,6 +109,18 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 			return nil, err
 		}
 		cleanups = append(cleanups, cleanupCaps)
+	}
+
+	// Shim dir: [noop] blocked/rewritten commands, plus the shims capability
+	// handlers registered in rc.Shims. Built after applyCapabilities so those
+	// registrations are already in.
+	if len(rc.Noop.Block) > 0 || len(rc.Noop.Rewrite) > 0 || len(rc.Shims) > 0 {
+		shimDir, err := shim.Builder{}.BuildWith(rc.Noop, rc.Shims)
+		if err != nil {
+			return fail("building shim dir: %w", err)
+		}
+		rc.ShimDir = shimDir
+		cleanups = append(cleanups, func() { _ = os.RemoveAll(shimDir) })
 	}
 
 	if opts.SafeMounts {

@@ -212,3 +212,50 @@ func TestBuild_onlyBlockCreatesDir(t *testing.T) {
 		t.Errorf("expected directory at %q", dir)
 	}
 }
+
+// BuildWith writes caller-supplied scripts alongside the [noop] ones, and a
+// name collision resolves in favour of the caller's script.
+func TestBuildWith_extraScripts(t *testing.T) {
+	dir, err := Builder{}.BuildWith(
+		config.NoopConfig{Rewrite: map[string]string{"claude": "/usr/bin/true"}},
+		map[string]string{"claude": "#!/bin/sh\nexec /real/claude \"$@\"\n", "foo": "#!/bin/sh\n"},
+	)
+	if err != nil {
+		t.Fatalf("BuildWith: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	got, err := os.ReadFile(filepath.Join(dir, "claude"))
+	if err != nil {
+		t.Fatalf("reading claude shim: %v", err)
+	}
+	if !strings.Contains(string(got), "/real/claude") {
+		t.Errorf("extra script should win over the noop rewrite, got:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "foo")); err != nil {
+		t.Errorf("expected the second extra script to be written: %v", err)
+	}
+}
+
+// An extra script with no noop config still produces a shim directory.
+func TestBuildWith_extraOnly(t *testing.T) {
+	dir, err := Builder{}.BuildWith(config.NoopConfig{}, map[string]string{"claude": "#!/bin/sh\n"})
+	if err != nil {
+		t.Fatalf("BuildWith: %v", err)
+	}
+	if dir == "" {
+		t.Fatal("expected a shim dir for an extra-only build")
+	}
+	defer os.RemoveAll(dir)
+	if _, err := os.Stat(filepath.Join(dir, "claude")); err != nil {
+		t.Errorf("expected the extra script to be written: %v", err)
+	}
+}
+
+// A path separator in an extra shim name must be rejected, not written.
+func TestBuildWith_rejectsUnsafeName(t *testing.T) {
+	_, err := Builder{}.BuildWith(config.NoopConfig{}, map[string]string{"../evil": "#!/bin/sh\n"})
+	if err == nil {
+		t.Fatal("expected an error for a name with a path separator")
+	}
+}

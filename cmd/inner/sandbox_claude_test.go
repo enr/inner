@@ -337,70 +337,88 @@ func TestPrepareInteractiveShell_injectsBashInitFile(t *testing.T) {
 	}
 }
 
-// A shell profile with the claude capability must ship the claude wrapper in
-// its init file, so the claude the user launches by hand gets the messaging
-// socket path the capability cannot put on a bash entrypoint.
-func TestPrepareInteractiveShell_claudeWrapper(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		caps  []string
-		wants bool
-	}{
-		{"with claude capability", []string{"claude"}, true},
-		{"without claude capability", []string{"gemini"}, false},
-		{"no capabilities", nil, false},
+// A profile whose entrypoint is not claude gets the wrapper as a shim on PATH
+// instead of a flag on the entrypoint, so a claude launched by hand — from any
+// shell, or from a script — still gets its messaging socket path.
+func TestPrepareClaudeMessaging_registersShimForShellEntrypoint(t *testing.T) {
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skip("claude not installed on this host")
+	}
+	rc := &config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "/bin/bash", Interactive: true},
+	}
+	prepareClaudeMessaging(rc)
+
+	if len(rc.Entrypoint.Args) != 0 {
+		t.Errorf("the flag must not be handed to the shell, got args %v", rc.Entrypoint.Args)
+	}
+	script, ok := rc.Shims["claude"]
+	if !ok {
+		t.Fatalf("expected a claude shim, got shims %v", rc.Shims)
+	}
+	if !strings.Contains(script, claudeMessagingSocketPath) {
+		t.Errorf("shim does not pass the socket path:\n%s", script)
+	}
+	// The shim shadows "claude" on PATH: exec'ing it by name would recurse.
+	if !strings.Contains(script, "exec /") {
+		t.Errorf("shim must exec an absolute path:\n%s", script)
+	}
+}
+
+// A profile that already redirects or blocks claude through [noop] keeps its
+// own shim.
+func TestPrepareClaudeMessaging_leavesNoopShimsAlone(t *testing.T) {
+	for name, noop := range map[string]config.NoopConfig{
+		"rewrite": {Rewrite: map[string]string{"claude": "/usr/bin/true"}},
+		"block":   {Block: []string{"claude"}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
+		t.Run(name, func(t *testing.T) {
 			rc := &config.RunConfig{
-				Capabilities: tc.caps,
-				Entrypoint:   config.Entrypoint{Cmd: "/bin/bash", Interactive: true},
+				Noop:       noop,
+				Entrypoint: config.Entrypoint{Cmd: "/bin/bash", Interactive: true},
 			}
-			if err := prepareInteractiveShell(rc, dir, "(inner) $ "); err != nil {
-				t.Fatalf("prepareInteractiveShell: %v", err)
-			}
-			content, err := os.ReadFile(rc.Entrypoint.Args[1])
-			if err != nil {
-				t.Fatalf("reading init file: %v", err)
-			}
-			got := strings.Contains(string(content), claudeMessagingSocketPath)
-			if got != tc.wants {
-				t.Errorf("claude wrapper present = %v, want %v; init file:\n%s", got, tc.wants, content)
+			prepareClaudeMessaging(rc)
+			if _, ok := rc.Shims["claude"]; ok {
+				t.Errorf("expected no claude shim when [noop] %s covers it", name)
 			}
 		})
 	}
 }
 
-// The wrapper is a bash function: it must be syntactically valid, must not
-// recurse into itself, and must leave an explicit --messaging-socket-path alone.
-func TestClaudeShellWrapper_behaviour(t *testing.T) {
-	if _, err := exec.LookPath("bash"); err != nil {
-		t.Skip("bash not available")
-	}
-	// A fake `claude` on PATH that just echoes the args it received.
-	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "claude"),
-		[]byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+// The shim must be a valid shell script: it adds the flag once, leaves an
+// explicit one alone, and never recurses into itself.
+func TestClaudeShimScript_behaviour(t *testing.T) {
+	dir := t.TempDir()
+	// The "real" claude the shim execs: it just echoes the args it received.
+	real := filepath.Join(dir, "real-claude")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
 		t.Fatalf("writing fake claude: %v", err)
 	}
+	// The shim, installed under the name it shadows.
+	shimPath := filepath.Join(dir, "claude")
+	if err := os.WriteFile(shimPath, []byte(claudeShimScript(real)), 0o755); err != nil {
+		t.Fatalf("writing shim: %v", err)
+	}
 
-	run := func(cmd string) string {
-		c := exec.Command("bash", "-c", claudeShellWrapper+"\n"+cmd)
-		c.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"))
+	run := func(args ...string) string {
+		c := exec.Command(shimPath, args...)
+		// The shim's own directory first on PATH: a shim that called "claude"
+		// by name would loop instead of reaching the real binary.
+		c.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
 		out, err := c.CombinedOutput()
 		if err != nil {
-			t.Fatalf("bash %q: %v (%s)", cmd, err, out)
+			t.Fatalf("running shim %v: %v (%s)", args, err, out)
 		}
 		return strings.TrimSpace(string(out))
 	}
 
-	if got, want := run("claude -p hi"), "--messaging-socket-path "+claudeMessagingSocketPath+" -p hi"; got != want {
+	if got, want := run("-p", "hi"), "--messaging-socket-path "+claudeMessagingSocketPath+" -p hi"; got != want {
 		t.Errorf("plain invocation: got %q, want %q", got, want)
 	}
-	if got, want := run("claude --messaging-socket-path /tmp/mine.sock"), "--messaging-socket-path /tmp/mine.sock"; got != want {
+	if got, want := run("--messaging-socket-path", "/tmp/mine.sock"), "--messaging-socket-path /tmp/mine.sock"; got != want {
 		t.Errorf("explicit flag: got %q, want %q", got, want)
 	}
-	if got, want := run("claude --messaging-socket-path=/tmp/mine.sock"), "--messaging-socket-path=/tmp/mine.sock"; got != want {
+	if got, want := run("--messaging-socket-path=/tmp/mine.sock"), "--messaging-socket-path=/tmp/mine.sock"; got != want {
 		t.Errorf("explicit flag (= form): got %q, want %q", got, want)
 	}
 }
@@ -476,15 +494,16 @@ func TestPrepareClaudeMessaging_prependsBeforePositionalPrompt(t *testing.T) {
 	}
 }
 
-func TestPrepareClaudeMessaging_noopForNonClaudeEntrypoint(t *testing.T) {
+func TestPrepareClaudeMessaging_noFlagOnNonClaudeEntrypoint(t *testing.T) {
 	// A profile that starts a shell and lets the user launch claude by hand
-	// must not get the flag handed to bash.
+	// must not get the flag handed to bash — it gets a shim instead, see
+	// TestPrepareClaudeMessaging_registersShimForShellEntrypoint.
 	rc := &config.RunConfig{
 		Entrypoint: config.Entrypoint{Cmd: "/bin/bash", Interactive: true},
 	}
 	prepareClaudeMessaging(rc)
 	if len(rc.Entrypoint.Args) != 0 {
-		t.Errorf("should be no-op for a non-claude entrypoint, got args: %v", rc.Entrypoint.Args)
+		t.Errorf("entrypoint args must be untouched for a non-claude entrypoint, got: %v", rc.Entrypoint.Args)
 	}
 }
 
