@@ -341,9 +341,9 @@ func TestPrepareInteractiveShell_injectsBashInitFile(t *testing.T) {
 // instead of a flag on the entrypoint, so a claude launched by hand — from any
 // shell, or from a script — still gets its messaging socket path.
 func TestPrepareClaudeMessaging_registersShimForShellEntrypoint(t *testing.T) {
-	if _, err := exec.LookPath("claude"); err != nil {
-		t.Skip("claude not installed on this host")
-	}
+	// testbin/claude, not the host's: skipping when claude is absent meant this
+	// test never ran on CI, where nothing installs it.
+	withTestbin(t)
 	rc := &config.RunConfig{
 		Entrypoint: config.Entrypoint{Cmd: "/bin/bash", Interactive: true},
 	}
@@ -362,6 +362,24 @@ func TestPrepareClaudeMessaging_registersShimForShellEntrypoint(t *testing.T) {
 	// The shim shadows "claude" on PATH: exec'ing it by name would recurse.
 	if !strings.Contains(script, "exec '/") {
 		t.Errorf("shim must exec a quoted absolute path:\n%s", script)
+	}
+}
+
+// A claude entrypoint takes the flag directly: no shim is registered, so the
+// shim directory is not created for it.
+func TestPrepareClaudeMessaging_claudeEntrypointGetsNoShim(t *testing.T) {
+	withTestbin(t)
+	rc := &config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "/usr/local/bin/claude"},
+	}
+	prepareClaudeMessaging(rc)
+
+	if len(rc.Shims) != 0 {
+		t.Errorf("expected no shim for a claude entrypoint, got %v", rc.Shims)
+	}
+	want := []string{"--messaging-socket-path", claudeMessagingSocketPath}
+	if len(rc.Entrypoint.Args) < 2 || rc.Entrypoint.Args[0] != want[0] || rc.Entrypoint.Args[1] != want[1] {
+		t.Errorf("expected the flag on the entrypoint, got args %v", rc.Entrypoint.Args)
 	}
 }
 
