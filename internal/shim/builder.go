@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/enr/inner/internal/config"
@@ -26,9 +27,11 @@ func (b Builder) Build(noop config.NoopConfig) (string, error) {
 // [noop] — currently the claude capability, which wraps the CLI so a session
 // launched by hand inside the sandbox gets its messaging socket path.
 //
-// Extra scripts are written after the noop ones and win on a name collision:
-// they exist because something in the run does not work without them, while a
-// [noop] entry only asks for a command to be blocked or redirected.
+// A [noop] entry is what the profile explicitly asked for — block this
+// command, redirect that one — so a runtime shim may not quietly take its
+// place: a collision is an error, not a silent override. Callers decide what
+// to do about it before getting here; the claude capability, for one, simply
+// leaves the [noop] shim alone.
 func (Builder) BuildWith(noop config.NoopConfig, extra map[string]string) (string, error) {
 	if len(noop.Block) == 0 && len(noop.Rewrite) == 0 && len(extra) == 0 {
 		return "", nil
@@ -47,6 +50,10 @@ func (Builder) BuildWith(noop config.NoopConfig, extra map[string]string) (strin
 		if !isSafeShimName(cmd) {
 			os.RemoveAll(dir) //nolint:errcheck
 			return "", fmt.Errorf("shim %q: name must be a plain filename with no path separators", cmd)
+		}
+		if _, taken := noop.Rewrite[cmd]; taken || slices.Contains(noop.Block, cmd) {
+			os.RemoveAll(dir) //nolint:errcheck
+			return "", fmt.Errorf("shim %q: already covered by [noop] — the profile's entry wins", cmd)
 		}
 		if err := writeScript(dir, cmd, script); err != nil {
 			os.RemoveAll(dir) //nolint:errcheck
