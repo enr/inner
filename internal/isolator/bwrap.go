@@ -42,7 +42,9 @@ func (b *BwrapIsolator) pathExists(path string) bool {
 }
 
 // hostPtmxUsable reports whether the host's /dev/pts/ptmx can be opened by the
-// current user. Indirected through a package variable so tests can pin it.
+// current user. Opening the multiplexer allocates a pty pair as a side effect;
+// closing it immediately releases it again, so the probe leaves nothing behind.
+// Indirected through a package variable so tests can pin it.
 var hostPtmxUsable = func() bool {
 	f, err := os.OpenFile("/dev/pts/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
@@ -172,8 +174,12 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// Why the condition: binding the host's devpts shadows the fresh instance
 	// bwrap --dev mounts, and /dev/ptmx inside the sandbox is a symlink to
 	// pts/ptmx, so every pty allocation goes through the host node. Where devpts
-	// is mounted with ptmxmode=000 (Arch, Debian, Ubuntu) that open fails with
-	// EACCES and forkpty(3) breaks. The node cannot be replaced either: bwrap
+	// is mounted with ptmxmode=000 that open fails with EACCES and forkpty(3)
+	// breaks — and 0000 is the kernel default (DEVPTS_DEFAULT_PTMX_MODE), which
+	// most distributions keep because /dev/ptmx there is a devtmpfs node of its
+	// own, mode 0666, rather than a symlink into /dev/pts. So this bind is the
+	// exception, not the rule: it happens for root, and on the hosts that do
+	// mount devpts with ptmxmode=0666. The node cannot be replaced either: bwrap
 	// >= 0.11 refuses "--dev-bind /dev/ptmx /dev/ptmx" outright ("Can't mount on
 	// symlink destination"), and on older versions mount(2) resolved the symlink
 	// and bound the host node at /dev/pts/ptmx, where the kernel can no longer
