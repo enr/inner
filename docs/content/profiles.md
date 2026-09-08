@@ -1322,6 +1322,15 @@ The path to the real binary is resolved on the host with the host `PATH`. A prof
 that already covers `claude` through [`[noop]`](#noop) — `block` or `rewrite` —
 keeps its own shim: the capability does not override it.
 
+One side effect is worth knowing: the shim directory is prepended to the sandbox
+`PATH`, so `claude` becomes callable by name even in a profile whose own `PATH`
+(`[env] set PATH`, or the conservative default a profile that does not inherit
+`PATH` gets) does not contain the directory the binary lives in. This is not a
+widening of what the sandbox can reach — the binary is already visible through the
+read-only root bind, and could always be called by its absolute path — only of how
+it can be spelled. A profile that wants `claude` unreachable should block it
+through `[noop.block]`.
+
 ### Lifecycle
 
 ```

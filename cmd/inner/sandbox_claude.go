@@ -205,6 +205,13 @@ func prepareClaudeMessaging(rc *config.RunConfig) {
 // reach that path could not have run claude in the first place. A profile that
 // already redirects claude through [noop] keeps its own shim: overriding it
 // would silently undo what the profile asked for.
+//
+// The shim dir is prepended to the sandbox PATH, so registering the shim also
+// makes "claude" callable by name in a profile whose own PATH does not list the
+// directory the binary lives in. That changes how it can be spelled, not what
+// the sandbox can reach — the file is already exposed by the root bind and was
+// always callable by absolute path — and a profile that wants it gone says so
+// with [noop.block], which is honoured above.
 func registerClaudeShim(rc *config.RunConfig) {
 	if _, taken := rc.Noop.Rewrite["claude"]; taken {
 		return
