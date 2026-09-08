@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuild_emptyNoop_returnsEmptyPath(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{})
+	dir, err := Builder{}.BuildWith(config.NoopConfig{}, nil)
 	if err != nil {
 		t.Fatalf("Build empty noop: %v", err)
 	}
@@ -20,9 +20,9 @@ func TestBuild_emptyNoop_returnsEmptyPath(t *testing.T) {
 }
 
 func TestBuild_blockCreatesScript(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Block: []string{"apt-get", "brew"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -58,9 +58,9 @@ func TestBuild_blockCreatesScript(t *testing.T) {
 }
 
 func TestBuild_blockScript_mentionsNoop(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Block: []string{"apt"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -74,12 +74,12 @@ func TestBuild_blockScript_mentionsNoop(t *testing.T) {
 }
 
 func TestBuild_rewriteCreatesScript(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Rewrite: map[string]string{
 			"docker": "podman",
 			"rm":     "rm -i",
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -112,10 +112,10 @@ func TestBuild_rewriteCreatesScript(t *testing.T) {
 }
 
 func TestBuild_mixedBlockAndRewrite(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Block:   []string{"apt-get"},
 		Rewrite: map[string]string{"docker": "podman"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -143,9 +143,9 @@ func TestBuild_rewrite_rejectsShellMetacharacters(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Builder{}.Build(config.NoopConfig{
+			_, err := Builder{}.BuildWith(config.NoopConfig{
 				Rewrite: map[string]string{"docker": tc.replacement},
-			})
+			}, nil)
 			if err == nil {
 				t.Fatalf("expected error for replacement %q, got nil", tc.replacement)
 			}
@@ -163,9 +163,9 @@ func TestBuild_block_rejectsPathTraversal(t *testing.T) {
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
-			_, err := Builder{}.Build(config.NoopConfig{
+			_, err := Builder{}.BuildWith(config.NoopConfig{
 				Block: []string{cmd},
-			})
+			}, nil)
 			if err == nil {
 				t.Fatalf("expected error for block key %q, got nil", cmd)
 			}
@@ -182,9 +182,9 @@ func TestBuild_rewrite_rejectsPathTraversalInKey(t *testing.T) {
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
-			_, err := Builder{}.Build(config.NoopConfig{
+			_, err := Builder{}.BuildWith(config.NoopConfig{
 				Rewrite: map[string]string{cmd: "safe-replacement"},
-			})
+			}, nil)
 			if err == nil {
 				t.Fatalf("expected error for rewrite key %q, got nil", cmd)
 			}
@@ -193,9 +193,9 @@ func TestBuild_rewrite_rejectsPathTraversalInKey(t *testing.T) {
 }
 
 func TestBuild_onlyBlockCreatesDir(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Block: []string{"curl"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -213,11 +213,10 @@ func TestBuild_onlyBlockCreatesDir(t *testing.T) {
 	}
 }
 
-// BuildWith writes caller-supplied scripts alongside the [noop] ones, and a
-// name collision resolves in favour of the caller's script.
+// BuildWith writes caller-supplied scripts alongside the [noop] ones.
 func TestBuildWith_extraScripts(t *testing.T) {
 	dir, err := Builder{}.BuildWith(
-		config.NoopConfig{Rewrite: map[string]string{"claude": "/usr/bin/true"}},
+		config.NoopConfig{Rewrite: map[string]string{"apt-get": "/usr/bin/true"}},
 		map[string]string{"claude": "#!/bin/sh\nexec /real/claude \"$@\"\n", "foo": "#!/bin/sh\n"},
 	)
 	if err != nil {
@@ -230,10 +229,33 @@ func TestBuildWith_extraScripts(t *testing.T) {
 		t.Fatalf("reading claude shim: %v", err)
 	}
 	if !strings.Contains(string(got), "/real/claude") {
-		t.Errorf("extra script should win over the noop rewrite, got:\n%s", got)
+		t.Errorf("extra script not written as given, got:\n%s", got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "foo")); err != nil {
-		t.Errorf("expected the second extra script to be written: %v", err)
+	for _, name := range []string{"foo", "apt-get"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("expected shim %q to be written: %v", name, err)
+		}
+	}
+}
+
+// A [noop] entry is the profile's explicit decision: a runtime shim must not
+// silently replace it, or the next capability to register one would un-block a
+// command the profile blocked.
+func TestBuildWith_rejectsNoopCollision(t *testing.T) {
+	for name, noop := range map[string]config.NoopConfig{
+		"rewrite": {Rewrite: map[string]string{"claude": "/usr/bin/true"}},
+		"block":   {Block: []string{"claude"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, err := Builder{}.BuildWith(noop, map[string]string{"claude": "#!/bin/sh\n"})
+			if err == nil {
+				os.RemoveAll(dir)
+				t.Fatalf("expected an error when an extra shim collides with [noop] %s", name)
+			}
+			if dir != "" {
+				t.Errorf("no shim dir should be returned on error, got %q", dir)
+			}
+		})
 	}
 }
 

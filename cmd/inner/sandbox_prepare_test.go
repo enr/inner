@@ -40,6 +40,28 @@ func TestPrepareSandbox_noNoopConfigMeansNoShimDir(t *testing.T) {
 	}
 }
 
+// A shim contributed at runtime (rc.Shims, e.g. the claude capability) builds
+// the shim directory on its own, with no [noop] entry in the profile.
+func TestPrepareSandbox_shimDirFromRuntimeShimsAlone(t *testing.T) {
+	rc := &config.RunConfig{Shims: map[string]string{"claude": "#!/bin/sh\nexit 0\n"}}
+
+	cleanup, err := prepareSandbox(rc, runSandboxOptions())
+	if err != nil {
+		t.Fatalf("prepareSandbox: %v", err)
+	}
+	if rc.ShimDir == "" {
+		t.Fatal("ShimDir was not recorded for a runtime-only shim")
+	}
+	if _, err := os.Stat(filepath.Join(rc.ShimDir, "claude")); err != nil {
+		t.Fatalf("runtime shim was not written: %v", err)
+	}
+
+	cleanup()
+	if _, err := os.Stat(rc.ShimDir); !os.IsNotExist(err) {
+		t.Errorf("shim dir survived cleanup: %v", err)
+	}
+}
+
 // A failure halfway through must not leave the earlier steps' temp directories
 // behind: a run that never started should cost nothing.
 func TestPrepareSandbox_rollsBackEarlierStepsOnFailure(t *testing.T) {

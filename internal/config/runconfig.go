@@ -77,7 +77,7 @@ type RunConfig struct {
 	// active. Set by cmd_run.go / cmd_verify.go via applyContainersConf().
 	ContainersConfPath string
 	// ShimDir is the path to the directory containing shim scripts.
-	// Empty if no shim is active. Set by cmd_run.go after shim.Builder.Build().
+	// Empty if no shim is active. Set by prepareSandbox after shim.Builder.BuildWith().
 	ShimDir string
 	// Shims are shim scripts contributed at runtime rather than declared in
 	// [noop], keyed by command name and holding the full script body. Populated

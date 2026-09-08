@@ -137,7 +137,11 @@ func TestRunNetRelay_unusableListenAddressIsFatalBeforeTheChildStarts(t *testing
 	var stderr bytes.Buffer
 
 	_, err := runNetRelay(&stderr, netRelayOptions{
-		ListenAddr: "127.0.0.1:1", // privileged port: bind must fail as a normal user
+		// An address that is not on any local interface (TEST-NET-3, RFC 5737):
+		// bind fails with EADDRNOTAVAIL for every user. A privileged port would
+		// not do — root, as in a CI container, binds it happily and the test
+		// then failed for the wrong reason.
+		ListenAddr: "203.0.113.1:80",
 		UnixPath:   filepath.Join(t.TempDir(), "absent.sock"),
 		Cmd:        "touch",
 		Args:       []string{marker},

@@ -1303,23 +1303,33 @@ entrypoint — it would go to `bash`. There the capability installs a `claude` s
 the shim directory instead, which the isolator mounts at `/tmp/inner-shims` and
 prepends to `PATH`:
 
-```sh
-#!/bin/sh
-case " $* " in
-  *" --messaging-socket-path "*|*" --messaging-socket-path="*) ;;
-  *) set -- --messaging-socket-path /tmp/inner-claude-messaging/cc.sock "$@" ;;
-esac
-exec /home/you/.local/bin/claude "$@"
-```
+The shim is a small `/bin/sh` script that execs the real binary with
+`--messaging-socket-path /tmp/inner-claude-messaging/cc.sock` prepended to the
+arguments it was given. Two details matter:
+
+- the path to the real binary is single-quoted, so an install under a directory
+  containing a space or a shell metacharacter is still reached;
+- the arguments are scanned one at a time, so the flag is added unless it was
+  passed as its own argument — the flag *name* appearing inside a value, as in
+  `claude -p "what does --messaging-socket-path do"`, does not suppress it.
 
 Being on `PATH`, it covers every way claude is started inside the sandbox — an
 interactive shell, a script, a non-bash shell. An explicit `--messaging-socket-path`
-on the command line is left alone, and the real binary can still be called by its
-absolute path to bypass the shim entirely.
+is left alone, and the real binary can still be called by its absolute path to
+bypass the shim entirely.
 
 The path to the real binary is resolved on the host with the host `PATH`. A profile
 that already covers `claude` through [`[noop]`](#noop) — `block` or `rewrite` —
 keeps its own shim: the capability does not override it.
+
+One side effect is worth knowing: the shim directory is prepended to the sandbox
+`PATH`, so `claude` becomes callable by name even in a profile whose own `PATH`
+(`[env] set PATH`, or the conservative default a profile that does not inherit
+`PATH` gets) does not contain the directory the binary lives in. This is not a
+widening of what the sandbox can reach — the binary is already visible through the
+read-only root bind, and could always be called by its absolute path — only of how
+it can be spelled. A profile that wants `claude` unreachable should block it
+through `[noop.block]`.
 
 ### Lifecycle
 
