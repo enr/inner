@@ -117,13 +117,19 @@ const claudeMessagingSocketPath = "/tmp/inner-claude-messaging/cc.sock"
 // split into two words by sh, and one containing $ or a backtick would be
 // expanded.
 func claudeShimScript(realPath string) string {
+	quoted := shellQuote(realPath)
+	// The flag is looked for one argument at a time, not in "$*": joining the
+	// arguments into a single string would also match the flag name inside an
+	// argument's value — `claude -p "what does --messaging-socket-path do"` —
+	// and silently drop the path the shim exists to pass.
 	return `#!/bin/sh
 # inner sandbox — cross-session messaging socket for claude (see the claude capability)
-case " $* " in
-  *" --messaging-socket-path "*|*" --messaging-socket-path="*) ;;
-  *) set -- --messaging-socket-path ` + claudeMessagingSocketPath + ` "$@" ;;
-esac
-exec ` + shellQuote(realPath) + ` "$@"
+for arg in "$@"; do
+  case "$arg" in
+    --messaging-socket-path|--messaging-socket-path=*) exec ` + quoted + ` "$@" ;;
+  esac
+done
+exec ` + quoted + ` --messaging-socket-path ` + claudeMessagingSocketPath + ` "$@"
 `
 }
 

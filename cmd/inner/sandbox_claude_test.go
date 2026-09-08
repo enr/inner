@@ -421,6 +421,12 @@ func TestClaudeShimScript_behaviour(t *testing.T) {
 	if got, want := run("--messaging-socket-path=/tmp/mine.sock"), "--messaging-socket-path=/tmp/mine.sock"; got != want {
 		t.Errorf("explicit flag (= form): got %q, want %q", got, want)
 	}
+	// The flag name inside an argument's VALUE is not an explicit flag: the
+	// prompt below must still get the socket path.
+	prompt := "what does --messaging-socket-path do"
+	if got, want := run("-p", prompt), "--messaging-socket-path "+claudeMessagingSocketPath+" -p "+prompt; got != want {
+		t.Errorf("flag name inside a prompt: got %q, want %q", got, want)
+	}
 }
 
 // A claude installed under a path with a space (or any other character sh
