@@ -15,17 +15,15 @@ import (
 // The caller is responsible for removing the directory after use.
 type Builder struct{}
 
-// Build creates a temporary directory containing shim scripts derived from noop.
-// Returns the path to the directory, or an empty string if noop has no entries.
-// On error the directory is cleaned up before returning.
-func (b Builder) Build(noop config.NoopConfig) (string, error) {
-	return b.BuildWith(noop, nil)
-}
-
-// BuildWith is Build plus a set of ready-made scripts keyed by command name,
-// used by callers that generate a shim themselves rather than declaring it in
-// [noop] — currently the claude capability, which wraps the CLI so a session
-// launched by hand inside the sandbox gets its messaging socket path.
+// BuildWith creates a temporary directory containing the shim scripts derived
+// from noop, plus a set of ready-made scripts keyed by command name — used by
+// callers that generate a shim themselves rather than declaring it in [noop],
+// currently the claude capability, which wraps the CLI so a session launched by
+// hand inside the sandbox gets its messaging socket path. Pass a nil extra for
+// [noop] alone.
+//
+// Returns the path to the directory, or an empty string if there is nothing to
+// write. On error the directory is cleaned up before returning.
 //
 // A [noop] entry is what the profile explicitly asked for — block this
 // command, redirect that one — so a runtime shim may not quietly take its

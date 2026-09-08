@@ -44,8 +44,8 @@ func (b *BwrapIsolator) pathExists(path string) bool {
 // hostPtmxUsable reports whether the host's /dev/pts/ptmx can be opened by the
 // current user. Opening the multiplexer allocates a pty pair as a side effect;
 // closing it immediately releases it again, so the probe leaves nothing behind.
-// Indirected through a package variable so tests can pin it.
-var hostPtmxUsable = func() bool {
+// Tests pin the probe through the isolator's ptmxUsableFn field.
+func hostPtmxUsable() bool {
 	f, err := os.OpenFile("/dev/pts/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return false

@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuild_emptyNoop_returnsEmptyPath(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{})
+	dir, err := Builder{}.BuildWith(config.NoopConfig{}, nil)
 	if err != nil {
 		t.Fatalf("Build empty noop: %v", err)
 	}
@@ -20,9 +20,9 @@ func TestBuild_emptyNoop_returnsEmptyPath(t *testing.T) {
 }
 
 func TestBuild_blockCreatesScript(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Block: []string{"apt-get", "brew"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -58,9 +58,9 @@ func TestBuild_blockCreatesScript(t *testing.T) {
 }
 
 func TestBuild_blockScript_mentionsNoop(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Block: []string{"apt"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -74,12 +74,12 @@ func TestBuild_blockScript_mentionsNoop(t *testing.T) {
 }
 
 func TestBuild_rewriteCreatesScript(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Rewrite: map[string]string{
 			"docker": "podman",
 			"rm":     "rm -i",
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -112,10 +112,10 @@ func TestBuild_rewriteCreatesScript(t *testing.T) {
 }
 
 func TestBuild_mixedBlockAndRewrite(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Block:   []string{"apt-get"},
 		Rewrite: map[string]string{"docker": "podman"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -143,9 +143,9 @@ func TestBuild_rewrite_rejectsShellMetacharacters(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Builder{}.Build(config.NoopConfig{
+			_, err := Builder{}.BuildWith(config.NoopConfig{
 				Rewrite: map[string]string{"docker": tc.replacement},
-			})
+			}, nil)
 			if err == nil {
 				t.Fatalf("expected error for replacement %q, got nil", tc.replacement)
 			}
@@ -163,9 +163,9 @@ func TestBuild_block_rejectsPathTraversal(t *testing.T) {
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
-			_, err := Builder{}.Build(config.NoopConfig{
+			_, err := Builder{}.BuildWith(config.NoopConfig{
 				Block: []string{cmd},
-			})
+			}, nil)
 			if err == nil {
 				t.Fatalf("expected error for block key %q, got nil", cmd)
 			}
@@ -182,9 +182,9 @@ func TestBuild_rewrite_rejectsPathTraversalInKey(t *testing.T) {
 	}
 	for _, cmd := range cases {
 		t.Run(cmd, func(t *testing.T) {
-			_, err := Builder{}.Build(config.NoopConfig{
+			_, err := Builder{}.BuildWith(config.NoopConfig{
 				Rewrite: map[string]string{cmd: "safe-replacement"},
-			})
+			}, nil)
 			if err == nil {
 				t.Fatalf("expected error for rewrite key %q, got nil", cmd)
 			}
@@ -193,9 +193,9 @@ func TestBuild_rewrite_rejectsPathTraversalInKey(t *testing.T) {
 }
 
 func TestBuild_onlyBlockCreatesDir(t *testing.T) {
-	dir, err := Builder{}.Build(config.NoopConfig{
+	dir, err := Builder{}.BuildWith(config.NoopConfig{
 		Block: []string{"curl"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
