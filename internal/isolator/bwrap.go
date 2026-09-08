@@ -445,10 +445,8 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			if evalSymlinks == nil {
 				evalSymlinks = filepath.EvalSymlinks
 			}
-			bindPath := r.Path
-			if resolved, err := evalSymlinks(r.Path); err == nil {
-				bindPath = resolved
-			} else {
+			bindPath, err := evalSymlinks(r.Path)
+			if err != nil {
 				// r.Path exists (checked above) but EvalSymlinks failed — broken
 				// symlink. Falling back to the unresolved path would cause bwrap to
 				// silently skip the mount, leaving sensitive content readable.
