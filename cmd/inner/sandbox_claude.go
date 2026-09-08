@@ -112,7 +112,10 @@ const claudeMessagingSocketPath = "/tmp/inner-claude-messaging/cc.sock"
 // a claude started from a script or a non-bash shell inside the sandbox.
 //
 // realPath must be absolute: the shim shadows "claude" on PATH, so calling it
-// by name here would make the script exec itself.
+// by name here would make the script exec itself. It is single-quoted, not
+// spliced raw: an install under a directory with a space would otherwise be
+// split into two words by sh, and one containing $ or a backtick would be
+// expanded.
 func claudeShimScript(realPath string) string {
 	return `#!/bin/sh
 # inner sandbox — cross-session messaging socket for claude (see the claude capability)
@@ -120,8 +123,16 @@ case " $* " in
   *" --messaging-socket-path "*|*" --messaging-socket-path="*) ;;
   *) set -- --messaging-socket-path ` + claudeMessagingSocketPath + ` "$@" ;;
 esac
-exec ` + realPath + ` "$@"
+exec ` + shellQuote(realPath) + ` "$@"
 `
+}
+
+// shellQuote returns s as a single-quoted sh word. Inside single quotes every
+// character is literal except the quote itself, which is closed, escaped and
+// reopened with the standard four-character dance, so the result is safe
+// whatever the path contains.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // prepareClaudeMessaging injects --messaging-socket-path into a claude
@@ -200,6 +211,15 @@ func registerClaudeShim(rc *config.RunConfig) {
 		// Nothing to wrap: claude is not installed on the host, so the sandbox
 		// has nothing to start either. Silent — applyClaude already warns about
 		// a missing claude where it matters.
+		return
+	}
+	if !filepath.IsAbs(realPath) {
+		// A relative entry in the host PATH (".", "bin") resolves against the
+		// host working directory, which the shim cannot rely on: inside the
+		// sandbox the same relative path would either miss or, worse, hit the
+		// shim itself and recurse. Warn rather than install a broken wrapper.
+		fmt.Fprintf(claudeWarningWriter,
+			"inner: claude: %q is not an absolute path — skipping the messaging shim\n", realPath)
 		return
 	}
 	if rc.Shims == nil {

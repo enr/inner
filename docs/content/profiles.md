@@ -1309,8 +1309,11 @@ case " $* " in
   *" --messaging-socket-path "*|*" --messaging-socket-path="*) ;;
   *) set -- --messaging-socket-path /tmp/inner-claude-messaging/cc.sock "$@" ;;
 esac
-exec /home/you/.local/bin/claude "$@"
+exec '/home/you/.local/bin/claude' "$@"
 ```
+
+The path to the real binary is single-quoted, so an install under a directory
+containing a space or a shell metacharacter is still reached.
 
 Being on `PATH`, it covers every way claude is started inside the sandbox — an
 interactive shell, a script, a non-bash shell. An explicit `--messaging-socket-path`

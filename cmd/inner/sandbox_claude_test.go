@@ -360,8 +360,8 @@ func TestPrepareClaudeMessaging_registersShimForShellEntrypoint(t *testing.T) {
 		t.Errorf("shim does not pass the socket path:\n%s", script)
 	}
 	// The shim shadows "claude" on PATH: exec'ing it by name would recurse.
-	if !strings.Contains(script, "exec /") {
-		t.Errorf("shim must exec an absolute path:\n%s", script)
+	if !strings.Contains(script, "exec '/") {
+		t.Errorf("shim must exec a quoted absolute path:\n%s", script)
 	}
 }
 
@@ -420,6 +420,30 @@ func TestClaudeShimScript_behaviour(t *testing.T) {
 	}
 	if got, want := run("--messaging-socket-path=/tmp/mine.sock"), "--messaging-socket-path=/tmp/mine.sock"; got != want {
 		t.Errorf("explicit flag (= form): got %q, want %q", got, want)
+	}
+}
+
+// A claude installed under a path with a space (or any other character sh
+// would split or expand) must still be reached: the shim quotes it.
+func TestClaudeShimScript_quotesTheRealPath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "My Dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	real := filepath.Join(dir, "real-claude")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+		t.Fatalf("writing fake claude: %v", err)
+	}
+	shimPath := filepath.Join(dir, "claude")
+	if err := os.WriteFile(shimPath, []byte(claudeShimScript(real)), 0o755); err != nil {
+		t.Fatalf("writing shim: %v", err)
+	}
+	out, err := exec.Command(shimPath, "-p", "hi").CombinedOutput()
+	if err != nil {
+		t.Fatalf("running shim: %v (%s)", err, out)
+	}
+	if got, want := strings.TrimSpace(string(out)), "--messaging-socket-path "+claudeMessagingSocketPath+" -p hi"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
