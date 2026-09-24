@@ -214,8 +214,10 @@ func TestBuild_onlyBlockCreatesDir(t *testing.T) {
 }
 
 // BuildWith writes caller-supplied scripts alongside the [noop] ones, and a
-// name collision resolves in favour of the caller's script.
-func TestBuildWith_extraScripts(t *testing.T) {
+// [noop.rewrite] entry wins a name collision: it is the user's own explicit
+// request, made in the profile, and a runtime-registered shim must not
+// silently override it.
+func TestBuildWith_noopRewriteWinsCollision(t *testing.T) {
 	dir, err := Builder{}.BuildWith(
 		config.NoopConfig{Rewrite: map[string]string{"claude": "/usr/bin/true"}},
 		map[string]string{"claude": "#!/bin/sh\nexec /real/claude \"$@\"\n", "foo": "#!/bin/sh\n"},
@@ -229,11 +231,35 @@ func TestBuildWith_extraScripts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading claude shim: %v", err)
 	}
-	if !strings.Contains(string(got), "/real/claude") {
-		t.Errorf("extra script should win over the noop rewrite, got:\n%s", got)
+	if !strings.Contains(string(got), "/usr/bin/true") {
+		t.Errorf("noop.rewrite should win over the extra script, got:\n%s", got)
 	}
+	if strings.Contains(string(got), "/real/claude") {
+		t.Errorf("extra script must not override noop.rewrite, got:\n%s", got)
+	}
+	// A name with no collision is still written.
 	if _, err := os.Stat(filepath.Join(dir, "foo")); err != nil {
-		t.Errorf("expected the second extra script to be written: %v", err)
+		t.Errorf("expected the non-colliding extra script to be written: %v", err)
+	}
+}
+
+// [noop.block] wins a name collision the same way [noop.rewrite] does.
+func TestBuildWith_noopBlockWinsCollision(t *testing.T) {
+	dir, err := Builder{}.BuildWith(
+		config.NoopConfig{Block: []string{"claude"}},
+		map[string]string{"claude": "#!/bin/sh\nexec /real/claude \"$@\"\n"},
+	)
+	if err != nil {
+		t.Fatalf("BuildWith: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	got, err := os.ReadFile(filepath.Join(dir, "claude"))
+	if err != nil {
+		t.Fatalf("reading claude shim: %v", err)
+	}
+	if !strings.Contains(string(got), "not available in this sandbox") {
+		t.Errorf("noop.block should win over the extra script, got:\n%s", got)
 	}
 }
 

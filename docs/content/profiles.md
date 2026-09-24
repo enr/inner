@@ -1305,12 +1305,16 @@ prepends to `PATH`:
 
 ```sh
 #!/bin/sh
-case " $* " in
-  *" --messaging-socket-path "*|*" --messaging-socket-path="*) ;;
-  *) set -- --messaging-socket-path /tmp/inner-claude-messaging/cc.sock "$@" ;;
-esac
-exec /home/you/.local/bin/claude "$@"
+for _inner_claude_arg in "$@"; do
+  case "$_inner_claude_arg" in
+    --messaging-socket-path|--messaging-socket-path=*) exec '/home/you/.local/bin/claude' "$@" ;;
+  esac
+done
+exec '/home/you/.local/bin/claude' --messaging-socket-path /tmp/inner-claude-messaging/cc.sock "$@"
 ```
+
+The real path is single-quoted, so a claude install under a directory name
+with a space or shell metacharacter still execs correctly.
 
 Being on `PATH`, it covers every way claude is started inside the sandbox — an
 interactive shell, a script, a non-bash shell. An explicit `--messaging-socket-path`

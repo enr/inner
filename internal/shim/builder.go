@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/enr/inner/internal/config"
@@ -26,9 +27,12 @@ func (b Builder) Build(noop config.NoopConfig) (string, error) {
 // [noop] — currently the claude capability, which wraps the CLI so a session
 // launched by hand inside the sandbox gets its messaging socket path.
 //
-// Extra scripts are written after the noop ones and win on a name collision:
-// they exist because something in the run does not work without them, while a
-// [noop] entry only asks for a command to be blocked or redirected.
+// [noop] always wins a name collision: it is the user's own explicit request
+// to block or redirect a command, made in the profile itself, while an extra
+// script exists only because something in the run does not work without it.
+// A capability that wants its own behaviour on a name [noop] already claims
+// must check for that itself (see the claude capability's registerClaudeShim)
+// — this is the backstop for one that forgets to.
 func (Builder) BuildWith(noop config.NoopConfig, extra map[string]string) (string, error) {
 	if len(noop.Block) == 0 && len(noop.Rewrite) == 0 && len(extra) == 0 {
 		return "", nil
@@ -47,6 +51,12 @@ func (Builder) BuildWith(noop config.NoopConfig, extra map[string]string) (strin
 		if !isSafeShimName(cmd) {
 			os.RemoveAll(dir) //nolint:errcheck
 			return "", fmt.Errorf("shim %q: name must be a plain filename with no path separators", cmd)
+		}
+		if slices.Contains(noop.Block, cmd) {
+			continue // [noop.block] already covers this command; keep the block.
+		}
+		if _, ok := noop.Rewrite[cmd]; ok {
+			continue // [noop.rewrite] already covers this command; keep the profile's redirect.
 		}
 		if err := writeScript(dir, cmd, script); err != nil {
 			os.RemoveAll(dir) //nolint:errcheck

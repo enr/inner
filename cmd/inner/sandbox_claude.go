@@ -112,16 +112,34 @@ const claudeMessagingSocketPath = "/tmp/inner-claude-messaging/cc.sock"
 // a claude started from a script or a non-bash shell inside the sandbox.
 //
 // realPath must be absolute: the shim shadows "claude" on PATH, so calling it
-// by name here would make the script exec itself.
+// by name here would make the script exec itself. It is single-quoted into
+// the script (see shellSingleQuote) so a path containing a space or a shell
+// metacharacter — a real possibility in a home directory name — still execs
+// correctly instead of being word-split or expanded.
+//
+// The "already passed the flag" check walks "$@" and compares each argument
+// as a whole word, not the flattened "$*" string: matching against "$*" would
+// treat --messaging-socket-path appearing inside an unrelated argument (e.g.
+// a prompt that mentions the flag by name) as if the caller had set it,
+// silently dropping the socket path this shim exists to add.
 func claudeShimScript(realPath string) string {
+	quoted := shellSingleQuote(realPath)
 	return `#!/bin/sh
 # inner sandbox — cross-session messaging socket for claude (see the claude capability)
-case " $* " in
-  *" --messaging-socket-path "*|*" --messaging-socket-path="*) ;;
-  *) set -- --messaging-socket-path ` + claudeMessagingSocketPath + ` "$@" ;;
-esac
-exec ` + realPath + ` "$@"
+for _inner_claude_arg in "$@"; do
+  case "$_inner_claude_arg" in
+    --messaging-socket-path|--messaging-socket-path=*) exec ` + quoted + ` "$@" ;;
+  esac
+done
+exec ` + quoted + ` --messaging-socket-path ` + claudeMessagingSocketPath + ` "$@"
 `
+}
+
+// shellSingleQuote quotes s so it can be interpolated into a POSIX sh script
+// as a single word, safe against spaces and shell metacharacters: each
+// embedded single quote is closed, escaped, and reopened.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // prepareClaudeMessaging injects --messaging-socket-path into a claude
