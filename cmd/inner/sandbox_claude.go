@@ -112,22 +112,20 @@ const claudeMessagingSocketPath = "/tmp/inner-claude-messaging/cc.sock"
 // a claude started from a script or a non-bash shell inside the sandbox.
 //
 // realPath must be absolute: the shim shadows "claude" on PATH, so calling it
-// by name here would make the script exec itself. It is single-quoted into
-// the script (see shellSingleQuote) so a path containing a space or a shell
-// metacharacter — a real possibility in a home directory name — still execs
-// correctly instead of being word-split or expanded.
-//
-// The "already passed the flag" check walks "$@" and compares each argument
-// as a whole word, not the flattened "$*" string: matching against "$*" would
-// treat --messaging-socket-path appearing inside an unrelated argument (e.g.
-// a prompt that mentions the flag by name) as if the caller had set it,
-// silently dropping the socket path this shim exists to add.
+// by name here would make the script exec itself. It is single-quoted, not
+// spliced raw: an install under a directory with a space would otherwise be
+// split into two words by sh, and one containing $ or a backtick would be
+// expanded.
 func claudeShimScript(realPath string) string {
-	quoted := shellSingleQuote(realPath)
+	quoted := shellQuote(realPath)
+	// The flag is looked for one argument at a time, not in "$*": joining the
+	// arguments into a single string would also match the flag name inside an
+	// argument's value — `claude -p "what does --messaging-socket-path do"` —
+	// and silently drop the path the shim exists to pass.
 	return `#!/bin/sh
 # inner sandbox — cross-session messaging socket for claude (see the claude capability)
-for _inner_claude_arg in "$@"; do
-  case "$_inner_claude_arg" in
+for arg in "$@"; do
+  case "$arg" in
     --messaging-socket-path|--messaging-socket-path=*) exec ` + quoted + ` "$@" ;;
   esac
 done
@@ -135,10 +133,11 @@ exec ` + quoted + ` --messaging-socket-path ` + claudeMessagingSocketPath + ` "$
 `
 }
 
-// shellSingleQuote quotes s so it can be interpolated into a POSIX sh script
-// as a single word, safe against spaces and shell metacharacters: each
-// embedded single quote is closed, escaped, and reopened.
-func shellSingleQuote(s string) string {
+// shellQuote returns s as a single-quoted sh word. Inside single quotes every
+// character is literal except the quote itself, which is closed, escaped and
+// reopened with the standard four-character dance, so the result is safe
+// whatever the path contains.
+func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
@@ -206,6 +205,13 @@ func prepareClaudeMessaging(rc *config.RunConfig) {
 // reach that path could not have run claude in the first place. A profile that
 // already redirects claude through [noop] keeps its own shim: overriding it
 // would silently undo what the profile asked for.
+//
+// The shim dir is prepended to the sandbox PATH, so registering the shim also
+// makes "claude" callable by name in a profile whose own PATH does not list the
+// directory the binary lives in. That changes how it can be spelled, not what
+// the sandbox can reach — the file is already exposed by the root bind and was
+// always callable by absolute path — and a profile that wants it gone says so
+// with [noop.block], which is honoured above.
 func registerClaudeShim(rc *config.RunConfig) {
 	if _, taken := rc.Noop.Rewrite["claude"]; taken {
 		return
@@ -218,6 +224,15 @@ func registerClaudeShim(rc *config.RunConfig) {
 		// Nothing to wrap: claude is not installed on the host, so the sandbox
 		// has nothing to start either. Silent — applyClaude already warns about
 		// a missing claude where it matters.
+		return
+	}
+	if !filepath.IsAbs(realPath) {
+		// A relative entry in the host PATH (".", "bin") resolves against the
+		// host working directory, which the shim cannot rely on: inside the
+		// sandbox the same relative path would either miss or, worse, hit the
+		// shim itself and recurse. Warn rather than install a broken wrapper.
+		fmt.Fprintf(claudeWarningWriter,
+			"inner: claude: %q is not an absolute path — skipping the messaging shim\n", realPath)
 		return
 	}
 	if rc.Shims == nil {
@@ -444,8 +459,8 @@ func prepareClaude(src string) (string, func(), error) {
 	if expired, err := claudeTokenExpired(credSrc); err == nil && expired {
 		cleanup()
 		return "", nil, fmt.Errorf(
-			"Claude OAuth token is expired and could not be refreshed automatically.\n" +
-				"Run 'claude' on the host machine to renew it, then relaunch inner.",
+			"claude OAuth token is expired and could not be refreshed automatically: " +
+				"run 'claude' on the host machine to renew it, then relaunch inner",
 		)
 	}
 
@@ -544,8 +559,8 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		// the sandbox does not start and receive a 401.
 		if stillExpired, _ := claudeTokenExpired(credPath); stillExpired {
 			return nil, fmt.Errorf(
-				"Claude OAuth token is expired and could not be refreshed automatically.\n" +
-					"Run 'claude' on the host machine to renew it, then relaunch inner.",
+				"claude OAuth token is expired and could not be refreshed automatically: " +
+					"run 'claude' on the host machine to renew it, then relaunch inner",
 			)
 		}
 	case claudeTokenExpiresWithin(credPath, tokenNearExpiryThreshold):

@@ -817,6 +817,20 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 		fmt.Fprintln(w)
 	}
 
+	// Shims a capability added at runtime (the claude messaging wrapper, for
+	// one). The bwrap line below shows the shim directory being mounted, but
+	// not which commands it shadows, and the directory itself is gone by the
+	// time anyone could look inside it.
+	if len(rc.Shims) > 0 {
+		names := make([]string, 0, len(rc.Shims))
+		for name := range rc.Shims {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		fmt.Fprintf(w, "shims (added by capabilities): %s\n", strings.Join(names, ", "))
+		fmt.Fprintln(w)
+	}
+
 	if len(rc.Allow) > 0 {
 		fmt.Fprintf(w, "allow: %s\n", strings.Join(rc.Allow, ", "))
 		fmt.Fprintln(w)

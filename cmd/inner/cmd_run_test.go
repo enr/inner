@@ -1085,3 +1085,21 @@ func TestApplyContainersConf_explicitCgroupfs(t *testing.T) {
 		t.Error("expected a generated containers.conf path")
 	}
 }
+
+// The shim directory is a temp dir that is removed when the run ends, so
+// --dry-run is the only place a user can see which commands a capability
+// shadowed on PATH.
+func TestPrintDryRun_listsRuntimeShims(t *testing.T) {
+	rc := &config.RunConfig{
+		Name:       "p",
+		Entrypoint: config.Entrypoint{Cmd: "bash"},
+		Shims:      map[string]string{"claude": "#!/bin/sh\n"},
+	}
+
+	var out bytes.Buffer
+	printDryRun(&out, "/dev/null", "/dev/null", "", rc, []string{"bwrap"})
+
+	if !strings.Contains(out.String(), "shims (added by capabilities): claude") {
+		t.Errorf("dry-run does not name the runtime shim:\n%s", out.String())
+	}
+}
