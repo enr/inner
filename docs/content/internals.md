@@ -122,7 +122,23 @@ validation warning the profile produces, and accepts the same `--sha256` pin.
 --dev /dev             minimal devtmpfs
 --bind /dev/pts /dev/pts       (only if the host's /dev/pts/ptmx is openable, see below)
 --tmpfs /tmp           empty writable /tmp
+--tmpfs /proc/acpi     masked kernel interfaces (see below), each only if it exists
+--ro-bind /dev/null /proc/kcore
+…
 ```
+
+**Masked kernel interfaces.** After `--proc`, `Build` masks the entries runc
+masks by default (`maskedKernelPaths`): the directories `/proc/acpi`,
+`/proc/asound`, `/proc/scsi`, `/sys/firmware` and
+`/sys/devices/virtual/powercap` get an empty `--tmpfs`, the files
+`/proc/kcore`, `/proc/keys`, `/proc/latency_stats`, `/proc/timer_list`,
+`/proc/timer_stats` and `/proc/sched_debug` a `--ro-bind /dev/null` (reads
+fail with `EACCES`: bwrap binds are `nodev`). Paths missing on the host are
+skipped, since bwrap aborts on a mount point it cannot create. The gain is
+small — since the sandbox never runs as root, most of these are already
+unreadable, and the rest identify the hardware — but it costs nothing. Masking
+`/proc/keys` does not hide the user's kernel keyrings: `keyctl(2)` still
+reaches them, and only a seccomp filter can close that.
 
 
 `/dev/pts` is bound read-write from the host **only when the host's pty multiplexer, `/dev/pts/ptmx`, can be opened by the user running `inner`**. The bind exists because interactive TUI apps (Node.js/claude, gemini) call `ttyname_r()` internally to resolve their controlling terminal path (e.g. `/dev/pts/3`), and with bwrap's own fresh `devpts` instance that path does not exist inside the sandbox.

@@ -48,6 +48,22 @@ func (a *App) doctor(w io.Writer) error {
 		errLine("user namespaces: disabled (bwrap requires unprivileged user namespaces)")
 	}
 
+	// ── terminal injection (TIOCSTI) ─────────────────────────────────────────
+	// The sandbox shares the terminal inner was started from (inner runs no
+	// intermediate pty, see executor.runInteractive), so on a kernel that
+	// allows TIOCSTI a sandboxed process can type commands into it that the
+	// user's shell runs after the sandbox exits.
+	switch runtime.DetectTIOCSTI() {
+	case runtime.TIOCSTIRestricted:
+		okLine("terminal injection (TIOCSTI): blocked by the kernel (dev.tty.legacy_tiocsti = 0)")
+	case runtime.TIOCSTIAllowed:
+		warnLine("terminal injection (TIOCSTI): allowed (dev.tty.legacy_tiocsti = 1) — a sandboxed process can type commands into your terminal; " +
+			"block it with 'sudo sysctl -w dev.tty.legacy_tiocsti=0' and persist it in /etc/sysctl.d/")
+	case runtime.TIOCSTINoSysctl:
+		warnLine("terminal injection (TIOCSTI): not restricted by this kernel (older than 6.2) — a sandboxed process can type commands into your terminal; " +
+			"a kernel >= 6.2 with dev.tty.legacy_tiocsti = 0 closes it")
+	}
+
 	// ── auto-init and profiles dir ───────────────────────────────────────────
 	_ = setup.Init(a.loader.Dir) // best-effort: ensure dir exists before checking
 

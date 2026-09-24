@@ -82,6 +82,7 @@ Example output:
 ```
 [ok] bwrap found: /usr/bin/bwrap (version 0.9.0)
 [ok] user namespaces: supported
+[ok] terminal injection (TIOCSTI): blocked by the kernel (dev.tty.legacy_tiocsti = 0)
 [ok] profiles dir: /home/alice/.config/inner/profiles
 [ok] logs dir: /home/alice/.config/inner/logs
 [ok] ANTHROPIC_API_KEY: set

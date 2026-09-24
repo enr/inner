@@ -89,3 +89,36 @@ func checkUserNamespaces() bool {
 	}
 	return strings.TrimSpace(string(data)) == "1"
 }
+
+// TIOCSTIStatus says whether a process that shares the user's terminal can
+// push characters into its input queue with ioctl(TIOCSTI) — typing commands
+// the user's shell runs once the sandbox exits.
+type TIOCSTIStatus int
+
+const (
+	// TIOCSTIRestricted: dev.tty.legacy_tiocsti = 0, the kernel refuses
+	// TIOCSTI to processes without CAP_SYS_ADMIN (a sandbox has none).
+	TIOCSTIRestricted TIOCSTIStatus = iota
+	// TIOCSTIAllowed: dev.tty.legacy_tiocsti = 1, the restriction exists but
+	// is switched off.
+	TIOCSTIAllowed
+	// TIOCSTINoSysctl: the sysctl does not exist, i.e. a kernel older than
+	// 6.2, which has no restriction at all.
+	TIOCSTINoSysctl
+)
+
+// legacyTIOCSTIPath is the sysctl introduced in Linux 6.2. A package variable
+// so tests can point it at a fixture.
+var legacyTIOCSTIPath = "/proc/sys/dev/tty/legacy_tiocsti"
+
+// DetectTIOCSTI reports whether the kernel restricts TIOCSTI.
+func DetectTIOCSTI() TIOCSTIStatus {
+	data, err := os.ReadFile(legacyTIOCSTIPath)
+	if err != nil {
+		return TIOCSTINoSysctl
+	}
+	if strings.TrimSpace(string(data)) == "0" {
+		return TIOCSTIRestricted
+	}
+	return TIOCSTIAllowed
+}

@@ -739,6 +739,12 @@ Checks performed:
 
 - `bwrap` binary found and version reported
 - Unprivileged user namespaces supported
+- Terminal injection (`TIOCSTI`) blocked by the kernel. The sandbox shares the terminal `inner` was started from, so on a kernel that allows `ioctl(TIOCSTI)` a sandboxed process can type commands your shell runs after the sandbox exits. Linux 6.2+ can refuse it (`dev.tty.legacy_tiocsti = 0`); older kernels cannot. A warning names the fix:
+
+  ```bash
+  sudo sysctl -w dev.tty.legacy_tiocsti=0
+  echo 'dev.tty.legacy_tiocsti = 0' | sudo tee /etc/sysctl.d/90-tiocsti.conf
+  ```
 - `~/.config/inner/profiles/` directory exists and each profile is validated (unknown `allow` keys, missing mounts, etc.)
 - `~/.config/inner/logs/` directory exists
 - `ANTHROPIC_API_KEY` environment variable set

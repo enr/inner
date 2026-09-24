@@ -63,6 +63,27 @@ func (b *BwrapIsolator) ptmxUsable() bool {
 	return hostPtmxUsable()
 }
 
+// maskedKernelPaths are the /proc and /sys entries runc masks by default
+// (its "maskedPaths"). Directories are replaced by an empty tmpfs, files by
+// /dev/null. The type is fixed here rather than probed, so a test isolator
+// that reports every path as existing still gets the right flag.
+var maskedKernelPaths = []struct {
+	path string
+	dir  bool
+}{
+	{"/proc/acpi", true},
+	{"/proc/asound", true},
+	{"/proc/kcore", false},
+	{"/proc/keys", false},
+	{"/proc/latency_stats", false},
+	{"/proc/timer_list", false},
+	{"/proc/timer_stats", false},
+	{"/proc/sched_debug", false},
+	{"/proc/scsi", true},
+	{"/sys/firmware", true},
+	{"/sys/devices/virtual/powercap", true},
+}
+
 // homeDir resolves the user's home directory. Indirected through a package
 // variable so tests can pin it without depending on the ambient environment.
 var homeDir = os.UserHomeDir
@@ -193,6 +214,24 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		args = append(args, "--bind", "/dev/pts", "/dev/pts")
 	}
 	args = append(args, "--tmpfs", "/tmp")
+
+	// Kernel interfaces masked the way runc/Docker mask them by default:
+	// hardware inventory (acpi, asound, scsi, firmware tables), kernel
+	// internals (kcore, timer and scheduler debug) and the RAPL energy
+	// counters behind power side channels. Most are root-only already, but the
+	// readable remainder only fingerprints the machine, and masking costs
+	// nothing. /proc/keys is masked for the same reason; the keys themselves
+	// stay reachable through keyctl(2), which only a seccomp filter can close.
+	for _, p := range maskedKernelPaths {
+		if !b.pathExists(p.path) {
+			continue
+		}
+		if p.dir {
+			args = append(args, "--tmpfs", p.path)
+		} else {
+			args = append(args, "--ro-bind", "/dev/null", p.path)
+		}
+	}
 
 	// ── Home isolation ───────────────────────────────────────────────────────
 	// With home = "isolated" the read side of $HOME is inverted: instead of

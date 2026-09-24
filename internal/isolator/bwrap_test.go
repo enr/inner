@@ -177,6 +177,43 @@ func TestBuild_tmpfsSlashTmp_comesAfter_rootBind(t *testing.T) {
 	}
 }
 
+func TestBuild_masksKernelPaths_afterProc(t *testing.T) {
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "sh"}})
+
+	proc := indexSeq(args, "--proc", "/proc")
+	for _, want := range [][]string{
+		{"--tmpfs", "/proc/acpi"},
+		{"--tmpfs", "/sys/firmware"},
+		{"--tmpfs", "/sys/devices/virtual/powercap"},
+		{"--ro-bind", "/dev/null", "/proc/kcore"},
+		{"--ro-bind", "/dev/null", "/proc/keys"},
+	} {
+		i := indexSeq(args, want...)
+		if i < 0 {
+			t.Errorf("missing %v in %v", want, args)
+			continue
+		}
+		// A mask emitted before --proc would be buried under the fresh procfs.
+		if i < proc {
+			t.Errorf("%v (idx %d) must follow --proc /proc (idx %d)", want, i, proc)
+		}
+	}
+}
+
+func TestBuild_masksKernelPaths_skipsMissing(t *testing.T) {
+	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "sh"}})
+
+	// bwrap aborts on a mount point it cannot create, so absent paths
+	// (a kernel without /proc/sched_debug, a host without ACPI) are skipped.
+	for _, p := range maskedKernelPaths {
+		if slices.Contains(args, p.path) {
+			t.Errorf("%s does not exist but was masked: %v", p.path, args)
+		}
+	}
+}
+
 func TestBuild_separatorPresent(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{

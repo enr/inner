@@ -107,3 +107,26 @@ func TestDetect_returnsInfo(t *testing.T) {
 	_ = info.BwrapAvailable
 	_ = info.Display
 }
+
+func TestDetectTIOCSTI(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy_tiocsti")
+	orig := legacyTIOCSTIPath
+	legacyTIOCSTIPath = path
+	t.Cleanup(func() { legacyTIOCSTIPath = orig })
+
+	if got := DetectTIOCSTI(); got != TIOCSTINoSysctl {
+		t.Errorf("missing sysctl: got %v, want TIOCSTINoSysctl", got)
+	}
+	for content, want := range map[string]TIOCSTIStatus{
+		"0\n": TIOCSTIRestricted,
+		"1\n": TIOCSTIAllowed,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := DetectTIOCSTI(); got != want {
+			t.Errorf("legacy_tiocsti = %q: got %v, want %v", content, got, want)
+		}
+	}
+}

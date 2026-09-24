@@ -345,6 +345,31 @@ bwrap accetta `--seccomp <fd>`: filtro conservativo di default (deny `ptrace`,
 opt-out da profilo. Valutare in parallelo Landlock via `go-landlock` (compone
 con bwrap).
 
+Dal confronto con drop, due regole con valore concreto: `ioctl(TIOCSTI)` e
+`ioctl(TIOCLINUX)` → `EPERM` (su kernel < 6.2, o con
+`dev.tty.legacy_tiocsti = 1`, il sandbox può digitare comandi nel terminale
+dell'host, che inner non isola con un pty proprio) e `keyctl`/`add_key`/
+`request_key` (il keyring utente del kernel resta raggiungibile anche con
+`/proc/keys` mascherato). Nodo tecnico: `wrapWithLimits` passa per
+`systemd-run`, che chiude gli fd extra, quindi il programma BPF non arriva a
+`--seccomp <fd>` senza un wrapper. Test possibile anche su kernel già
+protetti: il filtro dà `EPERM`, il kernel `EIO`.
+
+### ISS-32 · Check TIOCSTI in `inner doctor` — **FATTO**
+`security` · **P2** · Size S · Fonte: confronto con drop (pty proprio + `setsid`)
+
+`inner doctor` legge `/proc/sys/dev/tty/legacy_tiocsti`: `0` ok, `1` o sysctl
+assente (kernel < 6.2) → avviso con il comando per chiuderlo. La mitigazione
+lato inner resta ISS-22.
+
+### ISS-33 · Mascherare `/proc` e `/sys` come runc — **FATTO**
+`security` · **P3** · Size S · Fonte: confronto con drop (`alwaysBlocked`)
+
+Tmpfs vuoto o `/dev/null` su `/proc/{acpi,asound,scsi,kcore,keys,latency_stats,
+timer_list,timer_stats,sched_debug}`, `/sys/firmware`,
+`/sys/devices/virtual/powercap`, solo se esistono. Valore basso (il sandbox
+non è root, gran parte è già illeggibile); `keyctl` resta per ISS-22.
+
 ### ISS-23 · `inner profile search/add` su indice firmato
 `feature` · **P3** · Size M · Fonte: NONO_COMPARISON F4 · Dipende da: ISS-01
 
