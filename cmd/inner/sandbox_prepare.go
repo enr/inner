@@ -6,6 +6,7 @@ import (
 
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/git"
+	"github.com/enr/inner/internal/gitguard"
 	"github.com/enr/inner/internal/shim"
 )
 
@@ -132,6 +133,15 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 		cleanups = append(cleanups, cleanupSafe)
 	}
 
+	// Git repository protection. After the safe-rw step, so the plan sees the
+	// final writable mounts. Shared by both commands: the binds need their
+	// placeholders on the host, and verify must judge the sandbox a run gets.
+	cleanupGit, err := applyGitGuard(rc)
+	if err != nil {
+		return fail("%w", err)
+	}
+	cleanups = append(cleanups, cleanupGit)
+
 	// Last: the network proxy rewrites the entrypoint, so nothing after it may
 	// inspect rc.Entrypoint expecting the profile's own command. Shared by both
 	// commands — see applyNetworkProxy for why, unlike the capability handlers,
@@ -144,4 +154,19 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 	cleanups = append(cleanups, cleanupProxy)
 
 	return cleanup, nil
+}
+
+// applyGitGuard plans the protection of the git repositories reachable through
+// the writable mounts, records the plan on rc for the isolator, and creates
+// the placeholders its binds need on the host. The returned cleanup removes
+// the placeholders that must not outlive the run; it is never nil.
+func applyGitGuard(rc *config.RunConfig) (func(), error) {
+	var writable []gitguard.Mount
+	for _, m := range rc.Mounts {
+		if m.Mode == "rw" {
+			writable = append(writable, gitguard.Mount{Src: m.Src, Dest: m.Dest})
+		}
+	}
+	rc.GitGuard = gitguard.Build(rc.EffectiveGitDirMode(), writable)
+	return gitguard.Materialize(rc.GitGuard)
 }

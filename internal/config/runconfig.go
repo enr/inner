@@ -1,5 +1,7 @@
 package config
 
+import "github.com/enr/inner/internal/gitguard"
+
 // RunConfig is the backend-agnostic representation of a sandbox run.
 // It speaks in terms of intent, never backend-specific flags.
 // Produced by the Loader; consumed by the Isolator.
@@ -64,6 +66,14 @@ type RunConfig struct {
 	// isolated home. Only consulted when HomeMode is HomeIsolated; entries
 	// that do not exist on the host are skipped by the isolator.
 	HomeAllow []string
+	// GitDirMode is how the .git directory of a repository inside a writable
+	// mount is exposed, as declared in [sandbox] git_dir. Empty means
+	// gitguard.ModeProtected. See SandboxConfig.GitDir.
+	GitDirMode string
+	// GitGuard is the protection plan for the repositories in the writable
+	// mounts, computed by the host-side preparation once the mounts are final.
+	// The isolator emits its binds after every other mount.
+	GitGuard gitguard.Plan
 	// Capabilities lists the named tool integrations active for this run.
 	// Populated from Profile.Capabilities; inherited via extends.
 	Capabilities []string
@@ -127,6 +137,15 @@ func (c RunConfig) EffectiveNetworkMode() string {
 // (allowlist model) instead of exposing the host home read-only (denylist).
 func (c RunConfig) HomeIsolated() bool {
 	return c.HomeMode == HomeIsolated
+}
+
+// EffectiveGitDirMode returns the [sandbox] git_dir mode for this run, with
+// the empty value resolved to gitguard.ModeProtected.
+func (c RunConfig) EffectiveGitDirMode() string {
+	if c.GitDirMode == "" {
+		return gitguard.ModeProtected
+	}
+	return c.GitDirMode
 }
 
 // ReexposedInHome reports whether path is put back inside an isolated home by

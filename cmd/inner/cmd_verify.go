@@ -66,6 +66,7 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 		return err
 	}
 	defer cleanupPrep()
+	printGitGuardWarnings(w, rc)
 
 	// Pass context to the inside invocation via environment.
 	if rc.Env.Set == nil {

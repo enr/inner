@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/enr/inner/internal/config"
+	"github.com/enr/inner/internal/gitguard"
 )
 
 // validateLimits checks the syntax of [sandbox.limits] fields.
@@ -45,6 +46,20 @@ func validateLimits(r *Result, l *config.ResourceLimits) {
 	}
 	if l.Pids < 0 {
 		r.addError(fmt.Sprintf("[sandbox.limits] pids %d must be a non-negative integer (0 = unset)", l.Pids))
+	}
+}
+
+// validateGitDir checks [sandbox] git_dir. An unknown value is an error for
+// the same reason as an unknown home mode: a typo must not silently fall back
+// to a weaker sandbox than the profile claims.
+func validateGitDir(r *Result, p *config.Profile) {
+	mode := p.Sandbox.GitDir
+	if mode != "" && !slices.Contains(config.ValidGitDirModes, mode) {
+		r.addError(fmt.Sprintf("invalid [sandbox] git_dir %q (valid values: %v)", mode, config.ValidGitDirModes))
+		return
+	}
+	if mode == gitguard.ModeRW {
+		r.addWarning(`[sandbox] git_dir = "rw": the sandbox can write .git/hooks and .git/config of the repositories it can write, and the host runs them on your next git command; prefer "protected"`)
 	}
 }
 
@@ -614,6 +629,7 @@ func Validate(p *config.Profile, workDir string) Result {
 	// 3a-bis. Validate [sandbox] home / home_allow, and the coherence between the
 	// home mode and the rest of the profile.
 	validateHome(&r, p)
+	validateGitDir(&r, p)
 	validateNetwork(&r, p)
 	validateNetworkAllow(&r, p)
 	validateAllowUnderIsolatedHome(&r, p)

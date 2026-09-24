@@ -279,6 +279,34 @@ This is useful for debugging profile configuration or understanding what the san
 
 ---
 
+## Agent Edits, You Commit
+
+By default (`[sandbox] git_dir = "protected"`) an agent can commit inside the
+sandbox, but it cannot touch `.git/config`, the hooks or the other files that
+make git run programs on the host. To keep the whole repository read-only —
+the agent edits files, you review the diff and commit outside — derive a
+profile:
+
+```toml
+# ~/.config/inner/profiles/claude-review.toml
+extends = "claude-interactive"
+name    = "claude-review"
+
+[sandbox]
+git_dir = "ro"
+```
+
+```bash
+inner run -p claude-review -w ~/myapp
+# inside: git status / diff / log work, git commit fails
+```
+
+`ro` also keeps the index read-only, which closes the one case `protected`
+cannot: a nested repository the agent registers as a submodule, which your
+`git status` would step into. See [`git_dir`](profiles.md#git-dir-repository-protection).
+
+---
+
 ## Security Verification
 
 After writing or modifying a profile, verify that sensitive resources are not exposed:

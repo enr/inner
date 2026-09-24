@@ -163,3 +163,42 @@ func TestReexposedInHome(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadProfile_extends_gitDir(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+schema_version = "1"
+name = "base"
+
+[sandbox]
+git_dir = "ro"
+
+[entrypoint]
+cmd = "sh"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "base"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "override.toml"), `
+extends = "base"
+
+[sandbox]
+git_dir = "protected"
+`)
+	l := NewLoader(dir)
+
+	child, err := l.LoadProfile("child")
+	if err != nil {
+		t.Fatalf("LoadProfile(child): %v", err)
+	}
+	if child.Sandbox.GitDir != "ro" {
+		t.Errorf("child git_dir = %q, want inherited %q", child.Sandbox.GitDir, "ro")
+	}
+	override, err := l.LoadProfile("override")
+	if err != nil {
+		t.Fatalf("LoadProfile(override): %v", err)
+	}
+	if override.Sandbox.GitDir != "protected" {
+		t.Errorf("override git_dir = %q, want %q", override.Sandbox.GitDir, "protected")
+	}
+}

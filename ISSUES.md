@@ -31,6 +31,31 @@ sbloccano credenziali, audit e rollback.
 
 ## P0 — Sicurezza e correttezza da sistemare subito
 
+### ISS-31 · `.git` scrivibile nel workdir = escape verso l'host — **FATTO**
+`security` · **P0** · Size M · Fonte: confronto con drop (monta `.git` ro)
+
+Con il workdir `rw` l'agente poteva scrivere `.git/hooks/*`, `.git/config`
+(`core.fsmonitor`, `core.hooksPath`, …) o creare `.git/commondir` (redirect
+verso config/hook suoi): l'host li esegue al primo `git status`/`commit`.
+Verificato con git 2.55.
+
+*Stato:* `[sandbox] git_dir = "protected" | "ro" | "rw"`, default
+`protected` (`internal/gitguard`): `.git` resta scrivibile (commit ok) ma
+config, hooks, commondir, config.worktree, include e `core.hooksPath` nel
+workdir sono ro, anche per worktree collegati e submodule; placeholder sul host
+per i path mancanti (`commondir` con `.`, rimosso dall'ultima run con flock
+condiviso). Worktree collegati: gitdir montato rw alla sua path. Remote
+profile: `rw` → `protected`. e2e manuale con bwrap 0.12 ok.
+
+*Rischio residuo / follow-up:* l'agente può creare un repo annidato e
+registrarlo come gitlink nell'index: il `git status` sull'host ci entra e ne
+esegue il `core.fsmonitor` (verificato). Nessun mount lo impedisce in
+`protected`; `ro` sì per la root. Possibile follow-up: a fine run confrontare
+i gitlink dell'index prima/dopo e avvisare. Manca anche un check in
+`inner verify` (verify non monta un workdir).
+
+---
+
 ### ISS-01 · Remote profiles: blocking consent + `--sha256` pinning
 `security` · **P0** · Size M · Fonti: SECURITY_REVIEW #2, NONO_COMPARISON S5 · **Enabler** per ISS-23, ISS-27
 

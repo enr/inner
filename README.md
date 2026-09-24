@@ -8,6 +8,7 @@ Agentic tools have broad filesystem access and execute arbitrary commands. `inne
 
 - **Process isolation** via Linux kernel namespaces
 - **Filesystem separation** — the sandbox sees only what you explicitly mount
+- **Repository protection** — `.git/config`, hooks and the other files that make git run programs on the host are read-only inside the sandbox, while commits still work
 - **Environment sanitization** — environment is cleared by default; git credentials are stripped when `[git]` is configured in the profile
 - **Security verification** — detect if sensitive host resources leak into the sandbox
 - **Reproducibility** — configuration-driven profiles define exactly what each run can access

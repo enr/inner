@@ -258,6 +258,7 @@ Controls top-level sandbox behavior.
 | `pid_namespace` | bool | `true` | Give the sandbox a private PID namespace (`--unshare-pid`). See below. |
 | `home` | string | `"host-ro"` | Filesystem model applied to `$HOME`: `"host-ro"` (readable, minus the hidden credential list) or `"isolated"` (empty tmpfs, allowlist). See [`home`](#home-filesystem-model). |
 | `home_allow` | list | `[]` | Paths put back read-only inside an isolated home. Only used with `home = "isolated"`. |
+| `git_dir` | string | `"protected"` | How the `.git` directory of a repository inside a writable mount is exposed: `"protected"`, `"ro"` or `"rw"`. See [`git_dir`](#git-dir-repository-protection). |
 | `allow` | list | `[]` | Explicitly permit sensitive resources (see below) |
 | `cgroup_manager` | string | auto (`cgroupfs`) | Cgroup manager used by rootless Podman **inside** the sandbox. Only meaningful with `nested-user-ns`. See [`cgroup_manager`](#cgroup_manager-rootless-podman-inside-the-sandbox). |
 | `limits` | table | auto-detected | CPU / memory / process-count caps for the run (see [`[sandbox.limits]`](#sandbox-limits-resource-limits)) |
@@ -637,6 +638,68 @@ is free. Redirect stderr (`inner run … 2>blocked.log`) and they are written as
 they happen instead, since there is then nothing to corrupt. An interactive
 shell entrypoint also gets them live: you are at a prompt, where the immediate
 answer is the useful one.
+
+### `git_dir` — repository protection {#git-dir-repository-protection}
+
+A writable workdir normally includes the repository's `.git` directory, and
+several files in there make git **run programs**: hooks, `core.fsmonitor`,
+`core.hooksPath`, `core.sshCommand`, filter and diff drivers, `!` aliases. The
+sandboxed agent never runs them — **you** do, outside the sandbox, on your next
+`git status` or `git commit`. A writable `.git` is therefore a way out of the
+sandbox. `git_dir` decides how much of it the sandbox may write.
+
+| Mode | Commit inside the sandbox | What is read-only |
+|------|---------------------------|-------------------|
+| `"protected"` (default) | yes | `config`, `hooks/`, `commondir`, `config.worktree`, the files `config` includes and a `core.hooksPath` that points into the workdir — for the repository, its linked worktrees and its submodules — plus every `.git` *file* (worktree and submodule pointers) |
+| `"ro"` | no (`status`, `diff`, `log`, `blame` work) | the whole `.git` |
+| `"rw"` | yes | nothing — **not recommended** |
+
+```toml
+[sandbox]
+git_dir = "ro"   # the agent edits files; you review and commit outside
+```
+
+The protection applies to every writable mount (the workdir, `rw` entries in
+`[mounts]`, `-m SRC:DEST:rw`), to the mount root and to its direct
+subdirectories, so a workdir that is a directory of projects is covered one
+level deep.
+
+**Placeholders.** A file that does not exist cannot be made read-only: the
+sandbox could simply create it. So `inner` creates a few placeholders on the
+host before the sandbox starts:
+
+- a missing `.git/hooks/` (or a missing `core.hooksPath` directory inside the
+  workdir) — an empty directory, left in place, as `git init` would create;
+- `.git/commondir` — a file containing `.`, which points the repository at
+  itself (the same as having none). A `commondir` written by the sandbox
+  would redirect git to a config and hooks of its choosing. The placeholder is
+  removed when the last `inner` run using the repository exits; if `inner` is
+  killed it stays behind, harmlessly — delete it by hand if you like.
+
+`inner run --dry-run` lists every protected path and marks the placeholders.
+
+**Linked worktrees.** With `-w` pointing at a `git worktree`, the gitdir lives
+in the main repository, outside the workdir. In `protected` and `rw` mode
+`inner` binds that gitdir writable at its own path so commits work, with the
+same protection applied; in `ro` mode it stays read-only.
+
+**What `protected` cannot prevent.** No mount can stop the sandbox from
+creating a *new* repository somewhere in the workdir. Registered in the index
+as a submodule (a gitlink), it makes your `git status` in the repository root
+step into it and run its `core.fsmonitor`. The same happens if you run git
+from inside a directory the agent created. Before running git on the host
+after an agent session, check `git status` / `git diff --cached` for
+unexpected submodules — or use `git_dir = "ro"`, which keeps the index
+read-only. Separately, hooks you already have that run repository code
+(husky, pre-commit, lint-staged) execute files the agent could edit: that is
+the general rule *do not run what the sandbox wrote, outside the sandbox*.
+
+Cases that cannot be protected — a `.git`, `hooks` or `config` that is a
+symbolic link, a missing include target inside the workdir — are reported as
+warnings when the run starts.
+
+A profile downloaded from a URL cannot select `"rw"`: it is hardened to
+`"protected"` (see [`inner run` from a URL](commands.md#profiles-downloaded-from-a-url)).
 
 ### `allow` — sensitive resource opt-in
 

@@ -1,6 +1,10 @@
 package config
 
-import "path/filepath"
+import (
+	"path/filepath"
+
+	"github.com/enr/inner/internal/gitguard"
+)
 
 // Profile represents a loaded .toml profile file from ~/.config/inner/profiles/<name>.toml.
 type Profile struct {
@@ -148,6 +152,10 @@ const (
 // Empty (unset) means HomeHostRO.
 var ValidHomeModes = []string{HomeHostRO, HomeIsolated}
 
+// ValidGitDirModes is the exhaustive set of values accepted in
+// [sandbox] git_dir. Empty (unset) means gitguard.ModeProtected.
+var ValidGitDirModes = gitguard.Modes
+
 // ValidCapabilities is the exhaustive set of named capabilities accepted in
 // the profile capabilities field.
 var ValidCapabilities = []string{"claude", "gemini", "cursor", "opencode"}
@@ -245,6 +253,21 @@ type SandboxConfig struct {
 	// Ignored (with a validation warning) when home is not "isolated". For a
 	// writable re-exposure use a [mounts] entry with mode "rw" / "safe-rw".
 	HomeAllow []string `toml:"home_allow"`
+	// GitDir selects how the .git directory of a repository inside a writable
+	// mount (the workdir, a "rw" [mounts] entry) is exposed. Valid values are
+	// listed in ValidGitDirModes; empty means "protected".
+	//
+	//   "protected" (default) .git stays writable, so commits work, but the
+	//               files that make git run programs on the HOST — config,
+	//               hooks/, commondir, config.worktree, include targets, a
+	//               core.hooksPath inside the workdir — are read-only, for the
+	//               repository, its linked worktrees and its submodules.
+	//   "ro"        .git is read-only as a whole: git can read, not write.
+	//   "rw"        no protection: the sandbox can plant a hook or a
+	//               core.fsmonitor the host runs on the next git command.
+	//
+	// See internal/gitguard for what each mode covers and what it cannot.
+	GitDir string `toml:"git_dir"`
 	// NetworkAllow lists the egress destinations reachable when NetworkMode is
 	// NetworkAllowlist. Entries are host patterns, not URLs:
 	//

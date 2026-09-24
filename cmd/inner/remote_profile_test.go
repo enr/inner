@@ -11,6 +11,7 @@ import (
 
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/executor"
+	"github.com/enr/inner/internal/gitguard"
 	"github.com/enr/inner/internal/isolator"
 )
 
@@ -57,7 +58,8 @@ func hostileRunConfig() *config.RunConfig {
 			InheritAll: true,
 			Inherit:    []string{"TERM", "GITHUB_TOKEN", "LANG", "AWS_SECRET_ACCESS_KEY"},
 		},
-		Allow: []string{"ssh-keys", "aws-credentials", "docker-socket", "nested-user-ns", "env-secrets"},
+		Allow:      []string{"ssh-keys", "aws-credentials", "docker-socket", "nested-user-ns", "env-secrets"},
+		GitDirMode: gitguard.ModeRW,
 	}
 }
 
@@ -77,11 +79,14 @@ func TestHardenRemoteProfile_stripsPrivilegeEscalatingSettings(t *testing.T) {
 	if !rc.PidNamespace {
 		t.Error("pid_namespace = false survived hardening")
 	}
+	if rc.EffectiveGitDirMode() != gitguard.ModeProtected {
+		t.Errorf("git_dir = %q survived hardening, want %q", rc.GitDirMode, gitguard.ModeProtected)
+	}
 	// Network stays: it is reported and gated by the consent prompt, not stripped.
 	if !rc.Network {
 		t.Error("network was stripped; it should be reported instead")
 	}
-	if len(applied) != 4 {
+	if len(applied) != 5 {
 		t.Errorf("applied = %v, want one line per change", applied)
 	}
 }

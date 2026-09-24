@@ -150,3 +150,30 @@ func TestValidate_isolatedHome_mountDestNeedNotExist(t *testing.T) {
 		t.Error("expected a missing-dest error for a mount inside an allowlisted read-only subtree")
 	}
 }
+
+func TestValidate_gitDir(t *testing.T) {
+	cases := []struct {
+		mode      string
+		wantError bool
+		wantWarn  bool
+	}{
+		{"", false, false},
+		{"protected", false, false},
+		{"ro", false, false},
+		{"rw", false, true},
+		{"protect", true, false},
+	}
+	for _, c := range cases {
+		p := &config.Profile{
+			Sandbox:    config.SandboxConfig{GitDir: c.mode},
+			Entrypoint: config.EntrypointConfig{Interactive: true},
+		}
+		r := Validate(p, "")
+		if got := issuesContain(r, LevelError, "git_dir"); got != c.wantError {
+			t.Errorf("git_dir = %q: error = %v, want %v (%v)", c.mode, got, c.wantError, r.Issues)
+		}
+		if got := issuesContain(r, LevelWarning, "git_dir"); got != c.wantWarn {
+			t.Errorf("git_dir = %q: warning = %v, want %v (%v)", c.mode, got, c.wantWarn, r.Issues)
+		}
+	}
+}

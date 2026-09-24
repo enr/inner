@@ -273,6 +273,19 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		}
 	}
 
+	// ── Git repository protection ────────────────────────────────────────────
+	// After every writable mount, so the read-only binds land on top of them:
+	// a writable .git would let the sandbox plant a hook or a core.fsmonitor
+	// that the HOST runs on the user's next git command. The plan (and the
+	// placeholders its binds need on the host) comes from the host-side
+	// preparation — see internal/gitguard.
+	for _, g := range cfg.GitGuard.Writable {
+		args = append(args, "--bind", g.Src, g.Dest)
+	}
+	for _, g := range cfg.GitGuard.ReadOnly {
+		args = append(args, "--ro-bind", g.Src, g.Dest)
+	}
+
 	// ── Process lifecycle ────────────────────────────────────────────────────
 	// --die-with-parent: sandbox is killed if the inner process crashes.
 	//

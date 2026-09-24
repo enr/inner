@@ -67,6 +67,10 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("sandbox", "home") {
 		result.Sandbox.Home = overlay.Sandbox.Home
 	}
+	// git_dir is a scalar: a child profile always wins over the base.
+	if meta.IsDefined("sandbox", "git_dir") {
+		result.Sandbox.GitDir = overlay.Sandbox.GitDir
+	}
 	// home_allow is unioned like the other path lists: a child profile adds the
 	// toolchain paths it needs without having to repeat the base's.
 	if meta.IsDefined("sandbox", "home_allow") {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/enr/inner/internal/config"
+	"github.com/enr/inner/internal/gitguard"
 	"github.com/enr/inner/internal/netproxy"
 	"github.com/enr/inner/internal/runtime"
 )
@@ -297,6 +298,44 @@ func TestBuild_networkMode_failsClosed(t *testing.T) {
 }
 
 // ── Mounts ────────────────────────────────────────────────────────────────────
+
+func TestBuild_gitGuardBindsAfterEveryWritableMount(t *testing.T) {
+	// The read-only git binds must land on top of the workdir bind and of the
+	// workspace binds, and the writable gitdir of a linked worktree must come
+	// before the read-only binds laid over it.
+	iso := testIsolator(runtime.RuntimeInfo{})
+	wsDest := "/home/user/ws/app"
+	args := cmdArgs(t, iso, config.RunConfig{
+		Mounts: []config.Mount{
+			{Src: "/home/user/proj", Dest: "/home/user/proj", Mode: "rw"},
+			{Src: "/host/app", Dest: wsDest, Mode: "rw"},
+		},
+		WorkspaceDests: []string{wsDest},
+		GitGuard: gitguard.Plan{
+			Writable: []gitguard.Bind{{Src: "/home/user/main/.git", Dest: "/home/user/main/.git"}},
+			ReadOnly: []gitguard.Bind{
+				{Src: "/home/user/proj/.git/config", Dest: "/home/user/proj/.git/config"},
+				{Src: "/home/user/main/.git/hooks", Dest: "/home/user/main/.git/hooks"},
+			},
+		},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+
+	workdir := indexSeq(args, "--bind", "/home/user/proj", "/home/user/proj")
+	ws := indexSeq(args, "--bind", "/host/app", wsDest)
+	writable := indexSeq(args, "--bind", "/home/user/main/.git", "/home/user/main/.git")
+	cfgRO := indexSeq(args, "--ro-bind", "/home/user/proj/.git/config", "/home/user/proj/.git/config")
+	hooksRO := indexSeq(args, "--ro-bind", "/home/user/main/.git/hooks", "/home/user/main/.git/hooks")
+	if workdir < 0 || ws < 0 || writable < 0 || cfgRO < 0 || hooksRO < 0 {
+		t.Fatalf("missing bind in %v", args)
+	}
+	if writable <= ws || writable <= workdir {
+		t.Errorf("writable gitdir (idx %d) must follow the workdir (%d) and workspace (%d) binds", writable, workdir, ws)
+	}
+	if cfgRO <= writable || hooksRO <= writable {
+		t.Errorf("read-only git binds (%d, %d) must follow the writable gitdir bind (%d)", cfgRO, hooksRO, writable)
+	}
+}
 
 func TestBuild_mountRW(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})

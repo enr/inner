@@ -19,6 +19,7 @@ import (
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/containers"
 	"github.com/enr/inner/internal/executor"
+	"github.com/enr/inner/internal/gitguard"
 	"github.com/enr/inner/internal/profile"
 	"github.com/enr/inner/internal/setup"
 	"github.com/enr/inner/internal/workspace"
@@ -283,6 +284,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 	defer cleanupPrep()
+	printGitGuardWarnings(w, rc)
 
 	// 12. Create isolator and build the sandbox command.
 	iso, err := a.isolatorFn()
@@ -760,6 +762,7 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 			fmt.Fprintf(w, "  deny:  %s\n", entry)
 		}
 	}
+	fmt.Fprintf(w, "git-dir:     %s\n", rc.EffectiveGitDirMode())
 	fmt.Fprintf(w, "pid-ns:      %v\n", rc.PidNamespace)
 	if rc.ContainersConfPath != "" {
 		fmt.Fprintf(w, "containers:  cgroup_manager override at %s\n", rc.ContainersConfPath)
@@ -783,6 +786,8 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 		}
 		fmt.Fprintln(w)
 	}
+
+	printGitGuardPlan(w, rc.GitGuard)
 
 	if len(rc.Mounts) > 0 {
 		fmt.Fprintln(w, "mounts:")
@@ -1127,4 +1132,35 @@ to the entrypoint command.`,
 	})
 
 	return cmd
+}
+
+// printGitGuardWarnings reports the paths the git protection could not cover.
+func printGitGuardWarnings(w io.Writer, rc *config.RunConfig) {
+	for _, msg := range rc.GitGuard.Warnings {
+		fmt.Fprintf(w, "%s: git protection: %s\n", colorizeW(w, ansiBoldYellow, "warning"), msg)
+	}
+}
+
+// printGitGuardPlan lists, for --dry-run, what the git protection binds and
+// which placeholders it creates on the host.
+func printGitGuardPlan(w io.Writer, plan gitguard.Plan) {
+	if plan.Empty() {
+		return
+	}
+	placeholders := make(map[string]bool, len(plan.Placeholders))
+	for _, ph := range plan.Placeholders {
+		placeholders[ph.Path] = true
+	}
+	fmt.Fprintf(w, "git protection (%s):\n", plan.Mode)
+	for _, b := range plan.Writable {
+		fmt.Fprintf(w, "  rw  %s  # gitdir of a linked worktree or submodule checkout\n", b.Dest)
+	}
+	for _, b := range plan.ReadOnly {
+		note := ""
+		if placeholders[b.Src] {
+			note = "  # placeholder created on the host"
+		}
+		fmt.Fprintf(w, "  ro  %s%s\n", b.Dest, note)
+	}
+	fmt.Fprintln(w)
 }

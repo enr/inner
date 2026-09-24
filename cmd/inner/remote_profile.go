@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/enr/inner/internal/config"
+	"github.com/enr/inner/internal/gitguard"
 )
 
 // A profile downloaded from a URL configures the whole sandbox: the entrypoint
@@ -140,6 +141,11 @@ func hardenRemoteProfile(rc *config.RunConfig) []string {
 		applied = append(applied, "[sandbox] pid_namespace = false ignored — the sandbox keeps its own PID namespace")
 	}
 
+	if rc.EffectiveGitDirMode() == gitguard.ModeRW {
+		rc.GitDirMode = gitguard.ModeProtected
+		applied = append(applied, `[sandbox] git_dir = "rw" ignored — git hooks and config stay read-only`)
+	}
+
 	return applied
 }
 
@@ -211,6 +217,13 @@ func remoteProfileRequests(rc *config.RunConfig) []string {
 		out = append(out, "home: isolated (tmpfs)")
 	} else {
 		out = append(out, fmt.Sprintf("home: %s — your home directory is readable inside the sandbox", home))
+	}
+
+	switch rc.EffectiveGitDirMode() {
+	case gitguard.ModeRW:
+		out = append(out, "git_dir: rw — the sandbox can plant git hooks your next git command runs on the host")
+	case gitguard.ModeRO:
+		out = append(out, "git_dir: ro — repositories are read-only")
 	}
 
 	if len(rc.Capabilities) > 0 {

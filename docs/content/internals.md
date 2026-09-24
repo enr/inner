@@ -67,6 +67,7 @@ returns one line per change, which the gate prints:
 | `[sandbox] allow` key in `config.CredentialAllowKeys` | key dropped | un-hides a readable credential from the [hide table](#sensitive-resource-hiding) |
 | `[sandbox] allow = ["docker-socket" \| "podman-socket" \| "nested-user-ns"]` | key dropped | a container socket is root on the host; nested user namespaces grant caps |
 | `[sandbox] pid_namespace = false` | ignored | host `/proc/<pid>/environ` is readable, defeating `--clearenv` (see [process isolation](#process-isolation---unshare-pid)) |
+| `[sandbox] git_dir = "rw"` | set to `"protected"` | the sandbox could plant hooks or a `core.fsmonitor` that the host runs on the next git command (see [git repository protection](#git-repository-protection)) |
 
 The remaining allow keys (`env-secrets`, `shims-active`, `network-policy`) only
 downgrade an `inner verify` check and carry no host privilege, so they survive.
@@ -165,6 +166,56 @@ To make the home directory (or a subdirectory of it) writable, a profile `[mount
 `~` is expanded to the real home path by `config.expandPath` before it reaches `Build`. The mount is then emitted as `--bind $HOME $HOME` (a writable bind on top of the read-only root).
 
 Sensitive files within the home directory are hidden after profile mounts are applied (see [Sensitive resource hiding](#sensitive-resource-hiding) below). This ordering matters: a profile tmpfs that covers a sensitive path makes the hide step redundant, and `isUnderTmpfs` skips it to avoid a bind-inside-empty-tmpfs failure.
+
+### Git repository protection
+
+A writable workdir usually contains `.git`, and git runs programs named by
+files in there — hooks, `core.fsmonitor`, `core.hooksPath`, `core.sshCommand`,
+filter and diff drivers — when the **user** runs git on the host. `[sandbox]
+git_dir` (default `"protected"`, see [profiles](../profiles/#git-dir-repository-protection))
+keeps those files out of the sandbox's reach. The work is split in two, to
+keep `Build` free of side effects:
+
+1. **Planning and placeholders — host side, `prepareSandbox`.** `applyGitGuard`
+   passes every `rw` mount (after the `safe-rw` step, so the mounts are final)
+   to `gitguard.Build`, which inspects the mount root and its direct
+   subdirectories for a `.git` entry and returns a `gitguard.Plan`, stored on
+   `RunConfig.GitGuard`. `gitguard.Materialize` then creates the placeholders
+   the read-only binds need: a path that does not exist cannot be a mount
+   point, and the sandbox could otherwise create it. Placeholders are a
+   missing `hooks/` (empty dir), a missing `config` or enabled-but-missing
+   `config.worktree` (empty file) and `commondir` (a file containing `.`, which
+   points the repository at itself). Only `commondir` is removed afterwards:
+   each run holds a shared `flock` on a per-path lock file under
+   `$XDG_RUNTIME_DIR/inner/gitguard/`, and the run that obtains the exclusive
+   lock at exit removes it. Unlinking it while another run has it bound would
+   detach that run's mount.
+2. **Binds — `Build`.** Emitted right after the workspace pass, so they land on
+   top of every writable mount:
+
+```
+--bind    /home/me/main/.git /home/me/main/.git           linked worktree gitdir (protected, rw)
+--ro-bind /home/me/app/.git/config /home/me/app/.git/config
+--ro-bind /home/me/app/.git/hooks  /home/me/app/.git/hooks
+--ro-bind /home/me/app/.git/commondir /home/me/app/.git/commondir
+```
+
+Read-only binds are sorted parents first, so a bind of a directory never covers
+a bind inside it. In `"ro"` mode the plan is a single `--ro-bind` of the whole
+`.git` (or of the `.git` file of a worktree/submodule checkout); in `"rw"` mode
+it only carries the writable gitdir of a linked worktree.
+
+`gitguard` parses git config itself (sections, quoting, escapes,
+continuations, `include.path` / `includeIf.*.path` followed recursively with
+the condition ignored), so it does not need a git binary and does not run the
+config it is protecting against. Paths that a bind cannot protect — a
+symlinked `.git`, `hooks` or `config`, an include target missing inside the
+workdir — end up in `Plan.Warnings`, printed at the start of `inner run` and
+`inner verify`.
+
+The known gap is a *new* nested repository registered as a gitlink in the
+index: the host's `git status` recurses into it. No mount prevents it in
+`"protected"` mode; `"ro"` does, because the index stays read-only.
 
 ### Process isolation: `--unshare-pid`
 

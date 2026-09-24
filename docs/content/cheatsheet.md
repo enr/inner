@@ -38,6 +38,7 @@ weight: 7
 | Run specific profile | `inner run -p <name>` |
 | Mount project read-write | `inner run -w /path/to/project` |
 | Preview bwrap command | `inner run --dry-run` |
+| Show protected `.git` paths | `inner run -w . --dry-run` (section `git protection`) |
 | Set a timeout (seconds) | `inner run --timeout 300` |
 | Add extra mount | `inner run -m /host:/sandbox:ro` |
 | Inject environment var | `inner run -e KEY=VAL` |
