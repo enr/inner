@@ -19,9 +19,11 @@ tipo, priorità, dimensione stimata, fonti e dipendenze. Le issue "abilitanti"
 | **P2** | Reale ma con raggio d'azione limitato |
 | **P3** | Miglioria / da valutare su richiesta |
 
-**Ordine di lavoro consigliato:** ISS-01 → ISS-02 → ISS-03 → ISS-08 → ISS-17 →
-ISS-05 → ISS-04 → ISS-06 → bug P2 (ISS-10…14) → ISS-18/19 → resto.
-ISS-04, ISS-05 e ISS-07 sono chiuse. ISS-06 (credential injection) puo'
+**Ordine di lavoro consigliato:** ISS-08 → ISS-17 → ISS-06 → bug P2 (ISS-10…14)
+→ ISS-18/19 → ISS-34…37 → resto.
+ISS-01, ISS-02, ISS-03, ISS-04, ISS-05 e ISS-07 sono chiuse; ISS-01/02/03 hanno
+avuto un secondo giro di fix (buchi residui e regressioni trovati in analisi),
+da firmare con `.sdlc/e2e-security` su macchina reale. ISS-06 (credential injection) puo'
 partire: si appoggia al proxy di ISS-05, ora in tree.
 Razionale: prima i fix exploitabili e i quick win (P0), poi il sign-off manuale
 già dovuto, poi i due enabler strutturali (run-ID/JSON e proxy di rete) che
@@ -56,7 +58,7 @@ i gitlink dell'index prima/dopo e avvisare. Manca anche un check in
 
 ---
 
-### ISS-01 · Remote profiles: blocking consent + `--sha256` pinning
+### ISS-01 · Remote profiles: blocking consent + `--sha256` pinning — **FATTO**
 `security` · **P0** · Size M · Fonti: SECURITY_REVIEW #2, NONO_COMPARISON S5 · **Enabler** per ISS-23, ISS-27
 
 Un profilo TOML scaricato da URL controlla l'intera sandbox (`network`,
@@ -66,10 +68,22 @@ bloccante che riassuma le impostazioni pericolose richieste dal profilo remoto
 (non auto-accettata da `--yes`); (b) flag `--sha256 <hash>` con abort su
 mismatch; (c) rifiuto di `inherit_all` da sorgente remota salvo opt-in separato.
 
-*Acceptance:* test che un profilo remoto con `inherit_all`/`network=true` non
-parte senza consenso esplicito; test che il mismatch di checksum interrompe il run.
+*Stato:* primo giro in `b983f34` (hardening, consenso, `--sha256`). Secondo
+giro dopo analisi: il profilo poteva ancora leggere segreti host con
+l'espansione `$VAR` in `[env] set`/`path_prepend`, scegliere `[output] log`
+(scritto dall'host: `~/.bashrc.d` → esecuzione al prossimo shell),
+`[entrypoint] workdir` (bind rw → persistenza), `workspaces_path`,
+`clipboard`, e rilocare un path nascosto (`"~/.ssh" → /tmp/k`), il tutto
+senza comparire nel prompt. Ora `Loader.BuildUntrusted` risolve solo
+`$HOME/$USER/$UID` e ignora log/workdir/workspaces/clipboard;
+`hardenRemoteProfile` scarta i mount che rilocano path nascosti (sorgente
+risolta via symlink) e tutte le `HostPrivilegeAllowKeys`; il prompt elenca
+ogni mount, `home_allow`, valore env, con caratteri di controllo escapati; la
+validazione precede il consenso. `TestRemoteFieldPolicy_coversEveryProfileField`
+fallisce se si aggiunge un campo al profilo senza decidere la policy remota.
+Verificato con bwrap reale (script `.sdlc/e2e-security`, sezione B).
 
-### ISS-02 · `safe-rw` e copie delle capability seguono i symlink
+### ISS-02 · `safe-rw` e copie delle capability seguono i symlink — **FATTO**
 `security` `bug` · **P0** · Size S · Fonte: SECURITY_REVIEW #3
 
 `copyFile` (`cmd/inner/sandbox_claude.go`) usa `os.ReadFile` che dereferenzia i
@@ -78,10 +92,17 @@ symlink: un link piantato in `~/.claude/` (es. → `~/.ssh/id_rsa`) fa copiare i
 Fix: `Lstat` su ogni entry; i symlink si saltano (o si ricreano con
 `Readlink`+`Symlink` senza dereferenziare).
 
-*Acceptance:* test con symlink verso un file fuori dall'albero sorgente: il
-contenuto non deve comparire nella copia.
+*Stato:* primo giro in `e6b3816` (rifiuto/salto dei symlink). Secondo giro
+(`cmd/inner/sandbox_copy.go`): apertura con `O_NOFOLLOW|O_NONBLOCK` + solo file
+regolari (una FIFO bloccava inner per sempre, verificato), symlink *ricreati*
+invece che scartati (si risolvono nella vista del sandbox, dove i path nascosti
+restano nascosti; tornano a funzionare i link relativi/legittimi), sorgente
+`safe-rw` symlinkata risolta (prima: directory vuota silenziosa), niente bit
+setuid sulla copia, `settings.json` symlinkato seguito solo se il target non è
+un path nascosto, messaggio d'errore azionabile per credenziali symlinkate.
+Verificato con bwrap reale (sezione C).
 
-### ISS-03 · Estendere la denylist dei path sensibili + test di regressione
+### ISS-03 · Estendere la denylist dei path sensibili + test di regressione — **FATTO**
 `security` · **P0** · Size S · Fonte: SECURITY_REVIEW #1 (mitigazione a breve termine)
 
 Quick win in attesa di ISS-04: aggiungere alla tabella `sensitive` di
@@ -90,6 +111,69 @@ Quick win in attesa di ISS-04: aggiungere alla tabella `sensitive` di
 `~/.local/share/keyrings`, profili browser) con relative chiavi `allow` e check
 di `inner verify`. Aggiungere un test che fallisca quando un path noto non è
 coperto, per evitare che la lista marcisca in silenzio.
+
+*Stato:* primo giro in `21030e8`. Secondo giro:
+- **socket runtime** — il buco più grave: `/run/user/$UID` era visibile e né il
+  bind ro né `--unshare-net` bloccano `connect(2)`. Da un sandbox `host-ro` con
+  `network = false` si raggiungeva il session bus (verificato con bwrap reale:
+  il vecchio binario lascia eseguire un'azione sull'host tramite un servizio
+  sul bus). Nuove chiavi `session-bus`, `systemd-user`, `ssh-agent`,
+  `gpg-agent` (+ `keyring/control` sotto `keyrings`); `inner verify` giudica i
+  socket con `connect(2)`, non con la dimensione. La capability claude passa il
+  bus tramite `xdg-dbus-proxy` filtrato su `org.freedesktop.secrets` (fallback
+  al bus completo con warning se il proxy manca, o con `allow = ["session-bus"]`);
+- **regressione Maven** — `~/.m2/settings.xml` su `/dev/null` faceva fallire
+  Maven ("Non-readable settings", verificato con bwrap reale): ora è un
+  `<settings/>` vuoto (`config.HidePlaceholder`).
+Da firmare su macchina reale con `.sdlc/e2e-security` (sezioni A e D).
+
+### ISS-34 · Copertura denylist: path rilocati e tool mancanti
+`security` · **P2** · Size M · Fonte: analisi ISS-03 (secondo giro)
+
+La tabella usa solo path fissi sotto `$HOME`. Scoperti ma **non** coperti, per
+prudenza (ogni nuova voce può rompere un workflow `host-ro`):
+- path spostati da env: `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, `GNUPGHOME`,
+  `KUBECONFIG`, `DOCKER_CONFIG`, `CARGO_HOME`, `GH_CONFIG_DIR`,
+  `CLOUDSDK_CONFIG`, `AWS_SHARED_CREDENTIALS_FILE`, `PASSWORD_STORE_DIR`,
+  `GRADLE_USER_HOME`; `SSH_AUTH_SOCK` fuori da `/tmp` e `/run/user`;
+- browser flatpak/snap (`~/.var/app/…`, `~/snap/…`), Thunderbird;
+- `~/.config/git/credentials`, `~/.config/containers/auth.json`,
+  `$XDG_RUNTIME_DIR/containers/auth.json`, `~/.vault-token`, rclone, `~/.s3cfg`,
+  chiavi sops/age, pulumi, history di python/psql/mysql/fish;
+- credenziali degli agenti stessi (`~/.claude/.credentials.json`,
+  `~/.gemini/oauth_creds.json`, `~/.local/share/opencode/auth.json`) leggibili
+  dai profili shell: nasconderle richiede un'integrazione con le capability
+  (che rimontano proprio quelle directory), altrimenti si rompono.
+Il canary test protegge solo ciò che è già in lista. `home = "isolated"` resta
+la risposta vera.
+
+### ISS-35 · `inner verify`: check `docker-socket` basato su `Stat`
+`bug` · **P3** · Size S · Fonte: analisi ISS-03 (secondo giro)
+
+`checkDockerSocket` fallisce se `/var/run/docker.sock` esiste, ma quando è
+nascosto è un bind di `/dev/null` (esiste): su un host con Docker il check
+probabilmente fallisce sempre. Allinearlo al controllo per-socket del pass
+generico (fallire solo se è un socket). Non corretto in questo giro per non
+allargare il perimetro; da verificare su un host con Docker.
+
+### ISS-36 · Symlink rotti su path della denylist bloccano ogni run
+`bug` · **P3** · Size S · Fonte: analisi ISS-03
+
+Un symlink rotto su uno qualsiasi dei path nascosti (es. `~/.mozilla` dopo la
+migrazione a flatpak, un dotfile manager a metà) fa fallire `Build` per tutte
+le run (fail-closed voluto: `EvalSymlinks` fallisce). Con la lista cresciuta la
+probabilità aumenta. Opzione: per `ENOENT` del target saltare l'hide (non c'è
+contenuto da nascondere) con un warning; altri errori restano fatali.
+
+### ISS-37 · Profili remoti: residui del gate
+`security` · **P3** · Size S · Fonte: analisi ISS-01 (secondo giro)
+
+- `--dry-run` su un profilo remoto senza consenso esegue comunque la
+  preparazione lato host (copie temporanee delle capability), sul profilo già
+  hardened;
+- con un indirizzo D-Bus astratto (`unix:abstract=…`) e `network = full`, il
+  bus host resta raggiungibile dal namespace di rete condiviso anche col proxy;
+- l'euristica dei nomi env "segreti" resta una denylist.
 
 ---
 
@@ -430,10 +514,11 @@ che in file leggibili dall'agente.
 
 | Priorità | Issue |
 |---|---|
-| **P0** | ISS-01 remote profile trust · ISS-02 symlink nelle copie · ISS-03 estensione denylist |
+| **P0** | — (ISS-01, ISS-02, ISS-03 chiuse; firma e2e con `.sdlc/e2e-security`) |
 | **P1** | ISS-04 home isolata · ISS-05 proxy rete allowlist · ISS-06 credential injection · ISS-07 sign-off TUI/PID-ns · ISS-08 run-ID + `--json` |
 | **P2** | ISS-09 parseMount · ISS-10 rollback workspace · ISS-11 extractExpiresAt · ISS-12 checkUsrReadonly · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ISS-17 profile explain · ISS-18 triage bwrap |
-| **P3** | ISS-19…ISS-30 |
+| **P2** (nuove) | ISS-34 copertura denylist |
+| **P3** | ISS-19…ISS-30 · ISS-35 check docker-socket · ISS-36 symlink rotti · ISS-37 residui gate remoto |
 
 ### Grafo delle dipendenze (enabler)
 

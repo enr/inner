@@ -13,6 +13,10 @@ Severity legend:
 
 Status of items already handled:
 
+- 🔁 **[SECOND PASS — e2e sign-off pending] Issues #1, #2, #3** — a re-review of
+  the three fixes found gaps and regressions, now fixed; see **Second pass on
+  #1–#3** below. To be signed off on a real desktop session with
+  `.sdlc/e2e-security`.
 - ✅ **[SIGNED OFF] Issue #9 — PID-namespace / TUI manual verification** — the
   checklist was run by the maintainer on a real terminal with a locally built
   `inner` binary (2026-08-25); reported outcome: all steps OK. The
@@ -61,6 +65,46 @@ Status of items already handled:
   TUI verification that still has to be performed on a real terminal.
 
 ---
+
+## Second pass on #1–#3
+
+A re-review of the three closed fixes. Everything below was reproduced before
+fixing, with a real bwrap where the claim depends on it, and each fix has unit
+tests plus a check in `.sdlc/e2e-security` (which fails 20 checks on the
+previous binary and hangs on the FIFO case without its timeout).
+
+- **#1 — host runtime sockets were not hidden.** `/run/user/<uid>` came in
+  through the root bind; neither the read-only bind nor `--unshare-net` stops
+  `connect(2)` on a filesystem socket. A `network = false`, `host-ro` sandbox
+  reached the session bus (a service on it performed an action on the host at
+  the sandbox's request), the systemd user manager, and the ssh/gpg agents.
+  Hidden now under new allow keys (`session-bus`, `systemd-user`, `ssh-agent`,
+  `gpg-agent`), rated HIGH by `inner verify`, which now judges a socket by
+  `connect(2)` instead of its (always zero) size. The claude capability, which
+  deliberately passed the whole bus in for token refresh, now passes an
+  `xdg-dbus-proxy` filtered to `org.freedesktop.secrets`; without the proxy it
+  falls back to the old behaviour with a warning.
+- **#1 — Maven regression.** `~/.m2/settings.xml` bound to `/dev/null` made
+  Maven abort ("Non-readable settings") in every `host-ro` sandbox on a machine
+  that has the file. It is now an empty `<settings/>` placeholder.
+- **#2 — the hardening was a list of known-bad fields.** Still reachable from a
+  URL: host secrets through `$VAR` expansion in `[env] set`, `[output] log`
+  (written by the host — `~/.bashrc.d` means code execution), a read-write
+  `[entrypoint] workdir`, `workspaces_path`, `clipboard`, and mounts relocating
+  a hidden path; none of them shown in the prompt. Fixed at load time
+  (`Loader.BuildUntrusted`) and in the hardening; the prompt now lists every
+  mount and env value, escaped; a reflection test forces a decision for every
+  new profile field.
+- **#3 — incomplete, plus regressions.** No `O_NOFOLLOW` (check/use race), a
+  FIFO in a copied tree hung inner, legitimate symlinks were silently dropped,
+  and a symlinked `safe-rw` source became an empty directory. Symlinks are now
+  recreated (never dereferenced on the host) and resolve inside the sandbox's
+  own view.
+
+Found and deliberately **not** fixed in this pass (tracked in `ISSUES.md`,
+ISS-34…37): paths relocated by environment variables and other uncovered tools,
+the `docker-socket` verify check, dangling symlinks on hidden paths aborting
+every run, and residuals of the remote-profile gate.
 
 ## #1 — [CLOSED] The read side of the sandbox is a denylist, not an allowlist
 
