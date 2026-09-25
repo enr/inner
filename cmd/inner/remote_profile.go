@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"golang.org/x/term"
@@ -41,6 +43,9 @@ import (
 type remoteSource struct {
 	url    string // URL it was fetched from
 	digest string // sha256 of the exact bytes fetched, hex
+	// loadNotes are the changes config.Loader.BuildUntrusted made while
+	// loading the profile, reported by the consent gate with the rest.
+	loadNotes []string
 }
 
 // isRemote reports whether the profile of this run came from a URL.
@@ -80,12 +85,22 @@ func checkProfileDigest(pin, digest, rawURL string) error {
 // asking for a host credential by name, so the hardening drops it.
 var secretishEnvNames = []string{
 	"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "KEY", "AUTH", "SESSION",
+	"PRIVATE", "COOKIE", "DSN", "DATABASE_URL", "CONNECTION_STRING",
 }
+
+// secretishEnvWords are matched as whole "_"-separated words only: as a
+// substring "PAT" would also match PATH.
+var secretishEnvWords = []string{"PAT", "PASS"}
 
 func looksLikeSecretEnvName(name string) bool {
 	upper := strings.ToUpper(name)
 	for _, pat := range secretishEnvNames {
 		if strings.Contains(upper, pat) {
+			return true
+		}
+	}
+	for _, word := range strings.Split(upper, "_") {
+		if slices.Contains(secretishEnvWords, word) {
 			return true
 		}
 	}
@@ -146,22 +161,80 @@ func hardenRemoteProfile(rc *config.RunConfig) []string {
 		applied = append(applied, `[sandbox] git_dir = "rw" ignored — git hooks and config stay read-only`)
 	}
 
+	var keptMounts []config.Mount
+	for _, m := range rc.Mounts {
+		if hidden := relocatedSensitivePath(m); hidden != "" {
+			applied = append(applied, fmt.Sprintf("[mounts] %s -> %s dropped — it would carry %s, which the sandbox hides, to another path", m.Src, m.Dest, hidden))
+			continue
+		}
+		keptMounts = append(keptMounts, m)
+	}
+	rc.Mounts = keptMounts
+
 	return applied
 }
 
+// relocatedSensitivePath reports the hidden resource a mount would expose, or
+// "" when it exposes none.
+//
+// The hide rules act on the host path itself: a mount whose destination is its
+// own source gets them on top (they are emitted after every mount). A mount
+// that puts the source somewhere else escapes them — "~/.ssh" at /tmp/k, or
+// "/" at /tmp/root. The source is resolved first, so a symlink cannot disguise
+// either the source or the relocation.
+func relocatedSensitivePath(m config.Mount) string {
+	if m.Mode == "tmpfs" {
+		return "" // an empty overlay carries nothing from the host
+	}
+	src := filepath.Clean(m.Src)
+	if resolved, err := filepath.EvalSymlinks(src); err == nil {
+		src = resolved
+	}
+	if src == filepath.Clean(m.Dest) {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	for _, r := range config.SensitiveResources(home, strconv.Itoa(os.Getuid())) {
+		// The resource is hidden where the isolator resolves it to, which is
+		// not the listed path when a component is a symlink (~/.m2 -> /data/m2).
+		paths := []string{r.Path}
+		if resolved, err := filepath.EvalSymlinks(r.Path); err == nil && resolved != r.Path {
+			paths = append(paths, resolved)
+		}
+		for _, p := range paths {
+			// The mount carries the resource when its source covers it (a
+			// parent directory) or lies inside it (a file under ~/.ssh).
+			if config.PathCoveredBy([]string{src}, p) || config.PathCoveredBy([]string{p}, src) {
+				return r.Path
+			}
+		}
+	}
+	return ""
+}
+
+// printable escapes control characters in text taken from a downloaded
+// profile, so that a crafted value cannot move the cursor or erase lines and
+// rewrite the consent prompt the user is reading.
+func printable(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == '\t' || (r >= 0x20 && r != 0x7f && !(r >= 0x80 && r < 0xa0)) {
+			b.WriteRune(r)
+			continue
+		}
+		fmt.Fprintf(&b, "\\x%02x", r)
+	}
+	return b.String()
+}
+
 // isPrivilegedAllowKey reports whether an allow key gives the sandbox something
-// it could use against the host: a readable credential, a container socket, or
-// the nested-user-ns capability. The remaining keys only downgrade an
-// `inner verify` check and are harmless coming from a remote profile.
+// it could use against the host: a readable credential, or a channel to act
+// with the user's authority (container sockets, nested-user-ns, the session
+// bus, the systemd user manager, the ssh/gpg agents). The remaining keys only
+// downgrade an `inner verify` check and are harmless from a remote profile.
 func isPrivilegedAllowKey(key string) bool {
-	if slices.Contains(config.CredentialAllowKeys, key) {
-		return true
-	}
-	switch key {
-	case "docker-socket", "podman-socket", "nested-user-ns":
-		return true
-	}
-	return false
+	return slices.Contains(config.CredentialAllowKeys, key) ||
+		slices.Contains(config.HostPrivilegeAllowKeys, key)
 }
 
 // remoteProfileRequests summarizes, for the consent prompt, what the downloaded
@@ -226,8 +299,14 @@ func remoteProfileRequests(rc *config.RunConfig) []string {
 		out = append(out, "git_dir: ro — repositories are read-only")
 	}
 
+	if rc.HomeIsolated() {
+		for _, p := range rc.HomeAllow {
+			out = append(out, "home_allow: "+p+" (read-only)")
+		}
+	}
+
 	if len(rc.Capabilities) > 0 {
-		out = append(out, fmt.Sprintf("capabilities: %s — the matching host tool config is copied into the sandbox", strings.Join(rc.Capabilities, ", ")))
+		out = append(out, fmt.Sprintf("capabilities: %s — the matching host tool config and credentials are copied into the sandbox", strings.Join(rc.Capabilities, ", ")))
 	}
 	if len(rc.Allow) > 0 {
 		out = append(out, "allow: "+strings.Join(rc.Allow, ", "))
@@ -235,12 +314,46 @@ func remoteProfileRequests(rc *config.RunConfig) []string {
 	if len(rc.Env.Inherit) > 0 {
 		out = append(out, "env inherit: "+strings.Join(rc.Env.Inherit, ", "))
 	}
-
-	for _, m := range rc.Mounts {
-		if m.Mode == "rw" || m.Mode == "safe-rw" {
-			out = append(out, fmt.Sprintf("mount: %s -> %s (%s)", m.Src, m.Dest, m.Mode))
-		}
+	if rc.Env.InheritAll {
+		out = append(out, "env inherit_all: the whole host environment, every exported secret included")
 	}
+	keys := make([]string, 0, len(rc.Env.Set))
+	for k := range rc.Env.Set {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		out = append(out, fmt.Sprintf("env set: %s=%s", k, rc.Env.Set[k]))
+	}
+	for _, p := range rc.Env.PathPrepend {
+		out = append(out, "PATH prepend: "+p)
+	}
+
+	// Every mount, read-only ones included: a read-only mount of a secret is
+	// still a leak, and the user can only judge what is listed.
+	for _, m := range rc.Mounts {
+		mode := m.Mode
+		if mode == "" {
+			mode = "ro"
+		}
+		if mode == "tmpfs" {
+			out = append(out, fmt.Sprintf("mount: empty tmpfs at %s", m.Dest))
+			continue
+		}
+		out = append(out, fmt.Sprintf("mount: %s -> %s (%s)", m.Src, m.Dest, mode))
+	}
+
+	// Only reachable with --trust-remote: BuildUntrusted drops them otherwise.
+	if rc.Workdir != "" {
+		out = append(out, "workdir: "+rc.Workdir+" (mounted read-write)")
+	}
+	if rc.LogDir != "" {
+		out = append(out, "log dir: "+rc.LogDir+" (inner writes the sandbox output there, on the host)")
+	}
+	if rc.Clipboard {
+		out = append(out, "clipboard: the display socket — a client can type into your session")
+	}
+
 	if len(rc.Noop.Block) > 0 || len(rc.Noop.Rewrite) > 0 {
 		out = append(out, "noop: rewrites or blocks commands inside the sandbox")
 	}
@@ -268,14 +381,17 @@ func gateRemoteProfile(w io.Writer, in io.Reader, rc *config.RunConfig, src remo
 	if flags.trustRemote {
 		fmt.Fprintf(w, "%s: --trust-remote: the profile configures the sandbox with no restriction\n", warn)
 	} else {
+		for _, line := range src.loadNotes {
+			fmt.Fprintf(w, "  hardened: %s\n", printable(line))
+		}
 		for _, line := range hardenRemoteProfile(rc) {
-			fmt.Fprintf(w, "  hardened: %s\n", line)
+			fmt.Fprintf(w, "  hardened: %s\n", printable(line))
 		}
 	}
 
 	fmt.Fprintln(w, "  the profile asks to:")
 	for _, line := range remoteProfileRequests(rc) {
-		fmt.Fprintf(w, "    - %s\n", line)
+		fmt.Fprintf(w, "    - %s\n", printable(line))
 	}
 
 	switch {

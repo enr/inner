@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+# End-to-end checks for the security fixes that a unit test cannot prove:
+# they need a real bwrap, the user's real session bus / systemd user instance /
+# agents, and a real inner binary on PATH.
+#
+#   A. host runtime sockets (/run/user/$UID) are hidden; the claude capability
+#      gets a session bus filtered to org.freedesktop.secrets
+#   B. a profile downloaded from a URL cannot read host variables, choose
+#      host-side paths, or relocate a hidden path
+#   C. safe-rw / capability copies never read through a symlink
+#   D. Maven still works in a host-ro sandbox when ~/.m2/settings.xml exists
+#
+# Usage:
+#   ./.sdlc/e2e-security
+#
+# Run it as your normal user, OUTSIDE any inner sandbox, in a desktop session
+# (so that the session bus and systemd --user exist). Requirements: inner and
+# bwrap on PATH. Optional, each enabling more checks: gdbus or dbus-send,
+# systemd-run, xdg-dbus-proxy, ssh-add, gpg-connect-agent, openssl + python3
+# (section B), mvn (section D), ~/.claude/.credentials.json (claude capability).
+#
+# What it touches on the host, all removed on exit:
+#   - a work directory under $HOME/.cache (paths under /tmp are invisible inside
+#     the sandbox, which would make the hiding checks vacuous);
+#   - one planted file under ~/.config/gh (the same trick .sdlc/e2e uses);
+# and, only in the "escape channel" INFO probe of section A, one transient
+# systemd user unit running `touch` on a file in the work directory.
+#
+# Exit code: 0 if every check passed or was skipped, 1 otherwise.
+
+set -uo pipefail
+
+PASS=0
+FAIL=0
+SKIP=0
+ERRORS=()
+
+pass() { PASS=$((PASS + 1)); printf "  [PASS] %s\n" "$1"; }
+fail() { FAIL=$((FAIL + 1)); ERRORS+=("$1"); printf "  [FAIL] %s\n" "$1"; }
+skip() { SKIP=$((SKIP + 1)); printf "  [SKIP] %s\n" "$1"; }
+info() { printf "  [INFO] %s\n" "$1"; }
+section() { printf "\n── %s ──\n" "$1"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+if ! have inner || ! have bwrap; then
+    echo "inner and bwrap must be on PATH" >&2
+    exit 1
+fi
+if [[ "$(id -u)" == "0" ]]; then
+    echo "run this as your normal user, not root" >&2
+    exit 1
+fi
+if [[ -n "${INNER_SANDBOX:-}" ]] || ! touch "$HOME/.inner-e2e-probe-$$" 2>/dev/null; then
+    echo "\$HOME is not writable — are you inside an inner sandbox? Run this on the host." >&2
+    exit 1
+fi
+rm -f "$HOME/.inner-e2e-probe-$$"
+
+RUNTIME_DIR="/run/user/$(id -u)"
+mkdir -p "$HOME/.cache"
+WORK=$(mktemp -d "$HOME/.cache/inner-e2e-security-XXXXXX")
+# The sandbox workdir. Kept apart from everything else under $WORK: the
+# workdir bind comes after the profile mounts, so a workdir covering them would
+# shadow them and make the checks vacuous; and $WORK itself stays read-only
+# inside the sandbox, so a file appearing there was written from OUTSIDE.
+WD="$WORK/wd"
+mkdir -p "$WD"
+PLANTED=()
+cleanup() {
+    local f
+    for f in "${PLANTED[@]:-}"; do [[ -n "$f" ]] && rm -f "$f"; done
+    rm -rf "$WORK"
+    [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null
+    return 0
+}
+trap cleanup EXIT
+
+# profile <file> <extra toml appended after the common body>
+profile() {
+    local file="$1" extra="${2:-}"
+    cat > "$file" <<EOF
+schema_version = "1"
+name = "inner-e2e-security"
+
+[sandbox]
+network = false
+$extra
+
+[env]
+inherit = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG", "JAVA_HOME"]
+
+[entrypoint]
+cmd = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 60
+EOF
+}
+
+# in_sandbox <profile> <bash command> — run in the sandbox, print its output.
+in_sandbox() {
+    local prof="$1"; shift
+    inner run -p "$prof" --no-interactive --yes -w "$WD" -- -c "$1" </dev/null 2>&1
+}
+
+# Shell functions defined inside the sandbox, using whichever D-Bus client
+# exists there (the same binaries as the host). Each prints OK on success, the
+# error otherwise, NOCLIENT without a client.
+#   bus_driver <address>       — the bus daemon answers GetId
+#   bus_ping <address> <name>  — <name> answers org.freedesktop.DBus.Peer.Ping
+BUS_CALL='bus_driver() {
+    if command -v gdbus >/dev/null; then
+        gdbus call -a "$1" -d org.freedesktop.DBus -o /org/freedesktop/DBus -m org.freedesktop.DBus.GetId >/dev/null 2>/tmp/e && echo OK || head -c 200 /tmp/e
+    elif command -v dbus-send >/dev/null; then
+        dbus-send --bus="$1" --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.GetId >/dev/null 2>/tmp/e && echo OK || head -c 200 /tmp/e
+    else
+        echo NOCLIENT
+    fi
+}
+bus_ping() {
+    if command -v gdbus >/dev/null; then
+        gdbus call -a "$1" -d "$2" -o / -m org.freedesktop.DBus.Peer.Ping >/dev/null 2>/tmp/e && echo OK || head -c 200 /tmp/e
+    elif command -v dbus-send >/dev/null; then
+        dbus-send --bus="$1" --print-reply --dest="$2" / org.freedesktop.DBus.Peer.Ping >/dev/null 2>/tmp/e && echo OK || head -c 200 /tmp/e
+    else
+        echo NOCLIENT
+    fi
+}'
+
+# ── A. Host runtime sockets ───────────────────────────────────────────────────
+
+section "A. Host runtime sockets under $RUNTIME_DIR"
+
+HOSTRO="$WORK/hostro.toml"
+profile "$HOSTRO"
+BUS_OPEN="$WORK/bus-open.toml"
+profile "$BUS_OPEN" 'allow = ["session-bus", "systemd-user"]'
+
+if [[ -S "$RUNTIME_DIR/bus" ]]; then
+    out=$(in_sandbox "$HOSTRO" "test -S '$RUNTIME_DIR/bus' && echo SOCKET || echo HIDDEN")
+    [[ "$out" == *HIDDEN* ]] && pass "host-ro: $RUNTIME_DIR/bus is not a socket inside the sandbox" \
+        || fail "host-ro: the session bus socket is visible inside the sandbox ($out)"
+
+    out=$(in_sandbox "$HOSTRO" "$BUS_CALL; bus_driver unix:path=$RUNTIME_DIR/bus")
+    if [[ "$out" == *NOCLIENT* ]]; then
+        skip "no gdbus/dbus-send: cannot probe the bus connection"
+    elif [[ "$out" == *OK* ]]; then
+        fail "host-ro: the sandbox can talk to the session bus"
+    else
+        pass "host-ro: connecting to the session bus fails"
+    fi
+
+    # The escape channel itself: ask systemd --user, over the bus, to create a
+    # file. The work dir is read-only inside the sandbox, so if the file
+    # appears it was created OUTSIDE the sandbox.
+    if have systemd-run; then
+        mark="$WORK/escaped-default"
+        in_sandbox "$HOSTRO" "DBUS_SESSION_BUS_ADDRESS=unix:path=$RUNTIME_DIR/bus XDG_RUNTIME_DIR=$RUNTIME_DIR systemd-run --user --quiet --collect --wait touch '$mark'" >/dev/null
+        sleep 1
+        [[ ! -e "$mark" ]] && pass "host-ro: systemd-run --user from the sandbox cannot start a host process" \
+            || fail "host-ro: the sandbox started a process on the host through systemd --user"
+
+        mark="$WORK/escaped-allowed"
+        in_sandbox "$BUS_OPEN" "DBUS_SESSION_BUS_ADDRESS=unix:path=$RUNTIME_DIR/bus XDG_RUNTIME_DIR=$RUNTIME_DIR systemd-run --user --quiet --collect --wait touch '$mark'" >/dev/null
+        sleep 1
+        if [[ -e "$mark" ]]; then
+            info "with allow = [\"session-bus\", \"systemd-user\"] the sandbox DID start a host process — this is the channel the default now closes"
+        else
+            info "with the bus allowed, systemd-run did not reach the host here (the channel may be blocked by other means on this system)"
+        fi
+    else
+        skip "systemd-run not installed: escape-channel probe skipped"
+    fi
+else
+    skip "no session bus socket at $RUNTIME_DIR/bus (not a desktop session?)"
+fi
+
+if [[ -S "$RUNTIME_DIR/systemd/private" ]]; then
+    out=$(in_sandbox "$HOSTRO" "test -S '$RUNTIME_DIR/systemd/private' && echo SOCKET || echo HIDDEN")
+    [[ "$out" == *HIDDEN* ]] && pass "host-ro: the systemd user manager's private socket is hidden" \
+        || fail "host-ro: $RUNTIME_DIR/systemd/private is reachable inside the sandbox"
+else
+    skip "no $RUNTIME_DIR/systemd/private on this host"
+fi
+
+if [[ -n "${SSH_AUTH_SOCK:-}" && "$SSH_AUTH_SOCK" == "$RUNTIME_DIR"/* ]] && have ssh-add; then
+    agent="$WORK/ssh-agent.toml"
+    profile "$agent"
+    sed -i 's/^inherit = \[/inherit = ["SSH_AUTH_SOCK", /' "$agent"
+    out=$(in_sandbox "$agent" 'ssh-add -l >/dev/null 2>&1; echo "rc=$?"')
+    # 0 = keys listed, 1 = agent reachable but empty, 2 = cannot connect.
+    [[ "$out" == *rc=2* ]] && pass "host-ro: the ssh-agent at \$SSH_AUTH_SOCK is not reachable" \
+        || fail "host-ro: the sandbox can use the ssh-agent ($out)"
+else
+    skip "no ssh-agent socket under $RUNTIME_DIR (or no ssh-add)"
+fi
+
+if [[ -d "$RUNTIME_DIR/gnupg" ]] && have gpg-connect-agent; then
+    out=$(in_sandbox "$HOSTRO" "gpg-connect-agent --no-autostart 'GETINFO version' /bye 2>&1 | head -1")
+    [[ "$out" != *"D "* && "$out" != OK* ]] && pass "host-ro: gpg-agent is not reachable" \
+        || fail "host-ro: the sandbox can talk to gpg-agent ($out)"
+else
+    skip "no gpg-agent sockets under $RUNTIME_DIR (or no gpg-connect-agent)"
+fi
+
+out=$(inner verify -p "$HOSTRO" 2>&1)
+for key in session-bus systemd-user ssh-agent gpg-agent; do
+    if grep -qE "^\[ok\].*$key not accessible" <<<"$out"; then
+        pass "inner verify: $key check passes on the host-ro profile"
+    else
+        fail "inner verify: $key check did not pass: $(grep "$key" <<<"$out" | head -1)"
+    fi
+done
+
+# Claude capability: the session bus it passes in must be the filtered proxy.
+if [[ -f "$HOME/.claude/.credentials.json" && -S "$RUNTIME_DIR/bus" ]]; then
+    # The shape of the built-in claude profiles: a tmpfs over the runtime dir,
+    # the capability binding the (filtered) bus back in.
+    CLAUDECAP="$WORK/claudecap.toml"
+    cat > "$CLAUDECAP" <<'EOF'
+schema_version = "1"
+name = "inner-e2e-security-claude"
+capabilities = ["claude"]
+
+[sandbox]
+network = false
+
+[mounts]
+"/run/user/$UID" = { dest = "/run/user/$UID", mode = "tmpfs" }
+
+[env]
+inherit = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
+
+[entrypoint]
+cmd = "/bin/bash"
+interactive = false
+
+[output]
+timeout_seconds = 60
+EOF
+    if have xdg-dbus-proxy; then
+        out=$(in_sandbox "$CLAUDECAP" "$BUS_CALL; echo \"addr=\$DBUS_SESSION_BUS_ADDRESS\"; echo \"systemd1=\$(bus_ping \$DBUS_SESSION_BUS_ADDRESS org.freedesktop.systemd1)\"; echo \"secrets=\$(bus_ping \$DBUS_SESSION_BUS_ADDRESS org.freedesktop.secrets)\"")
+        [[ "$out" == *"addr=unix:path=/tmp/inner-dbus/bus"* ]] && pass "claude capability: DBUS_SESSION_BUS_ADDRESS points at the filtering proxy" \
+            || fail "claude capability: the session bus is not the proxy ($(grep addr= <<<"$out"))"
+        if [[ "$out" == *NOCLIENT* ]]; then
+            skip "no gdbus/dbus-send: cannot probe the filtered bus"
+        else
+            [[ "$(grep systemd1= <<<"$out")" != *OK* ]] && pass "claude capability: org.freedesktop.systemd1 is not reachable through the proxy" \
+                || fail "claude capability: org.freedesktop.systemd1 answers through the proxy"
+            if [[ "$(grep secrets= <<<"$out")" == *OK* ]]; then
+                pass "claude capability: org.freedesktop.secrets (the keyring) is reachable — token refresh keeps working"
+            else
+                info "org.freedesktop.secrets did not answer ($(grep secrets= <<<"$out")) — is a keyring daemon running on the host?"
+            fi
+        fi
+        sleep 1
+        if pgrep -u "$(id -u)" -f 'xdg-dbus-proxy .*inner-dbus-' >/dev/null; then
+            fail "claude capability: xdg-dbus-proxy is still running after the sandbox exited"
+        else
+            pass "claude capability: the proxy is gone after the run"
+        fi
+    else
+        out=$(in_sandbox "$CLAUDECAP" "true")
+        [[ "$out" == *"cannot filter the session bus"* ]] && pass "claude capability without xdg-dbus-proxy: the fallback warns about the unfiltered bus" \
+            || fail "claude capability without xdg-dbus-proxy: no warning about the unfiltered bus"
+        skip "xdg-dbus-proxy not installed: install it and rerun to check the filter"
+    fi
+else
+    skip "no ~/.claude/.credentials.json or no session bus: claude capability checks skipped"
+fi
+
+# ── B. Profiles downloaded from a URL ─────────────────────────────────────────
+
+section "B. Profiles downloaded from a URL"
+
+# A planted, hidden secret (the same trick .sdlc/e2e uses).
+GH_SECRET="$HOME/.config/gh/inner-e2e-security-$$.yml"
+mkdir -p "$(dirname "$GH_SECRET")"
+echo "inner-e2e-planted-$$" > "$GH_SECRET" && PLANTED+=("$GH_SECRET")
+
+if have openssl && have python3; then
+    SRV="$WORK/srv"
+    mkdir -p "$SRV"
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/key.pem" -out "$WORK/cert.pem" -days 1 \
+        -subj /CN=localhost -addext "subjectAltName=IP:127.0.0.1" >/dev/null 2>&1
+    PORT=$((20000 + RANDOM % 20000))
+    python3 - "$SRV" "$PORT" "$WORK/cert.pem" "$WORK/key.pem" >/dev/null 2>&1 <<'PY' &
+import http.server, ssl, sys, functools
+d, port, cert, key = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+h = functools.partial(http.server.SimpleHTTPRequestHandler, directory=d)
+srv = http.server.HTTPServer(("127.0.0.1", port), h)
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain(cert, key)
+srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+srv.serve_forever()
+PY
+    SERVER_PID=$!
+    sleep 1
+    export SSL_CERT_FILE="$WORK/cert.pem" # trust the test server, for inner only
+    URL="https://127.0.0.1:$PORT/remote.toml"
+    export INNER_E2E_SECRET="leaked-$$"
+
+    cat > "$SRV/remote.toml" <<EOF
+schema_version = "1"
+name = "inner-e2e-remote"
+
+[sandbox]
+network = false
+clipboard = true
+
+[env]
+inherit = ["HOME", "PATH"]
+set = { LEAK = "\${INNER_E2E_SECRET}" }
+
+[entrypoint]
+cmd = "/bin/bash"
+interactive = false
+workdir = "$WORK/remote-workdir"
+
+[output]
+log = "$WORK/remote-log"
+timeout_seconds = 60
+
+[mounts]
+"$HOME/.config/gh" = { dest = "$WORK/relocated-gh" }
+EOF
+    mkdir -p "$WORK/remote-workdir" "$WORK/relocated-gh"
+
+    out=$(inner run -p "$URL" --no-interactive --yes -w "$WD" -- -c 'true' </dev/null 2>&1)
+    [[ "$out" == *"without consent"* ]] && pass "remote: --yes alone does not consent (no terminal)" \
+        || fail "remote: ran without --allow-remote: $out"
+
+    # No -w: an explicit workdir would win over the profile's anyway, and the
+    # check would prove nothing. Run from $WD so the cwd fallback lands there.
+    out=$(cd "$WD" && inner run -p "$URL" --allow-remote --no-interactive -- -c \
+        "echo \"leak=[\$LEAK]\"; echo \"pwd=\$(pwd)\"; echo \"gh=\$(cat '$WORK/relocated-gh/$(basename "$GH_SECRET")' 2>/dev/null || echo UNREADABLE)\"" </dev/null 2>&1)
+    [[ "$out" == *"leak=[]"* ]] && pass "remote: \${VAR} in [env] set does not read the host environment" \
+        || fail "remote: a host variable reached the sandbox ($(grep leak= <<<"$out"))"
+    [[ "$out" == *"pwd=$WD"* ]] && pass "remote: [entrypoint] workdir from the profile is ignored" \
+        || fail "remote: the profile chose the (read-write) workdir ($(grep pwd= <<<"$out"))"
+    [[ "$out" == *"gh=UNREADABLE"* ]] && pass "remote: a mount relocating ~/.config/gh is dropped" \
+        || fail "remote: the relocated hidden path was readable ($(grep gh= <<<"$out"))"
+    [[ ! -e "$WORK/remote-log" ]] && pass "remote: [output] log from the profile is ignored (nothing written there)" \
+        || fail "remote: inner wrote a log where the remote profile asked"
+    missing=()
+    for want in "hardened:" "INNER_E2E_SECRET" "[output] log" "[entrypoint] workdir" "clipboard" "dropped"; do
+        [[ "$out" == *"$want"* ]] || missing+=("$want")
+    done
+    [[ ${#missing[@]} -eq 0 ]] && pass "remote: the consent output reports every hardening" \
+        || fail "remote: the consent output does not mention: ${missing[*]}"
+else
+    skip "openssl or python3 missing: no local HTTPS server, remote-profile checks skipped (unit tests cover them)"
+fi
+
+# ── C. Copies never read through a symlink ────────────────────────────────────
+
+section "C. safe-rw copies and symlinks"
+
+TREE="$WORK/tree"
+mkdir -p "$TREE"
+echo "public-$$" > "$WORK/public.txt"
+echo "regular-$$" > "$TREE/regular.txt"
+ln -s "$GH_SECRET" "$TREE/evil"          # a hidden secret
+ln -s "$WORK/public.txt" "$TREE/public"  # a readable file outside the tree
+ln -s regular.txt "$TREE/relative"       # a relative link inside the tree
+mkfifo "$TREE/fifo" 2>/dev/null
+ln -s "$TREE" "$WORK/tree-link"          # a symlinked safe-rw source
+
+SAFE="$WORK/safe.toml"
+profile "$SAFE"
+cat >> "$SAFE" <<EOF
+
+[mounts]
+"$TREE" = { dest = "$TREE", mode = "safe-rw" }
+"$WORK/tree-link" = { dest = "$WORK/tree-via-link", mode = "safe-rw" }
+EOF
+mkdir -p "$WORK/tree-via-link"
+
+# Bounded: before the fix, the host-side copy blocked forever opening the FIFO
+# (the sandbox timeout does not cover the preparation), so an unbounded run
+# would hang this script instead of failing the check.
+start=$(date +%s)
+out=$(timeout 90 inner run -p "$SAFE" --no-interactive --yes -w "$WD" -- -c "cd '$TREE'; for f in evil public relative; do echo \"\$f=\$(cat \$f 2>/dev/null || echo UNREADABLE)\"; done; test -e fifo && echo fifo=present || echo fifo=absent; echo \"vialink=\$(cat '$WORK/tree-via-link/regular.txt' 2>/dev/null || echo MISSING)\"" </dev/null 2>&1)
+elapsed=$(( $(date +%s) - start ))
+[[ "$out" == *"evil=UNREADABLE"* ]] && pass "safe-rw: a symlink to a hidden secret stays unreadable" \
+    || fail "safe-rw: the planted secret was read through a symlink ($(grep evil= <<<"$out"))"
+[[ "$out" == *"public=public-$$"* ]] && pass "safe-rw: a symlink to a visible file still works" \
+    || fail "safe-rw: legitimate symlink broken ($(grep public= <<<"$out"))"
+[[ "$out" == *"relative=regular-$$"* ]] && pass "safe-rw: a relative symlink inside the tree works" \
+    || fail "safe-rw: relative symlink broken ($(grep relative= <<<"$out"))"
+[[ "$out" == *"fifo=absent"* && "$elapsed" -lt 50 ]] && pass "safe-rw: a FIFO is skipped and does not hang inner" \
+    || fail "safe-rw: FIFO handling ($(grep fifo= <<<"$out"), ${elapsed}s)"
+[[ "$out" == *"vialink=regular-$$"* ]] && pass "safe-rw: a symlinked source is copied with its content" \
+    || fail "safe-rw: symlinked source copied empty ($(grep vialink= <<<"$out"))"
+
+# ── D. Maven with ~/.m2/settings.xml present ──────────────────────────────────
+
+section "D. Maven in a host-ro sandbox"
+
+if have mvn && [[ -f "$HOME/.m2/settings.xml" ]]; then
+    cat > "$WORK/pom.xml" <<'EOF'
+<project><modelVersion>4.0.0</modelVersion><groupId>inner.e2e</groupId><artifactId>p</artifactId><version>1</version><packaging>pom</packaging></project>
+EOF
+    out=$(in_sandbox "$HOSTRO" "cat ~/.m2/settings.xml; echo; mvn -o -q -f '$WORK/pom.xml' -Dmaven.repo.local=/tmp/m2repo validate >/tmp/mvn.log 2>&1 && echo MVN_OK || { echo MVN_FAIL; grep -E 'ERROR|FATAL' /tmp/mvn.log | head -3; }")
+    [[ "$out" == *"<settings/>"* ]] && pass "maven: ~/.m2/settings.xml reads as an empty <settings/> inside the sandbox" \
+        || fail "maven: unexpected settings.xml content inside the sandbox: $(head -1 <<<"$out")"
+    [[ "$out" == *MVN_OK* ]] && pass "maven: builds with the host settings.xml hidden" \
+        || fail "maven: build failed inside the sandbox: $out"
+else
+    skip "mvn not installed or no ~/.m2/settings.xml on this host"
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+printf "\n────────────────────────────────\n"
+printf "Result: %d passed, %d failed, %d skipped\n" "$PASS" "$FAIL" "$SKIP"
+if [[ "${#ERRORS[@]}" -gt 0 ]]; then
+    printf "\nFailed:\n"
+    for e in "${ERRORS[@]}"; do printf "  - %s\n" "$e"; done
+    exit 1
+fi
+exit 0

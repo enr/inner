@@ -733,6 +733,24 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `keyrings` | `~/.local/share/keyrings/` |
 | `onepassword-config` | `~/.config/op/` |
 | `browser-profiles` | `~/.mozilla/`, `~/.config/{google-chrome,chromium,BraveSoftware,microsoft-edge,vivaldi,opera}/` (cookies, saved passwords) |
+| `session-bus` | `/run/user/$UID/bus` (the D-Bus session bus: through it the sandbox can ask `systemd --user` to start processes **outside** the sandbox, and read the keyring) |
+| `systemd-user` | `/run/user/$UID/systemd/` (the systemd user manager's private socket — same power as above) |
+| `ssh-agent` | `/run/user/$UID/{ssh-agent.socket,openssh_agent,gcr/ssh,keyring/ssh}` (ssh-agent sockets: sign with your keys without reading them) |
+| `gpg-agent` | `/run/user/$UID/gnupg/` (gpg-agent sockets) |
+
+`keyrings` also covers `/run/user/$UID/keyring/control` (the gnome-keyring
+control socket). `ssh-keys` implies `ssh-agent`, and `gpg-keys` implies
+`gpg-agent`: a profile that already hands the sandbox the keys (to push over
+ssh or sign commits) keeps reaching the agent as it did before these sockets
+were hidden.
+
+The runtime sockets under `/run/user/$UID` are hidden because neither the
+read-only root bind nor a private network namespace stops `connect(2)` on a
+Unix socket that lives on the filesystem. The built-in agent profiles already
+mount a tmpfs over the whole `/run/user/$UID`; these entries protect the
+profiles that do not (the `shell` profiles, and yours). A tool that genuinely
+needs one of them inside the sandbox gets it back with the matching `allow`
+key.
 
 `~/.bash_history` and `~/.zsh_history` are hidden too and are **not**
 declassifiable: nothing legitimately needs the host shell history inside a
@@ -1319,6 +1337,28 @@ Run 'claude' on the host machine to renew it, then relaunch inner.
 ```
 
 To manually renew the token, run `claude auth login` on the host. If the OAuth **refresh token** is still valid, Claude will refresh silently without opening a browser; otherwise the full browser-based login flow runs.
+
+### Session bus (keyring access for token refresh)
+
+Claude reaches the OS keyring over the D-Bus session bus to refresh its token
+mid-session. The whole session bus is much more than the keyring: it carries
+`org.freedesktop.systemd1`, which starts processes in your systemd user
+instance — outside the sandbox — and every other desktop service running as
+you.
+
+So the claude capability does **not** hand the sandbox the session bus. When
+[`xdg-dbus-proxy`](https://github.com/flatpak/xdg-dbus-proxy) is installed (it
+ships with flatpak; the package is `xdg-dbus-proxy` on most distributions),
+`inner` starts it on the host for the length of the run, filtered to the one
+name the token refresh needs, `org.freedesktop.secrets`, and points the
+sandbox's `DBUS_SESSION_BUS_ADDRESS` at the proxy socket
+(`/tmp/inner-dbus/bus`). The real bus socket stays hidden.
+
+If `xdg-dbus-proxy` is missing or fails to start, `inner` falls back to the
+previous behaviour — the unfiltered bus — and prints a warning each run.
+Install `xdg-dbus-proxy` to remove the warning; or, if you knowingly want the
+whole bus inside the sandbox, add `allow = ["session-bus"]` to the profile,
+which also silences it.
 
 ### Cross-session messaging socket
 

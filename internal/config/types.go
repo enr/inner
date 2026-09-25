@@ -53,6 +53,8 @@ var ValidAllowKeys = []string{
 	"terraform-credentials", "maven-settings", "gradle-properties",
 	"helm-config", "pgpass", "mysql-config",
 	"password-store", "keyrings", "onepassword-config", "browser-profiles",
+	// Host runtime sockets under $XDG_RUNTIME_DIR (see HostPrivilegeAllowKeys).
+	"session-bus", "systemd-user", "ssh-agent", "gpg-agent",
 	// Verify-only declassification keys (no filesystem hide action).
 	"env-secrets", "shims-active", "network-policy",
 }
@@ -68,6 +70,21 @@ type SensitiveResource struct {
 	Key  string
 	Path string // absolute host path
 	Dir  bool   // true → hidden with a tmpfs overlay; false → bind of /dev/null
+}
+
+// HidePlaceholder returns the content that stands in for a hidden file when an
+// empty file would break the tool that reads it, or "" when an empty file
+// (/dev/null) is fine.
+//
+// Maven refuses to start on an empty ~/.m2/settings.xml ("Non-readable
+// settings: input contained no data"), so hiding it with /dev/null broke every
+// Maven build in a host-ro sandbox on a machine that has the file. An empty
+// <settings/> document carries no secret and keeps Maven on its defaults.
+func HidePlaceholder(r SensitiveResource) string {
+	if r.Key == "maven-settings" && filepath.Base(r.Path) == "settings.xml" {
+		return "<settings/>\n"
+	}
+	return ""
 }
 
 // SensitiveResources returns the resources the isolator hides by default, for
@@ -129,6 +146,22 @@ func SensitiveResources(home, uid string) []SensitiveResource {
 		{"browser-profiles", join(".config", "microsoft-edge"), true},
 		{"browser-profiles", join(".config", "vivaldi"), true},
 		{"browser-profiles", join(".config", "opera"), true},
+		// Host runtime sockets. The root bind makes /run/user/<uid> visible,
+		// and neither a read-only bind nor --unshare-net stops connect(2) on a
+		// Unix socket that lives on the filesystem. Behind these sockets sit
+		// services that act on the host with the user's full authority: the
+		// session bus (org.freedesktop.systemd1 starts arbitrary commands
+		// outside the sandbox, org.freedesktop.secrets hands out the keyring),
+		// the systemd user manager's private socket, and the ssh/gpg agents,
+		// which sign with keys the hide rules above keep out of reach.
+		{"session-bus", "/run/user/" + uid + "/bus", false},
+		{"systemd-user", "/run/user/" + uid + "/systemd", true},
+		{"ssh-agent", "/run/user/" + uid + "/ssh-agent.socket", false},
+		{"ssh-agent", "/run/user/" + uid + "/openssh_agent", false},
+		{"ssh-agent", "/run/user/" + uid + "/gcr/ssh", false},
+		{"ssh-agent", "/run/user/" + uid + "/keyring/ssh", false},
+		{"gpg-agent", "/run/user/" + uid + "/gnupg", true},
+		{"keyrings", "/run/user/" + uid + "/keyring/control", false},
 	}
 }
 

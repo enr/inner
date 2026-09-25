@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/enr/inner/internal/config"
 )
@@ -33,7 +34,14 @@ func applyGenericSafeMounts(rc *config.RunConfig) (func(), error) {
 		cleanup := func() { os.RemoveAll(tmp) }
 		cleanups = append(cleanups, cleanup)
 
-		if err := copyDir(m.Src, tmp); err != nil {
+		// Resolve the source itself, as a bind mount of it would: copyDir
+		// recreates a symlink rather than following it, which for the root of
+		// the copy would leave an empty directory in place of the tree.
+		src := m.Src
+		if resolved, err := filepath.EvalSymlinks(src); err == nil {
+			src = resolved
+		}
+		if err := copyDir(src, tmp); err != nil {
 			for _, fn := range cleanups {
 				fn()
 			}

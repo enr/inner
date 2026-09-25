@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/git"
@@ -84,6 +86,15 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 		cleanup()
 		return nil, fmt.Errorf(format, err)
 	}
+
+	// Placeholder content for the hidden files that must not read as empty
+	// (see config.HidePlaceholder). Shared with verify so it certifies the
+	// same mounts a run gets.
+	cleanupPlaceholders, err := writeHidePlaceholders(rc)
+	if err != nil {
+		return fail("hide placeholders: %w", err)
+	}
+	cleanups = append(cleanups, cleanupPlaceholders)
 
 	// containers.conf override for rootless podman inside the sandbox.
 	// A no-op unless nested-user-ns is allowed, and shared by both commands so
@@ -169,4 +180,39 @@ func applyGitGuard(rc *config.RunConfig) (func(), error) {
 	}
 	rc.GitGuard = gitguard.Build(rc.EffectiveGitDirMode(), writable)
 	return gitguard.Materialize(rc.GitGuard)
+}
+
+// writeHidePlaceholders writes the stand-in content for the hidden files that
+// must not read as empty (config.HidePlaceholder) and records them on rc for
+// the isolator. One small temp directory; the cleanup removes it.
+func writeHidePlaceholders(rc *config.RunConfig) (func(), error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return func() {}, nil // the isolator hides nothing under an unknown home either
+	}
+	var dir string
+	for _, r := range config.SensitiveResources(filepath.Clean(home), strconv.Itoa(os.Getuid())) {
+		content := config.HidePlaceholder(r)
+		if content == "" {
+			continue
+		}
+		if dir == "" {
+			if dir, err = os.MkdirTemp("", "inner-hide-*"); err != nil {
+				return nil, err
+			}
+		}
+		path := filepath.Join(dir, r.Key+"-"+filepath.Base(r.Path))
+		if err := os.WriteFile(path, []byte(content), 0o444); err != nil {
+			os.RemoveAll(dir)
+			return nil, err
+		}
+		if rc.HidePlaceholders == nil {
+			rc.HidePlaceholders = make(map[string]string)
+		}
+		rc.HidePlaceholders[r.Path] = path
+	}
+	if dir == "" {
+		return func() {}, nil
+	}
+	return func() { os.RemoveAll(dir) }, nil
 }

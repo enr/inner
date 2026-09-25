@@ -59,6 +59,18 @@ type RunConfig struct {
 	// Allow lists sensitive resources explicitly permitted in this sandbox.
 	// See SandboxConfig.Allow for valid keys.
 	Allow []string
+	// HideExempt are host paths from the sensitive-resource table that a
+	// capability deliberately binds back into the sandbox (the claude
+	// capability's direct session-bus passthrough). The isolator skips their
+	// hide mount so it does not cover the capability's own bind. Set only by
+	// capability handlers, never from a profile: unlike Allow, it is not a user
+	// declaration and is not shown as one.
+	HideExempt []string
+	// HidePlaceholders maps a hidden file (host path from the sensitive-resource
+	// table) to a host file whose content stands in for it, for the resources
+	// where /dev/null would break the tool (see HidePlaceholder). Written by the
+	// host-side preparation; a missing entry falls back to /dev/null.
+	HidePlaceholders map[string]string
 	// HomeMode is the filesystem model applied to $HOME, as declared in
 	// [sandbox] home. Empty means HomeHostRO. See SandboxConfig.Home.
 	HomeMode string

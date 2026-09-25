@@ -21,6 +21,13 @@ import (
 func TestMain(m *testing.M) {
 	claudeWarningWriter = io.Discard
 	claudeAutoConfirmDelay = 0
+	// A developer machine may have xdg-dbus-proxy installed: keep the tests
+	// that exercise the unfiltered passthrough independent of it. The proxy
+	// path has its own tests, which install a fake proxy explicitly.
+	dbusProxyLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	if os.Getenv(fakeDBusProxyEnv) != "" {
+		os.Exit(fakeDBusProxyMain())
+	}
 	os.Exit(m.Run())
 }
 
@@ -1057,7 +1064,7 @@ func TestCopyFile_refusesSymlink(t *testing.T) {
 	}
 }
 
-func TestCopyDir_skipsSymlinkedFile(t *testing.T) {
+func TestCopyDir_recreatesSymlinkWithoutReadingIt(t *testing.T) {
 	outside := t.TempDir()
 	secret := filepath.Join(outside, "id_rsa")
 	if err := os.WriteFile(secret, []byte("private key material"), 0o600); err != nil {
@@ -1071,6 +1078,9 @@ func TestCopyDir_skipsSymlinkedFile(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(src, "evil")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink("regular.txt", filepath.Join(src, "relative")); err != nil {
+		t.Fatal(err)
+	}
 
 	dst := filepath.Join(t.TempDir(), "dst")
 	if err := copyDir(src, dst); err != nil {
@@ -1080,7 +1090,19 @@ func TestCopyDir_skipsSymlinkedFile(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(dst, "regular.txt")); err != nil || string(data) != "fine" {
 		t.Errorf("regular file was not copied: data=%q err=%v", data, err)
 	}
-	if _, err := os.Stat(filepath.Join(dst, "evil")); !os.IsNotExist(err) {
-		t.Errorf("symlinked file was copied into the destination: err=%v", err)
+	// The link is recreated as a link — it resolves inside the sandbox, where
+	// hidden paths stay hidden — and its target's bytes are never in the copy.
+	fi, err := os.Lstat(filepath.Join(dst, "evil"))
+	if err != nil {
+		t.Fatalf("symlink not recreated: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("evil is a %s in the copy, want a symlink: the target was dereferenced", fi.Mode().Type())
+	}
+	if target, _ := os.Readlink(filepath.Join(dst, "evil")); target != secret {
+		t.Errorf("link target = %q, want %q", target, secret)
+	}
+	if target, _ := os.Readlink(filepath.Join(dst, "relative")); target != "regular.txt" {
+		t.Errorf("relative link target = %q, want it preserved", target)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -572,37 +571,6 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		// Token is fresh — skip unlock entirely (silent on the happy path).
 	}
 
-	// ── D-Bus passthrough for mid-session token refresh ───────────────────────
-	// The sandbox clears the environment. Without DBUS_SESSION_BUS_ADDRESS,
-	// Claude's libsecret cannot locate the keyring daemon and cannot refresh
-	// an expired OAuth token mid-session, causing a 401 after long sessions.
-	// We inherit only this one variable (not XDG_RUNTIME_DIR) to minimise the
-	// attack surface.
-	//
-	// Inheriting the variable is not enough on its own: the default claude
-	// profiles mount a tmpfs over /run/user/$UID (to hide the other host
-	// runtime sockets that hang Node.js at startup), which also erases the
-	// session bus socket the variable points at. So when the address is the
-	// common unix:path=... form, bind just that one socket file back into the
-	// sandbox — the bind is emitted after the tmpfs by the isolator, so it
-	// lands inside it. Mode rw because connect(2) on a Unix socket requires
-	// write permission on the socket inode; the bind exposes only the bus
-	// socket, nothing else. Abstract-socket addresses (unix:abstract=...)
-	// need no filesystem bind: the claude profiles keep the host network
-	// namespace (network = true), so those stay reachable via the env var.
-	if v := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); v != "" {
-		rc.Env.Inherit = append(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS")
-		if sock := dbusSocketPath(v); sock != "" {
-			if _, err := os.Stat(sock); err == nil {
-				rc.Mounts = append(rc.Mounts, config.Mount{
-					Src:  sock,
-					Dest: sock,
-					Mode: "rw",
-				})
-			}
-		}
-	}
-
 	// ── Cross-session messaging socket ────────────────────────────────────────
 	// Silences the "Cross-session messaging is off" warning the CLI prints at
 	// every start inside the sandbox. See prepareClaudeMessaging.
@@ -620,6 +588,14 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		Dest: claudeDir,
 		Mode: "rw",
 	})
+
+	// ── Session bus for mid-session token refresh ─────────────────────────────
+	// The sandbox clears the environment. Without DBUS_SESSION_BUS_ADDRESS,
+	// Claude's libsecret cannot locate the keyring daemon and cannot refresh
+	// an expired OAuth token mid-session, causing a 401 after long sessions.
+	// The bus is filtered down to the keyring when xdg-dbus-proxy is available
+	// — see sandbox_dbus.go for why the whole bus must not go in.
+	cleanups = append(cleanups, applyClaudeSessionBus(w, rc))
 
 	// Bind ~/.claude.json writable so claude can update UI state (numStartups,
 	// tips history, …) regardless of whether the workdir makes the home
@@ -656,71 +632,4 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 			fn()
 		}
 	}, nil
-}
-
-// ── File / dir copy helpers ───────────────────────────────────────────────────
-
-func copyFile(src, dst string) error {
-	// Lstat, not Stat: refuse to follow a symlink. src lives in a directory
-	// tree that is being copied so the sandbox gets an isolated snapshot; a
-	// symlink planted there (e.g. ~/.claude/skills/evil -> ~/.ssh/id_rsa) would
-	// otherwise have its target's contents copied in and mounted into the
-	// sandbox, bypassing the sensitive-path hiding entirely.
-	info, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing to copy %q: it is a symlink", src)
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, info.Mode())
-}
-
-// copySettingsStripped copies src to dst as JSON with keys that would start
-// external processes (enabledPlugins, mcpServers) removed. These cause MCP
-// servers to be launched at interactive startup, which hangs inside the sandbox.
-// If src doesn't exist or can't be parsed, no dst is written and the error is
-// returned; callers ignore it, leaving the clone without settings.json, which
-// is a valid fresh state (claude recreates its defaults).
-func copySettingsStripped(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	var settings map[string]json.RawMessage
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return err
-	}
-	delete(settings, "enabledPlugins")
-	delete(settings, "mcpServers")
-	out, err := json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, out, 0o644)
-}
-
-func copyDir(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		dstPath := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(dstPath, 0o755)
-		}
-		// A symlinked directory is not descended into by WalkDir, but a
-		// symlinked file still reaches here as a regular entry. Skip it rather
-		// than aborting the whole copy: see copyFile for why it must not be
-		// dereferenced.
-		if d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-		return copyFile(path, dstPath)
-	})
 }

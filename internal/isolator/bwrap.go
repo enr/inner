@@ -97,9 +97,10 @@ func isUnderHome(home, path string) bool {
 	return path == home || strings.HasPrefix(path, home+"/")
 }
 
-// isAllowed reports whether key is present in the allow list.
+// isAllowed reports whether key is enabled by the allow list, directly or
+// through a key that implies it (config.AllowKeyEnabled).
 func isAllowed(allow []string, key string) bool {
-	return slices.Contains(allow, key)
+	return config.AllowKeyEnabled(allow, key)
 }
 
 // isUnderTmpfs reports whether path falls inside any tmpfs mount in mounts.
@@ -468,6 +469,9 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			if isAllowed(cfg.Allow, r.Key) {
 				continue
 			}
+			if slices.Contains(cfg.HideExempt, r.Path) {
+				continue
+			}
 			if !b.pathExists(r.Path) {
 				continue
 			}
@@ -504,9 +508,12 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 				// silently skip the mount, leaving sensitive content readable.
 				return nil, fmt.Errorf("hide %s: cannot resolve %s: %w", r.Key, r.Path, err)
 			}
-			if r.Dir {
+			switch placeholder, ok := cfg.HidePlaceholders[r.Path]; {
+			case r.Dir:
 				args = append(args, "--tmpfs", bindPath)
-			} else {
+			case ok:
+				args = append(args, "--ro-bind", placeholder, bindPath)
+			default:
 				args = append(args, "--bind", "/dev/null", bindPath)
 			}
 		}

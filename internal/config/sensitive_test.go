@@ -94,15 +94,92 @@ func TestSensitiveResources_keysAreDeclassifiable(t *testing.T) {
 // which is what makes "network + credentials" reportable by the validator.
 func TestSensitiveResources_credentialKeysListed(t *testing.T) {
 	// Keys whose resource is not a readable secret file/dir on its own.
-	notCredentials := []string{
-		"docker-socket", "podman-socket", "bash-history", "zsh-history",
-	}
+	notCredentials := append([]string{"bash-history", "zsh-history"}, HostPrivilegeAllowKeys...)
 	for _, r := range SensitiveResources("/home/tester", "1000") {
 		if slices.Contains(notCredentials, r.Key) {
 			continue
 		}
 		if !slices.Contains(CredentialAllowKeys, r.Key) {
 			t.Errorf("hide key %q is missing from CredentialAllowKeys: allowing it with network = true would not be reported", r.Key)
+		}
+	}
+}
+
+// wellKnownRuntimeSockets is the canary list for $XDG_RUNTIME_DIR: sockets a
+// sandboxed process could otherwise connect to through the read-only root
+// bind. Paths are relative to /run/user/<uid>.
+var wellKnownRuntimeSockets = []string{
+	"bus",                     // session D-Bus: systemd1, secrets
+	"systemd/private",         // systemd user manager
+	"ssh-agent.socket",        // systemd ssh-agent.service
+	"openssh_agent",           // openssh-agent unit on some distributions
+	"gcr/ssh",                 // GNOME gcr-ssh-agent
+	"keyring/ssh",             // gnome-keyring ssh component
+	"keyring/control",         // gnome-keyring control socket
+	"gnupg/S.gpg-agent",       // gpg-agent, default homedir
+	"gnupg/d.abc/S.gpg-agent", // gpg-agent, non-default homedir
+}
+
+func TestSensitiveResources_coverRuntimeSockets(t *testing.T) {
+	resources := SensitiveResources("/home/tester", "1000")
+	paths := make([]string, 0, len(resources))
+	for _, r := range resources {
+		paths = append(paths, r.Path)
+	}
+	for _, rel := range wellKnownRuntimeSockets {
+		full := filepath.Join("/run/user/1000", rel)
+		if !PathCoveredBy(paths, full) {
+			t.Errorf("runtime socket %q is not hidden by default: add an entry to SensitiveResources", full)
+		}
+	}
+}
+
+// Every hide key is either a readable credential or a host privilege, so that
+// both the "network + credentials" warning and the remote-profile hardening
+// know about it; and every host-privilege key must be a valid allow key.
+func TestHostPrivilegeAllowKeys(t *testing.T) {
+	for _, key := range HostPrivilegeAllowKeys {
+		if !slices.Contains(ValidAllowKeys, key) {
+			t.Errorf("host-privilege key %q is not in ValidAllowKeys", key)
+		}
+		if slices.Contains(CredentialAllowKeys, key) {
+			t.Errorf("key %q is both a credential and a host-privilege key", key)
+		}
+	}
+}
+
+func TestHidePlaceholder(t *testing.T) {
+	for _, r := range SensitiveResources("/home/tester", "1000") {
+		got := HidePlaceholder(r)
+		want := ""
+		if r.Path == "/home/tester/.m2/settings.xml" {
+			want = "<settings/>\n"
+		}
+		if got != want {
+			t.Errorf("HidePlaceholder(%s) = %q, want %q", r.Path, got, want)
+		}
+		if got != "" && r.Dir {
+			t.Errorf("%s: a directory cannot have a file placeholder", r.Path)
+		}
+	}
+}
+
+func TestAllowKeyEnabled(t *testing.T) {
+	cases := []struct {
+		allow []string
+		key   string
+		want  bool
+	}{
+		{[]string{"ssh-agent"}, "ssh-agent", true},
+		{[]string{"ssh-keys"}, "ssh-agent", true},
+		{[]string{"gpg-keys"}, "gpg-agent", true},
+		{[]string{"ssh-agent"}, "ssh-keys", false}, // not the other way round
+		{[]string{"ssh-keys"}, "session-bus", false},
+		{nil, "ssh-agent", false},
+	}
+	for _, tc := range cases {
+		if got := AllowKeyEnabled(tc.allow, tc.key); got != tc.want {
+			t.Errorf("AllowKeyEnabled(%v, %q) = %v, want %v", tc.allow, tc.key, got, tc.want)
 		}
 	}
 }

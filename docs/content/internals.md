@@ -44,16 +44,31 @@ environment is forwarded (`inherit_all`), which credentials stay visible
 command on my machine with my secrets", which is precisely what the sandbox
 exists to prevent.
 
-The boundary lives in `cmd/inner/remote_profile.go` and is applied in
-`runSandbox` **after** `Loader.Build()` (so it sees the merged config, `extends`
-included) and **before** `applyOverrides` (so the user's own CLI flags are
-applied on top of the hardened profile, never underneath it):
+The boundary has two halves. `Loader.BuildUntrusted()` (`internal/config`)
+loads the profile and refuses what cannot be undone once a `RunConfig` exists;
+`cmd/inner/remote_profile.go` then hardens the built config and asks for
+consent. Both run **before** `applyOverrides`, so the user's own CLI flags are
+applied on top of the hardened profile, never underneath it. The profile is
+validated before the prompt, so a profile with errors is refused without asking:
 
 ```
-fetch bytes ─► --sha256 pin ─► temp file ─► Loader.Build ─► gateRemoteProfile ─► applyOverrides ─► …
-                                                             │
-                                          hardenRemoteProfile ┴ consent prompt
+fetch bytes ─► --sha256 pin ─► temp file ─► Loader.BuildUntrusted ─► validate ─► gateRemoteProfile ─► applyOverrides ─► …
+                                                                                   │
+                                                                hardenRemoteProfile ┴ consent prompt
 ```
+
+### What loading refuses
+
+`BuildUntrusted` differs from `Build` in five places, each reported in the
+prompt:
+
+| Setting in the profile | Result | Why |
+|------------------------|--------|-----|
+| `$VAR` / `${VAR}` in any profile value (`[env] set`, `path_prepend`, mounts, `home_allow`) | resolves to empty, except `$HOME`, `$USER`, `$UID` | `set = { X = "${GITHUB_TOKEN}" }` would copy a host secret into the sandbox, bypassing every `inherit` rule |
+| `[output] log` | ignored, the global `log_dir` applies | `inner` writes the sandbox output there **from the host**: a profile choosing `~/.bashrc.d` gets its output sourced by your next shell |
+| `workspaces_path` | ignored, the global one applies | `inner` creates directories under it on the host |
+| `[entrypoint] workdir` | ignored; pass `-w` | it is bind-mounted read-write: `~/.config/systemd/user` or `~/.local/bin` there is persistence on the host |
+| `[sandbox] clipboard = true` | ignored | the display socket lets a client type into the host session |
 
 ### What the hardening removes
 
@@ -63,9 +78,10 @@ returns one line per change, which the gate prints:
 | Setting requested by the profile | Result | Why |
 |----------------------------------|--------|-----|
 | `[env] inherit_all = true` | ignored | forwards every exported host secret (`AWS_*`, `GITHUB_TOKEN`, …) |
-| `[env] inherit = [...]` with a secret-looking name (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*PASSWD*`, `*CREDENTIAL*`, `*KEY*`, `*AUTH*`, `*SESSION*`) | entry dropped | otherwise the profile just names the secret it wants instead of asking for all of them |
+| `[env] inherit = [...]` with a secret-looking name (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*PASSWD*`, `*CREDENTIAL*`, `*KEY*`, `*AUTH*`, `*SESSION*`, `*PRIVATE*`, `*COOKIE*`, `*DSN*`, `*DATABASE_URL*`, `*CONNECTION_STRING*`, or a `PAT` / `PASS` word) | entry dropped | otherwise the profile just names the secret it wants instead of asking for all of them |
 | `[sandbox] allow` key in `config.CredentialAllowKeys` | key dropped | un-hides a readable credential from the [hide table](#sensitive-resource-hiding) |
-| `[sandbox] allow = ["docker-socket" \| "podman-socket" \| "nested-user-ns"]` | key dropped | a container socket is root on the host; nested user namespaces grant caps |
+| `[sandbox] allow` key in `config.HostPrivilegeAllowKeys` (`docker-socket`, `podman-socket`, `nested-user-ns`, `session-bus`, `systemd-user`, `ssh-agent`, `gpg-agent`) | key dropped | a container socket is root on the host; nested user namespaces grant caps; the session bus and systemd user manager start processes outside the sandbox; the agents sign with your keys |
+| a `[mounts]` entry whose source covers or lies inside a hidden path and whose destination is elsewhere (`"~/.ssh" = { dest = "/tmp/k" }`, `"/" = { dest = "/tmp/root" }`) | mount dropped | the hide rules act on the host path; relocating it escapes them. The source is resolved through symlinks first |
 | `[sandbox] pid_namespace = false` | ignored | host `/proc/<pid>/environ` is readable, defeating `--clearenv` (see [process isolation](#process-isolation---unshare-pid)) |
 | `[sandbox] git_dir = "rw"` | set to `"protected"` | the sandbox could plant hooks or a `core.fsmonitor` that the host runs on the next git command (see [git repository protection](#git-repository-protection)) |
 
@@ -74,11 +90,18 @@ downgrade an `inner verify` check and carry no host privilege, so they survive.
 
 ### What the hardening deliberately keeps
 
-`network`, the entrypoint and its args, mounts and capabilities are **not**
-stripped. They are what a profile exists to describe — forcing `network = false`
+`network`, the entrypoint and its args, mounts (other than relocated secrets),
+`home_allow`, `[env] set` and capabilities are **not** stripped. They are what a profile exists to describe — forcing `network = false`
 would break every remote agent profile — and the hardening above already removes
 the host secrets that make an open network an exfiltration channel. They are
-reported by `remoteProfileRequests` and gated by consent instead.
+reported by `remoteProfileRequests` and gated by consent instead — every mount,
+read-only ones included, every `home_allow` entry and every `[env] set` value.
+Text from the profile is printed with control characters escaped, so a crafted
+value cannot rewrite the prompt on the terminal.
+
+`TestRemoteFieldPolicy_coversEveryProfileField` classifies every profile field
+as hardened, shown or inert, and fails when a new field is added without a
+decision: a new field is otherwise trusted from a URL the moment it exists.
 
 ### Consent and pinning
 
@@ -93,7 +116,9 @@ blocks on `run this downloaded profile? [y/N]`.
   non-interactive run: with no terminal on stdin and no flag, the run is
   **refused**, never silently accepted (`stdinIsTerminal`, overridable in tests).
 - `--trust-remote` skips the hardening *and* counts as consent.
-- `--dry-run` prints the summary and proceeds — nothing executes.
+- `--dry-run` prints the summary and proceeds: nothing runs in the sandbox. The
+  host-side preparation still happens (temporary copies for capabilities and
+  `safe-rw` mounts, removed at exit), on the already-hardened profile.
 - `--sha256 <digest>` (bare or `sha256:`-prefixed, any case) is checked against
   the fetched bytes before they are ever parsed; a mismatch aborts. The digest is
   printed after every download, so pinning is a copy-paste. Passing `--sha256`
@@ -456,7 +481,7 @@ The following resources are hidden by default:
 | `cargo-credentials` | `~/.cargo/credentials`, `~/.cargo/credentials.toml` | `--bind /dev/null` |
 | `gh-config` | `~/.config/gh` | `--tmpfs` (empty dir) |
 | `terraform-credentials` | `~/.terraform.d` | `--tmpfs` (empty dir) |
-| `maven-settings` | `~/.m2/settings.xml`, `~/.m2/settings-security.xml` | `--bind /dev/null` |
+| `maven-settings` | `~/.m2/settings.xml`, `~/.m2/settings-security.xml` | `--ro-bind` of an empty `<settings/>` document (settings.xml), `--bind /dev/null` (settings-security.xml) |
 | `gradle-properties` | `~/.gradle/gradle.properties` | `--bind /dev/null` |
 | `helm-config` | `~/.config/helm` | `--tmpfs` (empty dir) |
 | `pgpass` | `~/.pgpass` | `--bind /dev/null` |
@@ -465,9 +490,29 @@ The following resources are hidden by default:
 | `keyrings` | `~/.local/share/keyrings` | `--tmpfs` (empty dir) |
 | `onepassword-config` | `~/.config/op` | `--tmpfs` (empty dir) |
 | `browser-profiles` | `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware`, `~/.config/microsoft-edge`, `~/.config/vivaldi`, `~/.config/opera` | `--tmpfs` (empty dir) |
+| `session-bus` | `/run/user/<uid>/bus` | `--bind /dev/null` |
+| `systemd-user` | `/run/user/<uid>/systemd` | `--tmpfs` (empty dir) |
+| `ssh-agent` | `/run/user/<uid>/ssh-agent.socket`, `/run/user/<uid>/openssh_agent`, `/run/user/<uid>/gcr/ssh`, `/run/user/<uid>/keyring/ssh` | `--bind /dev/null` |
+| `gpg-agent` | `/run/user/<uid>/gnupg` | `--tmpfs` (empty dir) |
+| `keyrings` | `/run/user/<uid>/keyring/control` | `--bind /dev/null` |
+
+The `/run/user/<uid>` entries are sockets, not files: the root bind is
+read-only, but `connect(2)` on a Unix socket does not need a writable mount,
+and `--unshare-net` does not cover sockets that live on the filesystem. Before
+these entries a `network = false`, `home = "host-ro"` sandbox could reach the
+session bus and ask `org.freedesktop.systemd1` to run a command on the host.
+`inner verify` judges these entries by whether `connect(2)` succeeds, not by
+file size (every socket has size 0).
 
 A key may cover several paths (`browser-profiles`, `maven-settings`): all of
 them are hidden, and listing the key in `allow` un-hides all of them.
+
+`~/.m2/settings.xml` gets an empty `<settings/>` document instead of
+`/dev/null`: Maven refuses to start on a settings file it cannot read or that is
+empty ("Non-readable settings"), so `/dev/null` broke every Maven build in a
+`host-ro` sandbox on a machine that has the file. The placeholder is written by
+the host-side preparation (`config.HidePlaceholder`), and `inner verify` reads
+it as hidden.
 
 Only the credential files of `~/.m2` and `~/.gradle` are hidden, not the whole
 directory: the rest is the local artifact cache, and hiding it would break

@@ -1,11 +1,19 @@
 package sandbox
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/enr/inner/internal/config"
 )
+
+// noSuchUID points the /run/user/<uid> entries of the hide list at a runtime
+// directory that exists on no host, so the tests do not depend on whether the
+// machine running them has a session bus or a gpg-agent.
+const noSuchUID = "4294967294"
 
 func resultByID(results []CheckResult, id string) (CheckResult, bool) {
 	for _, r := range results {
@@ -19,7 +27,7 @@ func resultByID(results []CheckResult, id string) (CheckResult, bool) {
 // A home where nothing was planted looks exactly like a correctly hidden one:
 // every derived check passes.
 func TestCheckSensitiveResources_passOnEmptyHome(t *testing.T) {
-	c := &Checker{HomeDir: t.TempDir()}
+	c := &Checker{HomeDir: t.TempDir(), UID: noSuchUID}
 	for _, r := range c.checkSensitiveResources() {
 		if !r.Passed {
 			t.Errorf("check %q failed on an empty home: %s", r.ID, r.Detail)
@@ -131,5 +139,76 @@ func TestRun_sensitiveResource_declassifiedByAllow(t *testing.T) {
 	}
 	if !r.AllowOverride || !r.Passed || r.Severity != SeverityInfo {
 		t.Errorf("pgpass = %+v, want passed INFO with AllowOverride", r)
+	}
+}
+
+// A socket is judged by connect(2), not by size: every socket has size 0, so
+// the size test alone would report a live session bus as hidden.
+func TestResourceExposed_socket(t *testing.T) {
+	dir, err := os.MkdirTemp("", "inner-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "bus")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Skipf("cannot listen on a unix socket here: %v", err)
+	}
+	c := &Checker{}
+	res := config.SensitiveResource{Key: "session-bus", Path: sock}
+
+	if exposed, detail := c.resourceExposed(res); !exposed {
+		t.Error("a socket with a live listener must be reported as exposed")
+	} else if !strings.Contains(detail, "accepts connections") {
+		t.Errorf("detail = %q", detail)
+	}
+
+	ln.Close() // Go removes the socket file on Close; recreate a dead one
+	if _, err := os.Stat(sock); err == nil {
+		if exposed, _ := c.resourceExposed(res); exposed {
+			t.Error("a socket nobody listens on must not be reported as exposed")
+		}
+	}
+
+	// /dev/null is what the isolator binds over a hidden socket.
+	if exposed, _ := c.resourceExposed(config.SensitiveResource{Key: "session-bus", Path: os.DevNull}); exposed {
+		t.Error("/dev/null (a hidden socket) must not be reported as exposed")
+	}
+}
+
+func TestCheckSensitiveResources_runtimeKeysAreHighSeverity(t *testing.T) {
+	results := (&Checker{HomeDir: t.TempDir(), UID: noSuchUID}).checkSensitiveResources()
+	for _, key := range []string{"session-bus", "systemd-user", "ssh-agent", "gpg-agent"} {
+		r, ok := resultByID(results, key)
+		if !ok {
+			t.Errorf("no %s check produced", key)
+			continue
+		}
+		if r.Severity != SeverityHigh {
+			t.Errorf("%s severity = %v, want HIGH", key, r.Severity)
+		}
+	}
+}
+
+// ~/.m2/settings.xml is hidden with a <settings/> placeholder, not /dev/null
+// (Maven refuses an empty file): verify must read the placeholder as hidden,
+// and a real settings file as exposed.
+func TestCheckSensitiveResources_mavenPlaceholderIsHidden(t *testing.T) {
+	home := t.TempDir()
+	settings := filepath.Join(home, ".m2", "settings.xml")
+	os.MkdirAll(filepath.Dir(settings), 0o700) //nolint:errcheck
+
+	os.WriteFile(settings, []byte("<settings/>\n"), 0o444) //nolint:errcheck
+	r, _ := resultByID((&Checker{HomeDir: home, UID: noSuchUID}).checkSensitiveResources(), "maven-settings")
+	if !r.Passed {
+		t.Errorf("the placeholder was reported as exposed: %s", r.Detail)
+	}
+
+	os.Chmod(settings, 0o644)                                                                                                //nolint:errcheck
+	os.WriteFile(settings, []byte("<settings><servers><server><password>x</password></server></servers></settings>"), 0o644) //nolint:errcheck
+	r, _ = resultByID((&Checker{HomeDir: home, UID: noSuchUID}).checkSensitiveResources(), "maven-settings")
+	if r.Passed {
+		t.Error("a real settings.xml was reported as hidden")
 	}
 }
