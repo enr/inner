@@ -481,7 +481,7 @@ The following resources are hidden by default:
 | `cargo-credentials` | `~/.cargo/credentials`, `~/.cargo/credentials.toml` | `--bind /dev/null` |
 | `gh-config` | `~/.config/gh` | `--tmpfs` (empty dir) |
 | `terraform-credentials` | `~/.terraform.d` | `--tmpfs` (empty dir) |
-| `maven-settings` | `~/.m2/settings.xml`, `~/.m2/settings-security.xml` | `--bind /dev/null` |
+| `maven-settings` | `~/.m2/settings.xml`, `~/.m2/settings-security.xml` | `--ro-bind` of an empty `<settings/>` document (settings.xml), `--bind /dev/null` (settings-security.xml) |
 | `gradle-properties` | `~/.gradle/gradle.properties` | `--bind /dev/null` |
 | `helm-config` | `~/.config/helm` | `--tmpfs` (empty dir) |
 | `pgpass` | `~/.pgpass` | `--bind /dev/null` |
@@ -506,6 +506,13 @@ file size (every socket has size 0).
 
 A key may cover several paths (`browser-profiles`, `maven-settings`): all of
 them are hidden, and listing the key in `allow` un-hides all of them.
+
+`~/.m2/settings.xml` gets an empty `<settings/>` document instead of
+`/dev/null`: Maven refuses to start on a settings file it cannot read or that is
+empty ("Non-readable settings"), so `/dev/null` broke every Maven build in a
+`host-ro` sandbox on a machine that has the file. The placeholder is written by
+the host-side preparation (`config.HidePlaceholder`), and `inner verify` reads
+it as hidden.
 
 Only the credential files of `~/.m2` and `~/.gradle` are hidden, not the whole
 directory: the rest is the local artifact cache, and hiding it would break

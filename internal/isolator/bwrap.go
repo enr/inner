@@ -507,9 +507,12 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 				// silently skip the mount, leaving sensitive content readable.
 				return nil, fmt.Errorf("hide %s: cannot resolve %s: %w", r.Key, r.Path, err)
 			}
-			if r.Dir {
+			switch placeholder, ok := cfg.HidePlaceholders[r.Path]; {
+			case r.Dir:
 				args = append(args, "--tmpfs", bindPath)
-			} else {
+			case ok:
+				args = append(args, "--ro-bind", placeholder, bindPath)
+			default:
 				args = append(args, "--bind", "/dev/null", bindPath)
 			}
 		}

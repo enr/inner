@@ -82,3 +82,27 @@ func TestBuild_hideExempt(t *testing.T) {
 		t.Errorf("exemption leaked to another resource: %v", args)
 	}
 }
+
+// A hidden file with a placeholder is covered by the placeholder, read-only;
+// without one it falls back to /dev/null.
+func TestBuild_hidePlaceholder(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	settings := home + "/.m2/settings.xml"
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+
+	args := cmdArgs(t, iso, config.RunConfig{
+		HidePlaceholders: map[string]string{settings: "/tmp/inner-hide-x/maven-settings-settings.xml"},
+		Entrypoint:       config.Entrypoint{Cmd: "sh"},
+	})
+	if !hasSeq(args, "--ro-bind", "/tmp/inner-hide-x/maven-settings-settings.xml", settings) {
+		t.Errorf("expected the placeholder bound over %s, got %v", settings, args)
+	}
+	if hasSeq(args, "--bind", "/dev/null", settings) {
+		t.Errorf("/dev/null bound over %s despite a placeholder", settings)
+	}
+
+	args = cmdArgs(t, iso, config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "sh"}})
+	if !hasSeq(args, "--bind", "/dev/null", settings) {
+		t.Errorf("without a placeholder, expected /dev/null over %s, got %v", settings, args)
+	}
+}

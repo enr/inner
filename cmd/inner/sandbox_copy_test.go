@@ -143,3 +143,27 @@ func TestCopyFile_symlinkErrorIsActionable(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestWriteHidePlaceholders(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rc := &config.RunConfig{}
+	cleanup, err := writeHidePlaceholders(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, ok := rc.HidePlaceholders[filepath.Join(home, ".m2", "settings.xml")]
+	if !ok {
+		t.Fatalf("no placeholder for ~/.m2/settings.xml: %v", rc.HidePlaceholders)
+	}
+	if data, _ := os.ReadFile(src); string(data) != "<settings/>\n" {
+		t.Errorf("placeholder content = %q", data)
+	}
+	if len(rc.HidePlaceholders) != 1 {
+		t.Errorf("placeholders = %v, want only settings.xml", rc.HidePlaceholders)
+	}
+	cleanup()
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Errorf("placeholder left behind: %v", err)
+	}
+}

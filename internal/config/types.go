@@ -72,6 +72,21 @@ type SensitiveResource struct {
 	Dir  bool   // true → hidden with a tmpfs overlay; false → bind of /dev/null
 }
 
+// HidePlaceholder returns the content that stands in for a hidden file when an
+// empty file would break the tool that reads it, or "" when an empty file
+// (/dev/null) is fine.
+//
+// Maven refuses to start on an empty ~/.m2/settings.xml ("Non-readable
+// settings: input contained no data"), so hiding it with /dev/null broke every
+// Maven build in a host-ro sandbox on a machine that has the file. An empty
+// <settings/> document carries no secret and keeps Maven on its defaults.
+func HidePlaceholder(r SensitiveResource) string {
+	if r.Key == "maven-settings" && filepath.Base(r.Path) == "settings.xml" {
+		return "<settings/>\n"
+	}
+	return ""
+}
+
 // SensitiveResources returns the resources the isolator hides by default, for
 // a given home directory and numeric uid. It is the single source of truth for
 // the hide list: the isolator emits the mounts, the profile validator uses it

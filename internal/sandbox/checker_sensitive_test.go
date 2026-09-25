@@ -190,3 +190,25 @@ func TestCheckSensitiveResources_runtimeKeysAreHighSeverity(t *testing.T) {
 		}
 	}
 }
+
+// ~/.m2/settings.xml is hidden with a <settings/> placeholder, not /dev/null
+// (Maven refuses an empty file): verify must read the placeholder as hidden,
+// and a real settings file as exposed.
+func TestCheckSensitiveResources_mavenPlaceholderIsHidden(t *testing.T) {
+	home := t.TempDir()
+	settings := filepath.Join(home, ".m2", "settings.xml")
+	os.MkdirAll(filepath.Dir(settings), 0o700) //nolint:errcheck
+
+	os.WriteFile(settings, []byte("<settings/>\n"), 0o444) //nolint:errcheck
+	r, _ := resultByID((&Checker{HomeDir: home, UID: noSuchUID}).checkSensitiveResources(), "maven-settings")
+	if !r.Passed {
+		t.Errorf("the placeholder was reported as exposed: %s", r.Detail)
+	}
+
+	os.Chmod(settings, 0o644)                                                                                                //nolint:errcheck
+	os.WriteFile(settings, []byte("<settings><servers><server><password>x</password></server></servers></settings>"), 0o644) //nolint:errcheck
+	r, _ = resultByID((&Checker{HomeDir: home, UID: noSuchUID}).checkSensitiveResources(), "maven-settings")
+	if r.Passed {
+		t.Error("a real settings.xml was reported as hidden")
+	}
+}

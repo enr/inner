@@ -147,3 +147,19 @@ func TestHostPrivilegeAllowKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestHidePlaceholder(t *testing.T) {
+	for _, r := range SensitiveResources("/home/tester", "1000") {
+		got := HidePlaceholder(r)
+		want := ""
+		if r.Path == "/home/tester/.m2/settings.xml" {
+			want = "<settings/>\n"
+		}
+		if got != want {
+			t.Errorf("HidePlaceholder(%s) = %q, want %q", r.Path, got, want)
+		}
+		if got != "" && r.Dir {
+			t.Errorf("%s: a directory cannot have a file placeholder", r.Path)
+		}
+	}
+}

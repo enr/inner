@@ -66,6 +66,11 @@ type RunConfig struct {
 	// capability handlers, never from a profile: unlike Allow, it is not a user
 	// declaration and is not shown as one.
 	HideExempt []string
+	// HidePlaceholders maps a hidden file (host path from the sensitive-resource
+	// table) to a host file whose content stands in for it, for the resources
+	// where /dev/null would break the tool (see HidePlaceholder). Written by the
+	// host-side preparation; a missing entry falls back to /dev/null.
+	HidePlaceholders map[string]string
 	// HomeMode is the filesystem model applied to $HOME, as declared in
 	// [sandbox] home. Empty means HomeHostRO. See SandboxConfig.Home.
 	HomeMode string

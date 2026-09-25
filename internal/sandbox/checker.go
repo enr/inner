@@ -733,6 +733,13 @@ func (c *Checker) resourceExposed(res config.SensitiveResource) (bool, string) {
 	if info.Size() == 0 {
 		return false, ""
 	}
+	// A hidden file may be a placeholder rather than /dev/null (see
+	// config.HidePlaceholder): that exact content is the hidden state.
+	if placeholder := config.HidePlaceholder(res); placeholder != "" && info.Size() == int64(len(placeholder)) {
+		if data, err := os.ReadFile(res.Path); err == nil && string(data) == placeholder {
+			return false, ""
+		}
+	}
 	return true, res.Path + " found"
 }
 
