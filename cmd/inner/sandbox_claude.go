@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -633,71 +632,4 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 			fn()
 		}
 	}, nil
-}
-
-// ── File / dir copy helpers ───────────────────────────────────────────────────
-
-func copyFile(src, dst string) error {
-	// Lstat, not Stat: refuse to follow a symlink. src lives in a directory
-	// tree that is being copied so the sandbox gets an isolated snapshot; a
-	// symlink planted there (e.g. ~/.claude/skills/evil -> ~/.ssh/id_rsa) would
-	// otherwise have its target's contents copied in and mounted into the
-	// sandbox, bypassing the sensitive-path hiding entirely.
-	info, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing to copy %q: it is a symlink", src)
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, info.Mode())
-}
-
-// copySettingsStripped copies src to dst as JSON with keys that would start
-// external processes (enabledPlugins, mcpServers) removed. These cause MCP
-// servers to be launched at interactive startup, which hangs inside the sandbox.
-// If src doesn't exist or can't be parsed, no dst is written and the error is
-// returned; callers ignore it, leaving the clone without settings.json, which
-// is a valid fresh state (claude recreates its defaults).
-func copySettingsStripped(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	var settings map[string]json.RawMessage
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return err
-	}
-	delete(settings, "enabledPlugins")
-	delete(settings, "mcpServers")
-	out, err := json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, out, 0o644)
-}
-
-func copyDir(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		dstPath := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(dstPath, 0o755)
-		}
-		// A symlinked directory is not descended into by WalkDir, but a
-		// symlinked file still reaches here as a regular entry. Skip it rather
-		// than aborting the whole copy: see copyFile for why it must not be
-		// dereferenced.
-		if d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-		return copyFile(path, dstPath)
-	})
 }
