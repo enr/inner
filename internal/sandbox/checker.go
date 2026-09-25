@@ -189,6 +189,7 @@ type Checker struct {
 	UsrDir        string                                                                 // defaults to "/usr"
 	ShimMountPath string                                                                 // defaults to "/tmp/inner-shims"
 	MountInfoPath string                                                                 // defaults to "/proc/self/mountinfo"
+	UID           string                                                                 // defaults to os.Getuid(); selects /run/user/<uid> in the hide list
 	dialFn        func(network, address string, timeout time.Duration) (net.Conn, error) // defaults to net.DialTimeout
 }
 
@@ -205,6 +206,13 @@ func (c *Checker) homeDir() string {
 	}
 	home, _ := os.UserHomeDir()
 	return home
+}
+
+func (c *Checker) uid() string {
+	if c.UID != "" {
+		return c.UID
+	}
+	return strconv.Itoa(os.Getuid())
 }
 
 func (c *Checker) usrDir() string {
@@ -657,7 +665,7 @@ var dedicatedResourceKeys = []string{
 // (size 0), and a path absent on the host is absent here too.
 func (c *Checker) checkSensitiveResources() []CheckResult {
 	home := c.homeDir()
-	resources := config.SensitiveResources(home, strconv.Itoa(os.Getuid()))
+	resources := config.SensitiveResources(home, c.uid())
 
 	var order []string
 	byKey := map[string][]config.SensitiveResource{}
@@ -674,7 +682,7 @@ func (c *Checker) checkSensitiveResources() []CheckResult {
 	results := make([]CheckResult, 0, len(order))
 	for _, key := range order {
 		severity := SeverityMedium
-		if slices.Contains(config.CredentialAllowKeys, key) {
+		if slices.Contains(config.CredentialAllowKeys, key) || slices.Contains(config.HostPrivilegeAllowKeys, key) {
 			severity = SeverityHigh
 		}
 		r := CheckResult{
@@ -685,7 +693,7 @@ func (c *Checker) checkSensitiveResources() []CheckResult {
 			Passed:   true,
 		}
 		for _, res := range byKey[key] {
-			if exposed, detail := resourceExposed(res); exposed {
+			if exposed, detail := c.resourceExposed(res); exposed {
 				r.Passed = false
 				r.Detail = tildify(home, detail)
 				break
@@ -698,7 +706,11 @@ func (c *Checker) checkSensitiveResources() []CheckResult {
 
 // resourceExposed reports whether a hidden resource still carries content
 // inside the sandbox, and which path proves it.
-func resourceExposed(res config.SensitiveResource) (bool, string) {
+//
+// A Unix socket has size 0 whether it is hidden or not, so it is judged by
+// what matters instead: whether connect(2) reaches a listener. A hidden socket
+// is /dev/null (a character device), so it never gets that far.
+func (c *Checker) resourceExposed(res config.SensitiveResource) (bool, string) {
 	if res.Dir {
 		entries, err := os.ReadDir(res.Path)
 		if err != nil || len(entries) == 0 {
@@ -707,7 +719,18 @@ func resourceExposed(res config.SensitiveResource) (bool, string) {
 		return true, fmt.Sprintf("%s not empty (%d entries)", res.Path, len(entries))
 	}
 	info, err := os.Stat(res.Path)
-	if err != nil || info.IsDir() || info.Size() == 0 {
+	if err != nil || info.IsDir() {
+		return false, ""
+	}
+	if info.Mode()&os.ModeSocket != 0 {
+		conn, err := c.dial("unix", res.Path, time.Second)
+		if err != nil {
+			return false, ""
+		}
+		conn.Close()
+		return true, res.Path + " accepts connections"
+	}
+	if info.Size() == 0 {
 		return false, ""
 	}
 	return true, res.Path + " found"

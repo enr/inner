@@ -465,6 +465,19 @@ The following resources are hidden by default:
 | `keyrings` | `~/.local/share/keyrings` | `--tmpfs` (empty dir) |
 | `onepassword-config` | `~/.config/op` | `--tmpfs` (empty dir) |
 | `browser-profiles` | `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware`, `~/.config/microsoft-edge`, `~/.config/vivaldi`, `~/.config/opera` | `--tmpfs` (empty dir) |
+| `session-bus` | `/run/user/<uid>/bus` | `--bind /dev/null` |
+| `systemd-user` | `/run/user/<uid>/systemd` | `--tmpfs` (empty dir) |
+| `ssh-agent` | `/run/user/<uid>/ssh-agent.socket`, `/run/user/<uid>/openssh_agent`, `/run/user/<uid>/gcr/ssh`, `/run/user/<uid>/keyring/ssh` | `--bind /dev/null` |
+| `gpg-agent` | `/run/user/<uid>/gnupg` | `--tmpfs` (empty dir) |
+| `keyrings` | `/run/user/<uid>/keyring/control` | `--bind /dev/null` |
+
+The `/run/user/<uid>` entries are sockets, not files: the root bind is
+read-only, but `connect(2)` on a Unix socket does not need a writable mount,
+and `--unshare-net` does not cover sockets that live on the filesystem. Before
+these entries a `network = false`, `home = "host-ro"` sandbox could reach the
+session bus and ask `org.freedesktop.systemd1` to run a command on the host.
+`inner verify` judges these entries by whether `connect(2)` succeeds, not by
+file size (every socket has size 0).
 
 A key may cover several paths (`browser-profiles`, `maven-settings`): all of
 them are hidden, and listing the key in `allow` un-hides all of them.

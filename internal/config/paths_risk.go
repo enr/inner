@@ -80,3 +80,14 @@ var CredentialAllowKeys = []string{
 	"helm-config", "pgpass", "mysql-config",
 	"password-store", "keyrings", "onepassword-config", "browser-profiles",
 }
+
+// HostPrivilegeAllowKeys are the [sandbox] allow keys that hand the sandbox a
+// channel to act on the host with the user's authority, rather than a secret
+// to read: container sockets, the nested user namespace, the session bus and
+// systemd user manager (both can start processes outside the sandbox), and
+// the ssh/gpg agents (they sign with keys the sandbox cannot otherwise see).
+// A profile downloaded from a URL never gets to choose them.
+var HostPrivilegeAllowKeys = []string{
+	"docker-socket", "podman-socket", "nested-user-ns",
+	"session-bus", "systemd-user", "ssh-agent", "gpg-agent",
+}

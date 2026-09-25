@@ -572,37 +572,6 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		// Token is fresh — skip unlock entirely (silent on the happy path).
 	}
 
-	// ── D-Bus passthrough for mid-session token refresh ───────────────────────
-	// The sandbox clears the environment. Without DBUS_SESSION_BUS_ADDRESS,
-	// Claude's libsecret cannot locate the keyring daemon and cannot refresh
-	// an expired OAuth token mid-session, causing a 401 after long sessions.
-	// We inherit only this one variable (not XDG_RUNTIME_DIR) to minimise the
-	// attack surface.
-	//
-	// Inheriting the variable is not enough on its own: the default claude
-	// profiles mount a tmpfs over /run/user/$UID (to hide the other host
-	// runtime sockets that hang Node.js at startup), which also erases the
-	// session bus socket the variable points at. So when the address is the
-	// common unix:path=... form, bind just that one socket file back into the
-	// sandbox — the bind is emitted after the tmpfs by the isolator, so it
-	// lands inside it. Mode rw because connect(2) on a Unix socket requires
-	// write permission on the socket inode; the bind exposes only the bus
-	// socket, nothing else. Abstract-socket addresses (unix:abstract=...)
-	// need no filesystem bind: the claude profiles keep the host network
-	// namespace (network = true), so those stay reachable via the env var.
-	if v := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); v != "" {
-		rc.Env.Inherit = append(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS")
-		if sock := dbusSocketPath(v); sock != "" {
-			if _, err := os.Stat(sock); err == nil {
-				rc.Mounts = append(rc.Mounts, config.Mount{
-					Src:  sock,
-					Dest: sock,
-					Mode: "rw",
-				})
-			}
-		}
-	}
-
 	// ── Cross-session messaging socket ────────────────────────────────────────
 	// Silences the "Cross-session messaging is off" warning the CLI prints at
 	// every start inside the sandbox. See prepareClaudeMessaging.
@@ -620,6 +589,14 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		Dest: claudeDir,
 		Mode: "rw",
 	})
+
+	// ── Session bus for mid-session token refresh ─────────────────────────────
+	// The sandbox clears the environment. Without DBUS_SESSION_BUS_ADDRESS,
+	// Claude's libsecret cannot locate the keyring daemon and cannot refresh
+	// an expired OAuth token mid-session, causing a 401 after long sessions.
+	// The bus is filtered down to the keyring when xdg-dbus-proxy is available
+	// — see sandbox_dbus.go for why the whole bus must not go in.
+	cleanups = append(cleanups, applyClaudeSessionBus(w, rc))
 
 	// Bind ~/.claude.json writable so claude can update UI state (numStartups,
 	// tips history, …) regardless of whether the workdir makes the home

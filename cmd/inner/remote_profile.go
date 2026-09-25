@@ -150,18 +150,13 @@ func hardenRemoteProfile(rc *config.RunConfig) []string {
 }
 
 // isPrivilegedAllowKey reports whether an allow key gives the sandbox something
-// it could use against the host: a readable credential, a container socket, or
-// the nested-user-ns capability. The remaining keys only downgrade an
-// `inner verify` check and are harmless coming from a remote profile.
+// it could use against the host: a readable credential, or a channel to act
+// with the user's authority (container sockets, nested-user-ns, the session
+// bus, the systemd user manager, the ssh/gpg agents). The remaining keys only
+// downgrade an `inner verify` check and are harmless from a remote profile.
 func isPrivilegedAllowKey(key string) bool {
-	if slices.Contains(config.CredentialAllowKeys, key) {
-		return true
-	}
-	switch key {
-	case "docker-socket", "podman-socket", "nested-user-ns":
-		return true
-	}
-	return false
+	return slices.Contains(config.CredentialAllowKeys, key) ||
+		slices.Contains(config.HostPrivilegeAllowKeys, key)
 }
 
 // remoteProfileRequests summarizes, for the consent prompt, what the downloaded

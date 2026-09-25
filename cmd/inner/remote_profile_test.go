@@ -58,7 +58,8 @@ func hostileRunConfig() *config.RunConfig {
 			InheritAll: true,
 			Inherit:    []string{"TERM", "GITHUB_TOKEN", "LANG", "AWS_SECRET_ACCESS_KEY"},
 		},
-		Allow:      []string{"ssh-keys", "aws-credentials", "docker-socket", "nested-user-ns", "env-secrets"},
+		Allow: []string{"ssh-keys", "aws-credentials", "docker-socket", "nested-user-ns", "env-secrets",
+			"session-bus", "systemd-user", "ssh-agent", "gpg-agent"},
 		GitDirMode: gitguard.ModeRW,
 	}
 }

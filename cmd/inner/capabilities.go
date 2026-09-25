@@ -68,7 +68,7 @@ func claudeExplain() CapabilityExplain {
 		PreRun: []string{
 			"Token refresh / credential unlock: runs 'claude -p /try-login' in background (output hidden) to trigger the OS keyring graphical unlock dialog and refresh any expired OAuth token; inner then waits for Enter before continuing (skip with --yes)",
 			"Near-expiry warning: prints a warning when the token will expire within 30 minutes so the user can plan for re-authentication before starting a long session",
-			"D-Bus passthrough: inherits DBUS_SESSION_BUS_ADDRESS into the sandbox so Claude's libsecret can reach the OS keyring for mid-session token refresh; prevents 401 errors during long sessions",
+			"Session bus for mid-session token refresh: starts xdg-dbus-proxy filtered to org.freedesktop.secrets and points the sandbox's DBUS_SESSION_BUS_ADDRESS at it (/tmp/inner-dbus/bus), so Claude's libsecret reaches the OS keyring and nothing else on the bus; without xdg-dbus-proxy, or with allow = [\"session-bus\"], the whole bus is passed through (with a warning in the first case)",
 			"Messaging socket: passes --messaging-socket-path /tmp/inner-claude-messaging/cc.sock when the entrypoint is claude, so the CLI can create its cross-session messaging socket on the sandbox tmpfs instead of refusing the default /tmp/cc-socks-<uid> (whose ancestor \"/\" is owned by an unmapped uid inside the sandbox) and warning at every start; the socket stays confined to the sandbox",
 		},
 	}

@@ -53,6 +53,8 @@ var ValidAllowKeys = []string{
 	"terraform-credentials", "maven-settings", "gradle-properties",
 	"helm-config", "pgpass", "mysql-config",
 	"password-store", "keyrings", "onepassword-config", "browser-profiles",
+	// Host runtime sockets under $XDG_RUNTIME_DIR (see HostPrivilegeAllowKeys).
+	"session-bus", "systemd-user", "ssh-agent", "gpg-agent",
 	// Verify-only declassification keys (no filesystem hide action).
 	"env-secrets", "shims-active", "network-policy",
 }
@@ -129,6 +131,22 @@ func SensitiveResources(home, uid string) []SensitiveResource {
 		{"browser-profiles", join(".config", "microsoft-edge"), true},
 		{"browser-profiles", join(".config", "vivaldi"), true},
 		{"browser-profiles", join(".config", "opera"), true},
+		// Host runtime sockets. The root bind makes /run/user/<uid> visible,
+		// and neither a read-only bind nor --unshare-net stops connect(2) on a
+		// Unix socket that lives on the filesystem. Behind these sockets sit
+		// services that act on the host with the user's full authority: the
+		// session bus (org.freedesktop.systemd1 starts arbitrary commands
+		// outside the sandbox, org.freedesktop.secrets hands out the keyring),
+		// the systemd user manager's private socket, and the ssh/gpg agents,
+		// which sign with keys the hide rules above keep out of reach.
+		{"session-bus", "/run/user/" + uid + "/bus", false},
+		{"systemd-user", "/run/user/" + uid + "/systemd", true},
+		{"ssh-agent", "/run/user/" + uid + "/ssh-agent.socket", false},
+		{"ssh-agent", "/run/user/" + uid + "/openssh_agent", false},
+		{"ssh-agent", "/run/user/" + uid + "/gcr/ssh", false},
+		{"ssh-agent", "/run/user/" + uid + "/keyring/ssh", false},
+		{"gpg-agent", "/run/user/" + uid + "/gnupg", true},
+		{"keyrings", "/run/user/" + uid + "/keyring/control", false},
 	}
 }
 

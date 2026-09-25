@@ -21,6 +21,13 @@ import (
 func TestMain(m *testing.M) {
 	claudeWarningWriter = io.Discard
 	claudeAutoConfirmDelay = 0
+	// A developer machine may have xdg-dbus-proxy installed: keep the tests
+	// that exercise the unfiltered passthrough independent of it. The proxy
+	// path has its own tests, which install a fake proxy explicitly.
+	dbusProxyLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	if os.Getenv(fakeDBusProxyEnv) != "" {
+		os.Exit(fakeDBusProxyMain())
+	}
 	os.Exit(m.Run())
 }
 

@@ -468,6 +468,9 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			if isAllowed(cfg.Allow, r.Key) {
 				continue
 			}
+			if slices.Contains(cfg.HideExempt, r.Path) {
+				continue
+			}
 			if !b.pathExists(r.Path) {
 				continue
 			}
