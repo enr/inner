@@ -237,12 +237,7 @@ func (c *Checker) dial(network, address string, timeout time.Duration) (net.Conn
 }
 
 func (c *Checker) isAllowed(checkID string) bool {
-	for _, k := range c.Allow {
-		if k == checkID {
-			return true
-		}
-	}
-	return false
+	return config.AllowKeyEnabled(c.Allow, checkID)
 }
 
 // Run executes all built-in and custom checks and returns a Report.

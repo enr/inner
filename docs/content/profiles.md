@@ -739,7 +739,10 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `gpg-agent` | `/run/user/$UID/gnupg/` (gpg-agent sockets) |
 
 `keyrings` also covers `/run/user/$UID/keyring/control` (the gnome-keyring
-control socket).
+control socket). `ssh-keys` implies `ssh-agent`, and `gpg-keys` implies
+`gpg-agent`: a profile that already hands the sandbox the keys (to push over
+ssh or sign commits) keeps reaching the agent as it did before these sockets
+were hidden.
 
 The runtime sockets under `/run/user/$UID` are hidden because neither the
 read-only root bind nor a private network namespace stops `connect(2)` on a

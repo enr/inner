@@ -106,3 +106,21 @@ func TestBuild_hidePlaceholder(t *testing.T) {
 		t.Errorf("without a placeholder, expected /dev/null over %s, got %v", settings, args)
 	}
 }
+
+// allow = ["ssh-keys"] / ["gpg-keys"] keep the agents reachable, as they were
+// before the runtime sockets were hidden: a profile allowing the keys to sign
+// or push must not break.
+func TestBuild_keyAllowImpliesAgent(t *testing.T) {
+	run := "/run/user/" + strconv.Itoa(os.Getuid())
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"ssh-keys", "gpg-keys"},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if hasSeq(args, "--bind", "/dev/null", run+"/gcr/ssh") || hasSeq(args, "--tmpfs", run+"/gnupg") {
+		t.Errorf("ssh-keys/gpg-keys allowed but the agents are hidden: %v", args)
+	}
+	if !hasSeq(args, "--bind", "/dev/null", run+"/bus") {
+		t.Errorf("the implication leaked to session-bus: %v", args)
+	}
+}

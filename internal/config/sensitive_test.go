@@ -163,3 +163,23 @@ func TestHidePlaceholder(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowKeyEnabled(t *testing.T) {
+	cases := []struct {
+		allow []string
+		key   string
+		want  bool
+	}{
+		{[]string{"ssh-agent"}, "ssh-agent", true},
+		{[]string{"ssh-keys"}, "ssh-agent", true},
+		{[]string{"gpg-keys"}, "gpg-agent", true},
+		{[]string{"ssh-agent"}, "ssh-keys", false}, // not the other way round
+		{[]string{"ssh-keys"}, "session-bus", false},
+		{nil, "ssh-agent", false},
+	}
+	for _, tc := range cases {
+		if got := AllowKeyEnabled(tc.allow, tc.key); got != tc.want {
+			t.Errorf("AllowKeyEnabled(%v, %q) = %v, want %v", tc.allow, tc.key, got, tc.want)
+		}
+	}
+}

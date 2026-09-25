@@ -97,9 +97,10 @@ func isUnderHome(home, path string) bool {
 	return path == home || strings.HasPrefix(path, home+"/")
 }
 
-// isAllowed reports whether key is present in the allow list.
+// isAllowed reports whether key is enabled by the allow list, directly or
+// through a key that implies it (config.AllowKeyEnabled).
 func isAllowed(allow []string, key string) bool {
-	return slices.Contains(allow, key)
+	return config.AllowKeyEnabled(allow, key)
 }
 
 // isUnderTmpfs reports whether path falls inside any tmpfs mount in mounts.

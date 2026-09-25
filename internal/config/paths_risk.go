@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -90,4 +91,29 @@ var CredentialAllowKeys = []string{
 var HostPrivilegeAllowKeys = []string{
 	"docker-socket", "podman-socket", "nested-user-ns",
 	"session-bus", "systemd-user", "ssh-agent", "gpg-agent",
+}
+
+// allowImplies lists allow keys that also enable others. Listing ssh-keys or
+// gpg-keys already hands the sandbox the private keys; the agent sockets were
+// reachable alongside them before the runtime sockets were hidden, and a
+// profile that allowed the keys to sign commits or push over ssh relied on
+// the agent too. Keeping that working is worth more than the marginal
+// difference between "the key files" and "an agent holding them unlocked".
+var allowImplies = map[string][]string{
+	"ssh-agent": {"ssh-keys"},
+	"gpg-agent": {"gpg-keys"},
+}
+
+// AllowKeyEnabled reports whether key is enabled by the allow list, either
+// directly or through a key that implies it (see allowImplies).
+func AllowKeyEnabled(allow []string, key string) bool {
+	if slices.Contains(allow, key) {
+		return true
+	}
+	for _, by := range allowImplies[key] {
+		if slices.Contains(allow, by) {
+			return true
+		}
+	}
+	return false
 }
