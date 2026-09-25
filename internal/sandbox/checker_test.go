@@ -276,13 +276,43 @@ func TestCheck_envSecrets_isMediumSeverity(t *testing.T) {
 
 func TestCheck_dockerSocket_pass_when_absent(t *testing.T) {
 	ch, _ := newChecker(t)
-	// /var/run/docker.sock likely doesn't exist in test env; if it does, skip.
-	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
-		t.Skip("docker.sock present on host, skip")
-	}
+	ch.DockerSocketPath = filepath.Join(t.TempDir(), "docker.sock")
 	r := ch.checkDockerSocket()
 	if !r.Passed {
 		t.Errorf("expected docker-socket to pass when socket absent, got: %s", r.Detail)
+	}
+}
+
+func TestCheck_dockerSocket_pass_when_hidden(t *testing.T) {
+	// inner hides the socket by binding /dev/null over it: the path exists,
+	// which the old Stat-based check reported as accessible on every Docker host.
+	ch, _ := newChecker(t)
+	ch.DockerSocketPath = "/dev/null"
+	r := ch.checkDockerSocket()
+	if !r.Passed {
+		t.Errorf("expected docker-socket to pass when hidden by a /dev/null bind, got: %s", r.Detail)
+	}
+}
+
+func TestCheck_dockerSocket_fail_when_socket_accepts(t *testing.T) {
+	dir, err := os.MkdirTemp("", "inner-docker") // short path: sun_path is 108 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "docker.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	ch, _ := newChecker(t)
+	ch.DockerSocketPath = sock
+	ch.dialFn = net.DialTimeout
+	r := ch.checkDockerSocket()
+	if r.Passed {
+		t.Error("expected docker-socket to fail when the socket accepts connections")
 	}
 }
 

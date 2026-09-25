@@ -210,8 +210,19 @@ sandbox often does not:
 
 ## Recording the result
 
-These runs are the evidence for `SECURITY_REVIEW.md` §9. When re-running after
-a change to the relay, the entrypoint wrapping or the signal policy, note in
-that file: the date, the machine, the terminal emulator, and any difference
-between the baseline and the relay run. "No difference from baseline" is the
-result worth recording — it is the whole claim being made.
+These runs are the evidence for the PID-namespace / TUI check (review item #9,
+formerly in `SECURITY_REVIEW.md`, now removed; see its git history). When
+re-running after a change to the relay, the entrypoint wrapping or the signal
+policy, add an entry below: the date, the machine, the terminal emulator, and
+any difference between the baseline and the relay run. "No difference from
+baseline" is the result worth recording — it is the whole claim being made.
+
+Rollback if a TUI misbehaves on a given host: `[sandbox] pid_namespace = false`
+in that profile restores the pre-`--unshare-pid` behaviour.
+
+### Log
+
+- **2026-08-25** — baseline, no relay in the chain. Maintainer's machine, real
+  terminal, locally built `inner`: claude / gemini / cursor TUIs (render,
+  Ctrl-C, resize), bash paste + history + job control, `/proc` showing only
+  sandbox processes. All OK.

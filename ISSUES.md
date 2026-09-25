@@ -2,7 +2,7 @@
 
 Lista unificata di issue pronte per essere aperte su GitHub, ricavata da:
 
-- **`SECURITY_REVIEW.md`** — punti aperti #1–#11 (i due item marcati FIXED sono esclusi);
+- **`SECURITY_REVIEW.md`** (rimosso: tutte le voci chiuse, testo nella storia git) — punti #1–#11;
 - **`NONO_COMPARISON.md`** — proposte S1–S7, F1–F5, P1–P4, U1–U6;
 - `docs/tasks/java-pinning.md` — **escluso**: tutti i task T1–T9 risultano completati.
 
@@ -147,7 +147,7 @@ prudenza (ogni nuova voce può rompere un workflow `host-ro`):
 Il canary test protegge solo ciò che è già in lista. `home = "isolated"` resta
 la risposta vera.
 
-### ISS-35 · `inner verify`: check `docker-socket` basato su `Stat`
+### ISS-35 · `inner verify`: check `docker-socket` basato su `Stat` — **FATTO**
 `bug` · **P3** · Size S · Fonte: analisi ISS-03 (secondo giro)
 
 `checkDockerSocket` fallisce se `/var/run/docker.sock` esiste, ma quando è
@@ -156,7 +156,11 @@ probabilmente fallisce sempre. Allinearlo al controllo per-socket del pass
 generico (fallire solo se è un socket). Non corretto in questo giro per non
 allargare il perimetro; da verificare su un host con Docker.
 
-### ISS-36 · Symlink rotti su path della denylist bloccano ogni run
+*Stato:* `checkDockerSocket` usa `resourceExposed` come il pass generico:
+fallisce solo se il path è un socket e `connect(2)` riesce; il bind di
+`/dev/null` passa. Test: assente, nascosto (`/dev/null`), socket in ascolto.
+
+### ISS-36 · Symlink rotti su path della denylist bloccano ogni run — **FATTO**
 `bug` · **P3** · Size S · Fonte: analisi ISS-03
 
 Un symlink rotto su uno qualsiasi dei path nascosti (es. `~/.mozilla` dopo la
@@ -164,6 +168,12 @@ migrazione a flatpak, un dotfile manager a metà) fa fallire `Build` per tutte
 le run (fail-closed voluto: `EvalSymlinks` fallisce). Con la lista cresciuta la
 probabilità aumenta. Opzione: per `ENOENT` del target saltare l'hide (non c'è
 contenuto da nascondere) con un warning; altri errori restano fatali.
+
+*Stato:* `Build` segue la catena di link; se il target non esiste salta l'hide
+con un warning su stderr. Resta fatale se il target mancante cade in un mount
+`rw` (sorgente o destinazione, anche via parent symlinkato): il sandbox
+potrebbe crearlo e l'host lo leggerebbe tramite il link (es. `~/.ssh` →
+workdir). Altri errori di risoluzione restano fatali.
 
 ### ISS-37 · Profili remoti: residui del gate
 `security` · **P3** · Size S · Fonte: analisi ISS-01 (secondo giro)
@@ -518,7 +528,7 @@ che in file leggibili dall'agente.
 | **P1** | ISS-04 home isolata · ISS-05 proxy rete allowlist · ISS-06 credential injection · ISS-07 sign-off TUI/PID-ns · ISS-08 run-ID + `--json` |
 | **P2** | ISS-09 parseMount · ISS-10 rollback workspace · ISS-11 extractExpiresAt · ISS-12 checkUsrReadonly · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ISS-17 profile explain · ISS-18 triage bwrap |
 | **P2** (nuove) | ISS-34 copertura denylist |
-| **P3** | ISS-19…ISS-30 · ISS-35 check docker-socket · ISS-36 symlink rotti · ISS-37 residui gate remoto |
+| **P3** | ISS-19…ISS-30 · ISS-37 residui gate remoto |
 
 ### Grafo delle dipendenze (enabler)
 

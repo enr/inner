@@ -849,7 +849,7 @@ fi
 #
 # The dry-run checks above assert that --unshare-pid is EMITTED. These assert
 # that it has the effect it is emitted for. They are steps 1, 4 and 5 of the
-# manual checklist in SECURITY_REVIEW.md #9 — the three that never needed a
+# manual TUI checklist (manual-tests/README.md) — the three that never needed a
 # human, only a script nobody had written.
 
 section "Process isolation: runtime"
@@ -1132,7 +1132,7 @@ else
 fi
 
 # ── Planted-secret confidentiality tests ─────────────────────────────────────
-# The read side of the sandbox (SECURITY_REVIEW.md issue #1). Two policies are
+# The read side of the sandbox (review item #1, see ISSUES.md ISS-03/ISS-04). Two policies are
 # asserted against a REAL bwrap, with real files planted on the host:
 #
 #   home = "host-ro" (default) → denylist: the paths in config.SensitiveResources

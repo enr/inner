@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Automated PTY test for the network relay's signal and terminal behaviour.
 
-This is the automatable half of SECURITY_REVIEW.md #9 step 2. It drives the
+This is the automatable half of the manual TUI checklist (manual-tests/README.md, step 2). It drives the
 probe in probe.sh through a real pseudo-terminal: it resizes the terminal as a
 window manager would, sends Ctrl-C as the tty would, and reads back what the
 sandboxed process actually received.
