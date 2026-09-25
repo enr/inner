@@ -35,7 +35,7 @@ S2 — network allowlist proxy
  logging vs. the TUI"). The run that produced both is exactly what the checklist
  below exists for.
 
- What remains: the manual TUI checklist (SECURITY_REVIEW.md §9) re-run with a
+ What remains: the manual TUI checklist (manual-tests/README.md) re-run with a
  relay in the chain, which needs a real terminal. manual-tests/ now holds the
  profiles and the procedure, including an A/B signal probe that covers the
  mechanism — SIGINT delivered once per keypress and not twice, SIGWINCH, the
@@ -811,7 +811,7 @@ S2 — network allowlist proxy
    tests, because the mode that makes this e2e possible is the mode that turns
    them off.
  - Manual: re-run the interactive-TUI checklist from issue #9
-   (SECURITY_REVIEW.md §9) once more, this time with a profile in
+   (manual-tests/README.md) once more, this time with a profile in
    network_mode = "allowlist", specifically for Ctrl-C (single vs double
    press, given the deliberate non-forwarding of tty signals) and resize
    through the added relay hop. The baseline exists: §9 was signed off on

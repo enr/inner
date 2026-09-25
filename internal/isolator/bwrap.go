@@ -1,7 +1,10 @@
 package isolator
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +29,12 @@ type BwrapIsolator struct {
 	// evalSymlinksFn resolves symlinks to a canonical path. Defaults to
 	// filepath.EvalSymlinks. Overridable in tests.
 	evalSymlinksFn func(string) (string, error)
+	// readlinkFn reads a symlink's target. Defaults to os.Readlink.
+	// Overridable in tests.
+	readlinkFn func(string) (string, error)
+	// warnW receives non-fatal warnings emitted while building the command.
+	// Defaults to os.Stderr.
+	warnW io.Writer
 	// ptmxUsableFn reports whether the host's /dev/pts/ptmx is openable.
 	// Defaults to hostPtmxUsable. Overridable in tests.
 	ptmxUsableFn func() bool
@@ -113,6 +122,67 @@ func isUnderTmpfs(mounts []config.Mount, path string) bool {
 		}
 	}
 	return false
+}
+
+// danglingTarget follows the symlink chain starting at path and returns the
+// first target that does not exist. ok is false when path is not a dangling
+// link (not a link at all, a loop, or an unreadable link).
+func (b *BwrapIsolator) danglingTarget(path string) (target string, ok bool) {
+	stat := b.statFn
+	if stat == nil {
+		stat = os.Lstat
+	}
+	readlink := b.readlinkFn
+	if readlink == nil {
+		readlink = os.Readlink
+	}
+	cur := path
+	for range 40 { // same hop limit as the kernel's ELOOP
+		next, err := readlink(cur)
+		if err != nil {
+			return "", false
+		}
+		if !filepath.IsAbs(next) {
+			next = filepath.Join(filepath.Dir(cur), next)
+		}
+		next = filepath.Clean(next)
+		if _, err := stat(next); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return next, true
+			}
+			return "", false
+		}
+		cur = next
+	}
+	return "", false
+}
+
+// writableMountCovering reports the writable mount, if any, whose host source
+// or sandbox destination contains path.
+func writableMountCovering(mounts []config.Mount, path string) (string, bool) {
+	for _, m := range mounts {
+		if m.Mode != "rw" {
+			continue
+		}
+		for _, p := range []string{m.Src, m.Dest} {
+			if p == "" {
+				continue
+			}
+			p = filepath.Clean(p)
+			if path == p || strings.HasPrefix(path, p+"/") || p == "/" {
+				return p, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (b *BwrapIsolator) warnf(format string, a ...any) {
+	w := b.warnW
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, "inner: warning: "+format+"\n", a...)
 }
 
 // basePathValue resolves the PATH value to build on top of, before any
@@ -506,6 +576,25 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 				// r.Path exists (checked above) but EvalSymlinks failed — broken
 				// symlink. Falling back to the unresolved path would cause bwrap to
 				// silently skip the mount, leaving sensitive content readable.
+				//
+				// A dangling link (target missing) has no content to hide, so it
+				// is skipped rather than failing every run — unless the target
+				// lies in a writable mount: the sandbox could then create it, and
+				// the host would read the planted file through the link (e.g. a
+				// dangling ~/.ssh gaining an authorized_keys).
+				if target, ok := b.danglingTarget(r.Path); ok && errors.Is(err, fs.ErrNotExist) {
+					candidates := []string{target}
+					if dir, err := evalSymlinks(filepath.Dir(target)); err == nil {
+						candidates = append(candidates, filepath.Join(dir, filepath.Base(target)))
+					}
+					for _, c := range candidates {
+						if m, writable := writableMountCovering(cfg.Mounts, c); writable {
+							return nil, fmt.Errorf("hide %s: %s is a dangling symlink to %s, inside the writable mount %s", r.Key, r.Path, target, m)
+						}
+					}
+					b.warnf("not hiding %s: %s is a dangling symlink (target %s does not exist)", r.Key, r.Path, target)
+					continue
+				}
 				return nil, fmt.Errorf("hide %s: cannot resolve %s: %w", r.Key, r.Path, err)
 			}
 			switch placeholder, ok := cfg.HidePlaceholders[r.Path]; {

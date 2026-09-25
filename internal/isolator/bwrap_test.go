@@ -2,6 +2,7 @@ package isolator
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -975,9 +976,78 @@ func TestBuild_brokenSymlink_failsClosed(t *testing.T) {
 		}
 		return p, nil
 	}
+	iso.readlinkFn = func(p string) (string, error) { return "", os.ErrInvalid }
 	_, err := iso.Build(config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "sh"}})
 	if err == nil {
 		t.Error("Build should return an error when a sensitive path is a broken symlink, got nil")
+	}
+}
+
+// danglingSSHIsolator reports ~/.ssh as a symlink to target, which does not
+// exist; every other path is absent.
+func danglingSSHIsolator(t *testing.T, target string) (*BwrapIsolator, string, *strings.Builder) {
+	t.Helper()
+	home, _ := os.UserHomeDir()
+	sshPath := filepath.Join(home, ".ssh")
+	iso := testIsolator(runtime.RuntimeInfo{})
+	iso.statFn = func(p string) (os.FileInfo, error) {
+		if p == sshPath {
+			return nil, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	iso.evalSymlinksFn = func(p string) (string, error) {
+		if p == sshPath {
+			return "", &fs.PathError{Op: "lstat", Path: target, Err: fs.ErrNotExist}
+		}
+		return p, nil
+	}
+	iso.readlinkFn = func(p string) (string, error) {
+		if p == sshPath {
+			return target, nil
+		}
+		return "", os.ErrInvalid
+	}
+	warn := &strings.Builder{}
+	iso.warnW = warn
+	return iso, sshPath, warn
+}
+
+func TestBuild_danglingSymlink_skippedWithWarning(t *testing.T) {
+	iso, sshPath, warn := danglingSSHIsolator(t, "/nonexistent/inner-test/ssh")
+	args := cmdArgs(t, iso, config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "sh"}})
+	for i, a := range args {
+		if (a == "--tmpfs" || a == "--bind") && i+1 < len(args) && args[i+1] == sshPath {
+			t.Errorf("dangling %s should not be hidden, got %v", sshPath, args)
+		}
+	}
+	if !strings.Contains(warn.String(), "dangling symlink") || !strings.Contains(warn.String(), "ssh-keys") {
+		t.Errorf("expected a dangling-symlink warning for ssh-keys, got %q", warn.String())
+	}
+}
+
+func TestBuild_danglingSymlink_intoWritableMount_failsClosed(t *testing.T) {
+	// The sandbox could create the missing target through the rw mount, and the
+	// host would then read it through the link: this must stay fatal.
+	iso, _, _ := danglingSSHIsolator(t, "/work/project/ssh-keys")
+	_, err := iso.Build(config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+		Mounts:     []config.Mount{{Src: "/work/project", Dest: "/work/project", Mode: "rw"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "writable mount") {
+		t.Errorf("expected a writable-mount error, got %v", err)
+	}
+}
+
+func TestBuild_danglingSymlink_relativeTarget(t *testing.T) {
+	iso, sshPath, _ := danglingSSHIsolator(t, "project/ssh")
+	project := filepath.Join(filepath.Dir(sshPath), "project")
+	_, err := iso.Build(config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+		Mounts:     []config.Mount{{Src: project, Dest: project, Mode: "rw"}},
+	})
+	if err == nil {
+		t.Error("a relative dangling target inside a writable mount must fail closed, got nil")
 	}
 }
 
@@ -1393,4 +1463,42 @@ func setenvValue(args []string, key string) string {
 		return args[i+2]
 	}
 	return "\x00absent"
+}
+
+func TestDanglingTarget_realFilesystem(t *testing.T) {
+	dir := t.TempDir()
+	iso := newBwrapIsolatorWithInfo("/fake/bwrap", runtime.RuntimeInfo{})
+
+	// Chain: a -> b (relative) -> missing.
+	if err := os.Symlink("b", filepath.Join(dir, "a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, "b")); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := iso.danglingTarget(filepath.Join(dir, "a")); !ok || got != filepath.Join(dir, "missing") {
+		t.Errorf("danglingTarget(a) = %q, %v; want %q, true", got, ok, filepath.Join(dir, "missing"))
+	}
+
+	// A link to an existing file is not dangling.
+	if err := os.WriteFile(filepath.Join(dir, "f"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("f", filepath.Join(dir, "ok")); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := iso.danglingTarget(filepath.Join(dir, "ok")); ok {
+		t.Error("a link to an existing file must not be reported as dangling")
+	}
+
+	// A loop is not dangling either: resolution fails for another reason.
+	if err := os.Symlink("loop2", filepath.Join(dir, "loop1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("loop1", filepath.Join(dir, "loop2")); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := iso.danglingTarget(filepath.Join(dir, "loop1")); ok {
+		t.Error("a symlink loop must not be reported as dangling")
+	}
 }

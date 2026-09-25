@@ -185,12 +185,13 @@ type Checker struct {
 	ShimsExpected bool
 
 	// Injectable for tests.
-	HomeDir       string                                                                 // defaults to os.UserHomeDir()
-	UsrDir        string                                                                 // defaults to "/usr"
-	ShimMountPath string                                                                 // defaults to "/tmp/inner-shims"
-	MountInfoPath string                                                                 // defaults to "/proc/self/mountinfo"
-	UID           string                                                                 // defaults to os.Getuid(); selects /run/user/<uid> in the hide list
-	dialFn        func(network, address string, timeout time.Duration) (net.Conn, error) // defaults to net.DialTimeout
+	HomeDir          string                                                                 // defaults to os.UserHomeDir()
+	UsrDir           string                                                                 // defaults to "/usr"
+	ShimMountPath    string                                                                 // defaults to "/tmp/inner-shims"
+	MountInfoPath    string                                                                 // defaults to "/proc/self/mountinfo"
+	UID              string                                                                 // defaults to os.Getuid(); selects /run/user/<uid> in the hide list
+	DockerSocketPath string                                                                 // defaults to "/var/run/docker.sock"
+	dialFn           func(network, address string, timeout time.Duration) (net.Conn, error) // defaults to net.DialTimeout
 }
 
 func (c *Checker) mountInfoPath() string {
@@ -428,13 +429,24 @@ func (c *Checker) checkDockerSocket() CheckResult {
 		Severity: SeverityMedium,
 		Suggest:  suggestAllow("docker-socket"),
 	}
-	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+	// Judged like every other hidden socket (see resourceExposed): a hidden
+	// socket is a /dev/null bind, so the path exists either way and only a
+	// successful connect(2) proves access.
+	res := config.SensitiveResource{Key: "docker-socket", Path: c.dockerSocketPath()}
+	if exposed, detail := c.resourceExposed(res); exposed {
 		r.Passed = false
-		r.Detail = "/var/run/docker.sock accessible"
+		r.Detail = detail
 		return r
 	}
 	r.Passed = true
 	return r
+}
+
+func (c *Checker) dockerSocketPath() string {
+	if c.DockerSocketPath != "" {
+		return c.DockerSocketPath
+	}
+	return "/var/run/docker.sock"
 }
 
 func (c *Checker) checkNetrc() CheckResult {
