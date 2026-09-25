@@ -104,7 +104,16 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	} else if flags.sha256 != "" {
 		return fmt.Errorf("--sha256 pins the content of a downloaded profile, but %q is a local profile", profileName)
 	}
-	rc, err := a.loader.Build(profileName)
+	// A downloaded profile is built with BuildUntrusted, which refuses at load
+	// time what cannot be undone on the RunConfig (host variable expansion,
+	// host-side paths); --trust-remote opts out of that like of the rest.
+	var rc *config.RunConfig
+	var err error
+	if remote.isRemote() && !flags.trustRemote {
+		rc, remote.loadNotes, err = a.loader.BuildUntrusted(profileName)
+	} else {
+		rc, err = a.loader.Build(profileName)
+	}
 	if err != nil {
 		return err
 	}
@@ -115,7 +124,12 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	// 2b. Consent gate for a downloaded profile: harden it, show what it still
 	//     asks for, and require an explicit yes. Runs before any CLI override so
 	//     the user's own flags are applied on top of the hardened profile.
+	//     Validation runs first, so a profile with errors is refused before the
+	//     user is asked to accept it.
 	if remote.isRemote() {
+		if err := a.validateProfileFile(w, profileName); err != nil {
+			return err
+		}
 		proceed, gateErr := gateRemoteProfile(w, os.Stdin, rc, remote, flags, stdinIsTerminal())
 		if gateErr != nil {
 			return gateErr
@@ -254,24 +268,10 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 
 	// 7. Validate — print all issues; block on unknown allow keys or errors.
-	if p, err := a.loader.LoadProfileAuto(profileName); err == nil {
-		result := profile.Validate(p, a.loader.WorkDir)
-		for _, issue := range result.Issues {
-			var marker string
-			if issue.Level == profile.LevelError {
-				marker = colorizeW(w, ansiBoldRed, "[error]")
-			} else {
-				marker = colorizeW(w, ansiBoldYellow, "[warning]")
-			}
-			fmt.Fprintf(w, "%s %s\n", marker, issue.Message)
-		}
-		if result.HasErrors() {
-			return fmt.Errorf("profile %q has errors, aborting", profileName)
-		}
-		for _, key := range p.Sandbox.Allow {
-			if !slices.Contains(config.ValidAllowKeys, key) {
-				return fmt.Errorf("profile %q: unknown allow key %q — fix the profile or remove the key", profileName, key)
-			}
+	//    A downloaded profile was already validated before its consent gate.
+	if !remote.isRemote() {
+		if err := a.validateProfileFile(w, profileName); err != nil {
+			return err
 		}
 	}
 
@@ -428,6 +428,36 @@ func applyCapabilities(rc *config.RunConfig) (func(), error) {
 			c()
 		}
 	}, nil
+}
+
+// validateProfileFile prints every validation issue of the profile file and
+// fails on an error or an unknown allow key. Best-effort on loading: a profile
+// that cannot be re-read here has already been built, so the load error that
+// matters was reported then.
+func (a *App) validateProfileFile(w io.Writer, profileName string) error {
+	p, err := a.loader.LoadProfileAuto(profileName)
+	if err != nil {
+		return nil
+	}
+	result := profile.Validate(p, a.loader.WorkDir)
+	for _, issue := range result.Issues {
+		var marker string
+		if issue.Level == profile.LevelError {
+			marker = colorizeW(w, ansiBoldRed, "[error]")
+		} else {
+			marker = colorizeW(w, ansiBoldYellow, "[warning]")
+		}
+		fmt.Fprintf(w, "%s %s\n", marker, issue.Message)
+	}
+	if result.HasErrors() {
+		return fmt.Errorf("profile %q has errors, aborting", profileName)
+	}
+	for _, key := range p.Sandbox.Allow {
+		if !slices.Contains(config.ValidAllowKeys, key) {
+			return fmt.Errorf("profile %q: unknown allow key %q — fix the profile or remove the key", profileName, key)
+		}
+	}
+	return nil
 }
 
 // applyOverrides merges CLI flags into rc.

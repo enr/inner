@@ -467,7 +467,74 @@ func (l *Loader) Build(profileName string) (*RunConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return toRunConfig(global, profile, l.WorkDir)
+	return toRunConfig(global, profile, l.WorkDir, ExpandPath)
+}
+
+// BuildUntrusted is Build for a profile file that came from an untrusted
+// source (a URL). It refuses, at load time, what a profile must not decide on
+// its own and what cannot be undone once the RunConfig exists:
+//
+//   - $VAR / ${VAR} references in profile values resolve against a small set
+//     of non-secret variables (see untrustedExpand) instead of the whole host
+//     environment: otherwise [env] set = { X = "${GITHUB_TOKEN}" } would copy
+//     a host secret into the sandbox, bypassing every [env] inherit rule;
+//   - [output] log is ignored (the global log_dir applies): inner writes the
+//     sandbox output there from the host, so a profile choosing it could drop
+//     attacker-controlled text into ~/.bashrc.d or a similar sourced directory;
+//   - workspaces_path is ignored (the global one applies): inner creates
+//     directories under it on the host;
+//   - [entrypoint] workdir is ignored: it is bind-mounted read-write, and a
+//     profile choosing ~/.config/systemd/user or ~/.local/bin gets persistence
+//     on the host. The user passes -w, or the current directory is used;
+//   - [sandbox] clipboard is ignored: it binds the X11/Wayland socket, through
+//     which a client can inject keystrokes into the host session.
+//
+// It returns one line per change, for the consent prompt. The same profile
+// run with --trust-remote goes through Build instead.
+func (l *Loader) BuildUntrusted(path string) (*RunConfig, []string, error) {
+	global, err := l.loadEffectiveGlobal()
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err := l.LoadProfileAuto(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var notes []string
+	if p.Output.Log != "" {
+		notes = append(notes, fmt.Sprintf("[output] log = %q ignored — inner writes the log on the host, the global log_dir applies", p.Output.Log))
+		p.Output.Log = ""
+	}
+	if p.WorkspacesPath != "" {
+		notes = append(notes, fmt.Sprintf("workspaces_path = %q ignored — inner creates directories there on the host, the global workspaces_path applies", p.WorkspacesPath))
+		p.WorkspacesPath = ""
+	}
+	if p.Entrypoint.Workdir != "" {
+		notes = append(notes, fmt.Sprintf("[entrypoint] workdir = %q ignored — it would be mounted read-write; pass -w to choose the workdir", p.Entrypoint.Workdir))
+		p.Entrypoint.Workdir = ""
+	}
+	if p.Sandbox.Clipboard {
+		notes = append(notes, "[sandbox] clipboard = true ignored — the display socket lets a client type into the host session")
+		p.Sandbox.Clipboard = false
+	}
+
+	var refused []string
+	expand := func(s string) string {
+		return untrustedExpand(s, func(name string) {
+			if !slices.Contains(refused, name) {
+				refused = append(refused, name)
+			}
+		})
+	}
+	rc, err := toRunConfig(global, p, l.WorkDir, expand)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(refused) > 0 {
+		notes = append(notes, fmt.Sprintf("host variable reference(s) %s resolved to empty — a remote profile does not read your environment", strings.Join(refused, ", ")))
+	}
+	return rc, notes, nil
 }
 
 // toRunConfig converts a loaded Profile (and GlobalConfig) into a RunConfig,
@@ -477,29 +544,33 @@ func (l *Loader) Build(profileName string) (*RunConfig, error) {
 // workDir is the directory from which inner was invoked. It is substituted for
 // the ${workdir} token in mount source paths, making local profiles portable
 // across machines.
-func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, error) {
+//
+// expand resolves ~ and $VAR in the values that come from the profile: it is
+// ExpandPath for a trusted profile and untrustedExpand for a downloaded one.
+// Values taken from the global config (workspaces_path, log_dir) are the
+// user's own and always go through ExpandPath.
+func toRunConfig(global *GlobalConfig, p *Profile, workDir string, expand func(string) string) (*RunConfig, error) {
 	// Expand ~ and ${UID} in env.set values (e.g. DOCKER_HOST with socket paths).
 	expandedEnv := p.Env
 	if len(p.Env.Set) > 0 {
 		expandedEnv.Set = make(map[string]string, len(p.Env.Set))
 		for k, v := range p.Env.Set {
-			expandedEnv.Set[k] = ExpandPath(v)
+			expandedEnv.Set[k] = expand(v)
 		}
 	}
 	// Expand ~ and ${VAR} in path_prepend entries (e.g. a JDK bin dir under ~/.sdkman).
 	if len(p.Env.PathPrepend) > 0 {
 		expandedEnv.PathPrepend = make([]string, len(p.Env.PathPrepend))
 		for i, v := range p.Env.PathPrepend {
-			expandedEnv.PathPrepend[i] = ExpandPath(v)
+			expandedEnv.PathPrepend[i] = expand(v)
 		}
 	}
 
 	// Resolve effective workspaces_path: profile takes precedence over global.
-	workspacesPath := p.WorkspacesPath
-	if workspacesPath == "" {
-		workspacesPath = global.WorkspacesPath
+	workspacesPath := expand(p.WorkspacesPath)
+	if p.WorkspacesPath == "" {
+		workspacesPath = ExpandPath(global.WorkspacesPath)
 	}
-	workspacesPath = ExpandPath(workspacesPath)
 
 	// Network model: resolved once here so every consumer reads the same
 	// answer. An unknown value is refused rather than silently falling back to
@@ -566,7 +637,7 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 			if entry == "" {
 				continue
 			}
-			cfg.HomeAllow = append(cfg.HomeAllow, ExpandPath(entry))
+			cfg.HomeAllow = append(cfg.HomeAllow, expand(entry))
 		}
 	}
 
@@ -591,13 +662,13 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 				return nil, fmt.Errorf("mount dest %q uses ${workspaces_path} but workspaces_path is not configured", dest)
 			}
 			dest = strings.ReplaceAll(dest, token, workspacesPath)
-			dest = ExpandPath(dest)
+			dest = expand(dest)
 			cfg.WorkspaceDests = append(cfg.WorkspaceDests, dest)
 		} else {
-			dest = ExpandPath(dest)
+			dest = expand(dest)
 		}
 		cfg.Mounts = append(cfg.Mounts, Mount{
-			Src:  ExpandPath(src),
+			Src:  expand(src),
 			Dest: dest,
 			Mode: mode,
 		})
@@ -622,15 +693,14 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string) (*RunConfig, 
 			}
 			wd = strings.ReplaceAll(wd, token, workspacesPath)
 		}
-		cfg.Workdir = ExpandPath(wd)
+		cfg.Workdir = expand(wd)
 	}
 
 	// Log directory: profile takes precedence over global.
-	logDir := p.Output.Log
-	if logDir == "" {
-		logDir = global.LogDir
+	cfg.LogDir = expand(p.Output.Log)
+	if p.Output.Log == "" {
+		cfg.LogDir = ExpandPath(global.LogDir)
 	}
-	cfg.LogDir = ExpandPath(logDir)
 
 	// Resource limits: resolved from the priority chain
 	// auto-detect < global DefaultLimits < profile [sandbox.limits].

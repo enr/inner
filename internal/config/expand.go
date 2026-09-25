@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -28,6 +29,39 @@ func ExpandPath(path string) string {
 			return uid
 		}
 		return os.Getenv(key)
+	})
+}
+
+// untrustedExpandVars are the only host variables a downloaded profile may
+// reference: they locate the user's own directories and are not secrets.
+var untrustedExpandVars = []string{"HOME", "USER"}
+
+// untrustedExpand is ExpandPath for a value written by an untrusted profile:
+// ~ and $UID expand as usual, $HOME and $USER resolve, and every other
+// $VAR / ${VAR} resolves to empty and is reported through refused. The magic
+// tokens (${workdir}, ${workspaces_path}) behave exactly as in ExpandPath.
+func untrustedExpand(path string, refused func(name string)) string {
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+		return path
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+	uid := strconv.Itoa(os.Getuid())
+	return os.Expand(path, func(key string) string {
+		switch {
+		case key == "UID":
+			return uid
+		case alwaysDefinedRefs[key], slices.Contains(untrustedExpandVars, key):
+			return os.Getenv(key)
+		}
+		refused(key)
+		return ""
 	})
 }
 
