@@ -342,6 +342,14 @@ func serveProfile(t *testing.T, body string) string {
 func TestRunSandbox_remoteProfile_hostSideChoicesRefused(t *testing.T) {
 	noTerminal(t)
 	t.Setenv("INNER_TEST_REMOTE_SECRET", "s3cret")
+	// The validator checks that "~/.ssh" exists on the host before hardening
+	// gets a chance to drop the mount, so HOME must point at a real .ssh dir —
+	// a fake one, so the test doesn't depend on (or touch) the real one.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatalf("creating fake ~/.ssh: %v", err)
+	}
 	relocated := t.TempDir() // the validator wants mount destinations to exist
 	url := serveProfile(t, `schema_version = "1"
 [sandbox]
