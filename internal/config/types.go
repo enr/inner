@@ -55,6 +55,9 @@ var ValidAllowKeys = []string{
 	"password-store", "keyrings", "onepassword-config", "browser-profiles",
 	// Host runtime sockets under $XDG_RUNTIME_DIR (see HostPrivilegeAllowKeys).
 	"session-bus", "systemd-user", "ssh-agent", "gpg-agent",
+	// The host's abstract unix sockets under network_mode = "full" (no
+	// filesystem path: lifts the Landlock scope, see internal/landlock).
+	"abstract-sockets",
 	// Verify-only declassification keys (no filesystem hide action).
 	"env-secrets", "shims-active", "network-policy",
 }
@@ -106,6 +109,10 @@ func SensitiveResources(home, uid string) []SensitiveResource {
 		{"git-credentials", join(".git-credentials"), false},
 		{"netrc", join(".netrc"), false},
 		{"docker-socket", "/var/run/docker.sock", false},
+		// Rootless Docker and Docker Desktop: the same API, owned by the user,
+		// so `docker run -v $HOME:/h` writes the host home from the sandbox.
+		{"docker-socket", "/run/user/" + uid + "/docker.sock", false},
+		{"docker-socket", join(".docker", "desktop", "docker.sock"), false},
 		{"podman-socket", "/run/user/" + uid + "/podman/podman.sock", false},
 		{"bash-history", join(".bash_history"), false},
 		{"zsh-history", join(".zsh_history"), false},

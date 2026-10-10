@@ -25,6 +25,11 @@ func TestMain(m *testing.M) {
 	// that exercise the unfiltered passthrough independent of it. The proxy
 	// path has its own tests, which install a fake proxy explicitly.
 	dbusProxyLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	// Likewise the kernel's Landlock support: without this, every test that
+	// prepares a network_mode = "full" sandbox would see a different
+	// entrypoint on a 6.12+ kernel than on the CI runner. cmd_scope_test.go
+	// sets it explicitly.
+	landlockABI = func() int { return 0 }
 	if os.Getenv(fakeDBusProxyEnv) != "" {
 		os.Exit(fakeDBusProxyMain())
 	}
@@ -814,7 +819,9 @@ func TestApplyClaude_inheritsDBusSessionBusAddress(t *testing.T) {
 	})
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 
-	rc := &config.RunConfig{}
+	// The unfiltered passthrough is the explicit opt-in: without it and without
+	// a working xdg-dbus-proxy the sandbox gets no bus (sandbox_dbus_test.go).
+	rc := &config.RunConfig{Allow: []string{"session-bus"}}
 	cleanup, err := applyClaude(rc)
 	if err != nil {
 		t.Fatalf("applyClaude: %v", err)
@@ -990,7 +997,7 @@ func TestApplyClaude_bindsDbusSocket(t *testing.T) {
 	}
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+sock+",guid=abc123")
 
-	rc := &config.RunConfig{}
+	rc := &config.RunConfig{Allow: []string{"session-bus"}}
 	cleanup, err := applyClaude(rc)
 	if err != nil {
 		t.Fatalf("applyClaude: %v", err)

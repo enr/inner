@@ -98,6 +98,12 @@ type RunConfig struct {
 	// injected into the sandbox for rootless podman. Empty when no override is
 	// active. Set by cmd_run.go / cmd_verify.go via applyContainersConf().
 	ContainersConfPath string
+
+	// KeepHostAbstractSockets is set by a preparation step that hands the
+	// sandbox a host abstract unix socket on purpose (an unfiltered session
+	// bus at a unix:abstract= address); the Landlock scope that otherwise
+	// blocks them under network_mode = "full" is then not applied.
+	KeepHostAbstractSockets bool
 	// ShimDir is the path to the directory containing shim scripts.
 	// Empty if no shim is active. Set by prepareSandbox after shim.Builder.BuildWith().
 	ShimDir string

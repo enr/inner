@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -198,6 +199,21 @@ func TestBuild_masksKernelPaths_afterProc(t *testing.T) {
 		// A mask emitted before --proc would be buried under the fresh procfs.
 		if i < proc {
 			t.Errorf("%v (idx %d) must follow --proc /proc (idx %d)", want, i, proc)
+		}
+	}
+}
+
+func TestBuild_masksKernelPaths_notUnderNestedUserNS(t *testing.T) {
+	// The masks make the kernel refuse a fresh procfs/sysfs in a nested user
+	// namespace, which breaks runc (and podman) inside the sandbox.
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"nested-user-ns"},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	for _, p := range maskedKernelPaths {
+		if slices.Contains(args, p.path) {
+			t.Errorf("%s masked under nested-user-ns: %v", p.path, args)
 		}
 	}
 }
@@ -846,6 +862,52 @@ func TestBuild_dockerSocket_allowedNotHidden(t *testing.T) {
 	})
 	if hasSeq(args, "--bind", "/dev/null", "/var/run/docker.sock") {
 		t.Errorf("unexpected docker socket shadow when docker-socket is in Allow, got %v", args)
+	}
+}
+
+func TestBuild_rootlessDockerSocket_hiddenByDefault(t *testing.T) {
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	sock := "/run/user/" + strconv.Itoa(os.Getuid()) + "/docker.sock"
+	if !hasSeq(args, "--bind", "/dev/null", sock) {
+		t.Errorf("expected the rootless docker socket %s to be shadowed, got %v", sock, args)
+	}
+
+	args = cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"docker-socket"},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if hasSeq(args, "--bind", "/dev/null", sock) {
+		t.Errorf("unexpected rootless docker socket shadow when docker-socket is in Allow, got %v", args)
+	}
+}
+
+func TestBuild_hideSkipsSymlinkToAllowedResource(t *testing.T) {
+	// docker.sock linked to the podman socket, so that the docker CLI talks to
+	// podman: hiding docker.sock must not cover the podman socket the profile
+	// allows.
+	run := "/run/user/" + strconv.Itoa(os.Getuid())
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	iso.evalSymlinksFn = func(p string) (string, error) {
+		if p == run+"/docker.sock" {
+			return run + "/podman/podman.sock", nil
+		}
+		return p, nil
+	}
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"podman-socket"},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	if hasSeq(args, "--bind", "/dev/null", run+"/podman/podman.sock") {
+		t.Errorf("the allowed podman socket must not be shadowed through the docker.sock link, got %v", args)
+	}
+
+	// Without the allow key both names are hidden as before.
+	args = cmdArgs(t, iso, config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "sh"}})
+	if !hasSeq(args, "--bind", "/dev/null", run+"/podman/podman.sock") {
+		t.Errorf("expected the podman socket to be shadowed, got %v", args)
 	}
 }
 

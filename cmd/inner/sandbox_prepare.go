@@ -164,6 +164,13 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 	}
 	cleanups = append(cleanups, cleanupProxy)
 
+	// Equally last, for the same reason: it wraps the entrypoint. It never
+	// stacks on the relay — the proxy is for "allowlist", the scope for
+	// "full". Shared with verify, which then certifies the scoped sandbox.
+	if err := applyAbstractScope(rc); err != nil {
+		return fail("%w", err)
+	}
+
 	return cleanup, nil
 }
 

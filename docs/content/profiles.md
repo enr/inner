@@ -660,9 +660,12 @@ git_dir = "ro"   # the agent edits files; you review and commit outside
 ```
 
 The protection applies to every writable mount (the workdir, `rw` entries in
-`[mounts]`, `-m SRC:DEST:rw`), to the mount root and to its direct
-subdirectories, so a workdir that is a directory of projects is covered one
-level deep.
+`[mounts]`, `-m SRC:DEST:rw`) and to every repository inside it up to 8
+directory levels deep, so a workdir that is a tree of projects
+(`~/src/github.com/org/repo`) is covered too. The search does not follow
+symbolic links and skips `node_modules`; a workdir with more than 20000
+directories is not searched to the end, and the run starts with a warning
+saying so (narrow the workdir, or use `git_dir = "ro"`).
 
 **Placeholders.** A file that does not exist cannot be made read-only: the
 sandbox could simply create it. So `inner` creates a few placeholders on the
@@ -701,6 +704,33 @@ warnings when the run starts.
 A profile downloaded from a URL cannot select `"rw"`: it is hardened to
 `"protected"` (see [`inner run` from a URL](commands.md#profiles-downloaded-from-a-url)).
 
+### Abstract unix sockets {#abstract-unix-sockets}
+
+Abstract unix sockets (`@name` in `/proc/net/unix`) belong to the network
+namespace, not to the filesystem, so no mount can hide them. A sandbox with
+`network_mode = "full"` shares the host's network namespace and could connect
+to all of them — the X server first of all (`@/tmp/.X11-unix/X0`), which lets
+a client type into any window of your session, with or without
+`clipboard = true`.
+
+On Linux 6.12 and later (Landlock ABI 6) `inner` starts the entrypoint through
+`inner __scope`, which applies a Landlock scope and then execs it: connections
+to abstract sockets created outside the sandbox are refused, while TCP,
+filesystem sockets (docker, podman, the bound D-Bus proxy) and the abstract
+sockets the sandbox creates itself keep working — nested Podman included. The
+other network modes need nothing: their network namespace is private.
+
+The scope is not applied:
+
+- with `allow = ["abstract-sockets"]`;
+- when the claude capability passes an unfiltered session bus whose address is
+  `unix:abstract=…`;
+- with `clipboard = true` on X11: that profile already hands the X server over,
+  and Xlib and xcb only fall back from the abstract socket to `/tmp/.X11-unix`
+  when it is missing, not when it is refused;
+- on older kernels — `inner doctor` warns, and the `inner verify` check
+  "host abstract unix sockets not reachable" fails.
+
 ### `allow` — sensitive resource opt-in
 
 By default `inner` blocks access to sensitive host resources. To grant access, list items in `allow`:
@@ -710,9 +740,10 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `ssh-keys` | `~/.ssh/` directory (read-only) |
 | `git-credentials` | Git credential store / helpers |
 | `gpg-keys` | GPG keyring |
-| `docker-socket` | `/var/run/docker.sock` (Docker daemon socket) |
+| `docker-socket` | `/var/run/docker.sock` (Docker daemon socket), `/run/user/$UID/docker.sock` (rootless Docker), `~/.docker/desktop/docker.sock` (Docker Desktop) |
 | `podman-socket` | `/run/user/$UID/podman/podman.sock` (Podman rootless socket, per-user path) |
 | `nested-user-ns` | Unprivileged user namespaces inside sandbox (required for Podman) |
+| `abstract-sockets` | The host's abstract unix sockets under `network_mode = "full"` (the X server, an abstract D-Bus address, …). Blocked by default on Linux 6.12+ — see [abstract unix sockets](#abstract-unix-sockets) |
 | `netrc` | `~/.netrc` |
 | `aws-credentials` | `~/.aws/` |
 | `gcloud-credentials` | `~/.config/gcloud/` |
@@ -761,7 +792,7 @@ A profile that does not need the host home should use
 [`home = "isolated"`](#home-filesystem-model) instead — that is the allowlist
 model, and it is what the built-in agent profiles use.
 
-The two socket entries are distinct because they point to different paths: `docker-socket` is the system-level Docker daemon socket, while `podman-socket` is the per-user Podman rootless socket.
+The two socket keys are distinct because they point to different paths: `docker-socket` covers the Docker daemon sockets (system, rootless and Docker Desktop — each one is root-equivalent on your files, since `docker run -v $HOME:/h` writes the host home), while `podman-socket` is the per-user Podman rootless socket. When `docker.sock` is a symlink to the Podman socket (so that the docker CLI talks to Podman), `allow = ["podman-socket"]` is enough: a hide rule never covers a path that resolves to a resource the profile allows.
 
 > **Note on `DOCKER_HOST`:** unlocking `podman-socket` only bind-mounts the socket file into the sandbox. The `DOCKER_HOST` variable is **not** set automatically — you must add it explicitly in `[env]` so that Docker-compatible clients find the socket:
 >
@@ -1354,11 +1385,15 @@ name the token refresh needs, `org.freedesktop.secrets`, and points the
 sandbox's `DBUS_SESSION_BUS_ADDRESS` at the proxy socket
 (`/tmp/inner-dbus/bus`). The real bus socket stays hidden.
 
-If `xdg-dbus-proxy` is missing or fails to start, `inner` falls back to the
-previous behaviour — the unfiltered bus — and prints a warning each run.
-Install `xdg-dbus-proxy` to remove the warning; or, if you knowingly want the
-whole bus inside the sandbox, add `allow = ["session-bus"]` to the profile,
-which also silences it.
+If `xdg-dbus-proxy` is missing or fails to start, the sandbox gets **no**
+session bus and `inner` prints a warning each run: claude starts normally, but
+an OAuth token that expires in the middle of a session cannot be refreshed
+there. Install `xdg-dbus-proxy` to get the refresh back; or, if you knowingly
+want the whole bus inside the sandbox, add `allow = ["session-bus"]` to the
+profile.
+
+Even filtered, `org.freedesktop.secrets` is the whole Secret Service API: the
+sandbox can read every item of an unlocked keyring, not only Claude's token.
 
 ### Cross-session messaging socket
 

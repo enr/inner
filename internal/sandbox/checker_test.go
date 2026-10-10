@@ -316,6 +316,37 @@ func TestCheck_dockerSocket_fail_when_socket_accepts(t *testing.T) {
 	}
 }
 
+func TestCheck_dockerSocket_coversDockerDesktopSocket(t *testing.T) {
+	// No DockerSocketPath: every docker-socket entry of the hide list is
+	// checked, Docker Desktop's under the home included. The home is kept short
+	// because sun_path is 108 bytes.
+	home, err := os.MkdirTemp("", "inner-h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	dir := filepath.Join(home, ".docker", "desktop")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", filepath.Join(dir, "docker.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	ch, _ := newChecker(t)
+	ch.HomeDir = home
+	ch.dialFn = net.DialTimeout
+	r := ch.checkDockerSocket()
+	if r.Passed {
+		t.Error("expected docker-socket to fail when the Docker Desktop socket accepts connections")
+	}
+	if !strings.Contains(r.Detail, "~/.docker/desktop/docker.sock") {
+		t.Errorf("detail should name the socket, got %q", r.Detail)
+	}
+}
+
 // ── netrc ─────────────────────────────────────────────────────────────────────
 
 func TestCheck_netrc_pass_when_absent(t *testing.T) {
@@ -577,5 +608,65 @@ func TestReport_render_allowOverride_showsInfo(t *testing.T) {
 	}
 	if !strings.Contains(out, "explicitly allowed") {
 		t.Errorf("expected 'explicitly allowed' in output, got: %s", out)
+	}
+}
+
+// ── abstract-sockets ──────────────────────────────────────────────────────────
+
+// fakeProcNetUnix writes a /proc/net/unix with one line per abstract name.
+func fakeProcNetUnix(t *testing.T, names ...string) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("Num       RefCount Protocol Flags    Type St Inode Path\n")
+	for _, n := range names {
+		b.WriteString("0000000000000000: 00000002 00000000 00010000 0001 01 12345 " + n + "\n")
+	}
+	b.WriteString("0000000000000000: 00000002 00000000 00010000 0001 01 12346 /run/some.sock\n")
+	path := filepath.Join(t.TempDir(), "unix")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestCheck_abstractSockets_failWhenReachable(t *testing.T) {
+	l, err := net.Listen("unix", "@inner-verify-abstract-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+
+	ch, _ := newChecker(t)
+	ch.NetworkMode = config.NetworkFull
+	ch.dialFn = net.DialTimeout
+	ch.ProcNetUnixPath = fakeProcNetUnix(t, "@inner-verify-no-listener", l.Addr().String())
+	r := ch.checkAbstractSockets()
+	if r.Passed {
+		t.Error("expected abstract-sockets to fail when a host abstract socket accepts connections")
+	}
+	if !strings.Contains(r.Detail, "@inner-verify-abstract-test") {
+		t.Errorf("detail should name the socket, got %q", r.Detail)
+	}
+}
+
+func TestCheck_abstractSockets_passWhenRefused(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.NetworkMode = config.NetworkFull
+	ch.dialFn = net.DialTimeout
+	ch.ProcNetUnixPath = fakeProcNetUnix(t, "@inner-verify-no-listener")
+	if r := ch.checkAbstractSockets(); !r.Passed {
+		t.Errorf("expected pass when no abstract socket accepts, got %q", r.Detail)
+	}
+}
+
+func TestCheck_abstractSockets_passInPrivateNetns(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.NetworkMode = config.NetworkOff
+	ch.dialFn = func(string, string, time.Duration) (net.Conn, error) {
+		t.Fatal("no probe expected in a private network namespace")
+		return nil, nil
+	}
+	if r := ch.checkAbstractSockets(); !r.Passed {
+		t.Errorf("expected pass, got %q", r.Detail)
 	}
 }

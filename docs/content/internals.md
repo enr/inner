@@ -80,7 +80,7 @@ returns one line per change, which the gate prints:
 | `[env] inherit_all = true` | ignored | forwards every exported host secret (`AWS_*`, `GITHUB_TOKEN`, …) |
 | `[env] inherit = [...]` with a secret-looking name (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*PASSWD*`, `*CREDENTIAL*`, `*KEY*`, `*AUTH*`, `*SESSION*`, `*PRIVATE*`, `*COOKIE*`, `*DSN*`, `*DATABASE_URL*`, `*CONNECTION_STRING*`, or a `PAT` / `PASS` word) | entry dropped | otherwise the profile just names the secret it wants instead of asking for all of them |
 | `[sandbox] allow` key in `config.CredentialAllowKeys` | key dropped | un-hides a readable credential from the [hide table](#sensitive-resource-hiding) |
-| `[sandbox] allow` key in `config.HostPrivilegeAllowKeys` (`docker-socket`, `podman-socket`, `nested-user-ns`, `session-bus`, `systemd-user`, `ssh-agent`, `gpg-agent`) | key dropped | a container socket is root on the host; nested user namespaces grant caps; the session bus and systemd user manager start processes outside the sandbox; the agents sign with your keys |
+| `[sandbox] allow` key in `config.HostPrivilegeAllowKeys` (`docker-socket`, `podman-socket`, `nested-user-ns`, `session-bus`, `systemd-user`, `ssh-agent`, `gpg-agent`, `abstract-sockets`) | key dropped | a container socket is root on the host; nested user namespaces grant caps; the session bus and systemd user manager start processes outside the sandbox; the agents sign with your keys; the host X server types into your windows |
 | a `[mounts]` entry whose source covers or lies inside a hidden path and whose destination is elsewhere (`"~/.ssh" = { dest = "/tmp/k" }`, `"/" = { dest = "/tmp/root" }`) | mount dropped | the hide rules act on the host path; relocating it escapes them. The source is resolved through symlinks first |
 | `[sandbox] pid_namespace = false` | ignored | host `/proc/<pid>/environ` is readable, defeating `--clearenv` (see [process isolation](#process-isolation---unshare-pid)) |
 | `[sandbox] git_dir = "rw"` | set to `"protected"` | the sandbox could plant hooks or a `core.fsmonitor` that the host runs on the next git command (see [git repository protection](#git-repository-protection)) |
@@ -165,6 +165,12 @@ unreadable, and the rest identify the hardware — but it costs nothing. Masking
 `/proc/keys` does not hide the user's kernel keyrings: `keyctl(2)` still
 reaches them, and only a seccomp filter can close that.
 
+The masks are **not** applied when `nested-user-ns` is allowed. A user
+namespace may mount a fresh procfs or sysfs only if every mount already
+covering one sits on an empty directory, and these do not: with them, runc
+inside the sandbox fails with `error mounting "proc"` (and podman with it).
+The container runtime masks the containers' own `/proc` and `/sys`.
+
 
 `/dev/pts` is bound read-write from the host **only when the host's pty multiplexer, `/dev/pts/ptmx`, can be opened by the user running `inner`**. The bind exists because interactive TUI apps (Node.js/claude, gemini) call `ttyname_r()` internally to resolve their controlling terminal path (e.g. `/dev/pts/3`), and with bwrap's own fresh `devpts` instance that path does not exist inside the sandbox.
 
@@ -219,8 +225,9 @@ keep `Build` free of side effects:
 
 1. **Planning and placeholders — host side, `prepareSandbox`.** `applyGitGuard`
    passes every `rw` mount (after the `safe-rw` step, so the mounts are final)
-   to `gitguard.Build`, which inspects the mount root and its direct
-   subdirectories for a `.git` entry and returns a `gitguard.Plan`, stored on
+   to `gitguard.Build`, which searches each mount breadth-first for `.git`
+   entries (at most 8 levels and 20000 directories, no symlinks, no
+   `node_modules`) and returns a `gitguard.Plan`, stored on
    `RunConfig.GitGuard`. `gitguard.Materialize` then creates the placeholders
    the read-only binds need: a path that does not exist cannot be a mount
    point, and the sandbox could otherwise create it. Placeholders are a
@@ -300,6 +307,20 @@ that cannot be enforced must never silently mean "open network".
 
 Driven by `[sandbox] network_mode` (or the legacy `network` bool) and the CLI
 `--network` / `--no-network`, both of which move the mode rather than the bool.
+
+**Abstract unix sockets under `"full"`.** Sharing the host network namespace
+also shares its abstract unix sockets, X server included. The last step of
+`prepareSandbox`, `applyAbstractScope` (`cmd_scope.go`), rewrites the
+entrypoint to `inner __scope -- CMD ARGS…` when the kernel has Landlock ABI 6.
+`__scope` locks its OS thread, calls `landlock.ScopeAbstractUnix`
+(`LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`, inherited across fork and exec, never
+lifted) and execs the real entrypoint, so the entrypoint keeps PID, terminal
+and exit status. It is fail-closed: a scope that the host said was supported
+but cannot be applied aborts the run. bwrap already sets `NO_NEW_PRIVS`, which
+unprivileged Landlock requires, so setuid behaviour inside the sandbox does not
+change. Skipped with `allow = ["abstract-sockets"]`, with an unfiltered
+abstract session bus (`RunConfig.KeepHostAbstractSockets`) and with
+`clipboard = true` on X11 (see [profiles](profiles.md#abstract-unix-sockets)).
 
 ### Allowlist mode: the proxy, the socket and the relay
 
@@ -467,7 +488,7 @@ The following resources are hidden by default:
 | `gpg-keys` | `~/.gnupg` | `--tmpfs` (empty dir) |
 | `git-credentials` | `~/.git-credentials` | `--bind /dev/null` |
 | `netrc` | `~/.netrc` | `--bind /dev/null` |
-| `docker-socket` | `/var/run/docker.sock` | `--bind /dev/null` |
+| `docker-socket` | `/var/run/docker.sock`, `/run/user/<uid>/docker.sock`, `~/.docker/desktop/docker.sock` | `--bind /dev/null` |
 | `podman-socket` | `/run/user/<uid>/podman/podman.sock` | `--bind /dev/null` |
 | `bash-history` | `~/.bash_history` | `--bind /dev/null` |
 | `zsh-history` | `~/.zsh_history` | `--bind /dev/null` |

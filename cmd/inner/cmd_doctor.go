@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/enr/inner/internal/landlock"
 	"github.com/enr/inner/internal/profile"
 	"github.com/enr/inner/internal/runtime"
 	"github.com/enr/inner/internal/setup"
@@ -62,6 +63,17 @@ func (a *App) doctor(w io.Writer) error {
 	case runtime.TIOCSTINoSysctl:
 		warnLine("terminal injection (TIOCSTI): not restricted by this kernel (older than 6.2) — a sandboxed process can type commands into your terminal; " +
 			"a kernel >= 6.2 with dev.tty.legacy_tiocsti = 0 closes it")
+	}
+
+	// ── host abstract unix sockets (Landlock scope) ──────────────────────────
+	// A network_mode = "full" sandbox shares the host network namespace, where
+	// the X server and other services listen on abstract sockets no mount can
+	// hide. inner scopes them away with Landlock when the kernel can.
+	if abi := landlockABI(); abi >= landlock.ScopeABI {
+		okLine(fmt.Sprintf("abstract unix sockets: host sockets blocked for network = full sandboxes (Landlock ABI %d)", abi))
+	} else {
+		warnLine(fmt.Sprintf("abstract unix sockets: not blocked (Landlock ABI %d, needs %d: Linux 6.12) — a network = full sandbox can reach the host X server and type into your windows; "+
+			"use network_mode = \"allowlist\" or \"off\" for untrusted agents", abi, landlock.ScopeABI))
 	}
 
 	// ── auto-init and profiles dir ───────────────────────────────────────────

@@ -58,6 +58,13 @@ func detectBwrap() (path, version string, ok bool) {
 	return path, version, true
 }
 
+// DetectDisplay returns the display server the isolator forwards for
+// [sandbox] clipboard, without the rest of Detect (which runs bwrap).
+func DetectDisplay() DisplayServer {
+	d, _, _ := detectDisplay()
+	return d
+}
+
 // detectDisplay returns the active display server and relevant socket paths.
 // Priority: Wayland > X11 > none.
 func detectDisplay() (DisplayServer, string, string) {

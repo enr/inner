@@ -28,12 +28,11 @@ import (
 // bus socket stays hidden (the session-bus hide rule, or the profile's tmpfs
 // over /run/user/<uid>).
 //
-// Fallbacks, both printed:
+// Fallbacks:
 //   - allow = ["session-bus"] in the profile asks for the unfiltered bus: the
 //     real socket is bound as before;
-//   - xdg-dbus-proxy missing or failing to start: the unfiltered bus as before,
-//     with a warning naming the risk, rather than a sandbox that breaks the
-//     token refresh it used to support.
+//   - xdg-dbus-proxy missing or failing to start: no bus at all, with a
+//     warning — the mid-session token refresh is lost, the sandbox is not.
 
 // sandboxDBusSocket is where the filtered bus appears inside the sandbox. /tmp
 // is a fresh tmpfs there, so bwrap can create the mount point.
@@ -164,11 +163,15 @@ func applyClaudeSessionBus(w io.Writer, rc *config.RunConfig) func() {
 
 	proxy, err := startDBusProxy(addr)
 	if err != nil {
+		// Fail closed: the whole bus would hand the sandbox
+		// org.freedesktop.systemd1, which starts processes outside it. Claude
+		// still starts; only a token refresh in the middle of a session needs
+		// the keyring.
 		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "inner: warning")+
-			": claude: cannot filter the session bus (%v) — passing the whole bus into the sandbox, "+
-			"where org.freedesktop.systemd1 can start processes outside it. Install xdg-dbus-proxy "+
-			"to restrict it to the keyring, or add allow = [\"session-bus\"] to the profile to accept this and silence the warning\n", err)
-		passSessionBusUnfiltered(rc, addr)
+			": claude: cannot filter the session bus (%v) — the sandbox gets no session bus, so the OAuth token "+
+			"cannot be refreshed mid-session. Install xdg-dbus-proxy to give it the keyring only, or add "+
+			"allow = [\"session-bus\"] to the profile to pass the whole bus (org.freedesktop.systemd1 on it "+
+			"can start processes outside the sandbox)\n", err)
 		return func() {}
 	}
 
@@ -195,6 +198,11 @@ func passSessionBusUnfiltered(rc *config.RunConfig, addr string) {
 	rc.Env.Inherit = append(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS")
 	sock := dbusSocketPath(addr)
 	if sock == "" {
+		// An abstract bus lives in the network namespace: the scope that keeps
+		// the sandbox off the host's abstract sockets would cut it off.
+		if strings.Contains(addr, "abstract=") {
+			rc.KeepHostAbstractSockets = true
+		}
 		return
 	}
 	if _, err := os.Stat(sock); err != nil {

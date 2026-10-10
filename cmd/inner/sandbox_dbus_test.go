@@ -131,8 +131,8 @@ func TestApplyClaudeSessionBus_filtered(t *testing.T) {
 	cleanup() // idempotent
 }
 
-// No proxy available: the pre-filter behaviour, plus a warning that names the
-// risk and the two ways out.
+// No proxy available: no bus at all (fail closed), plus a warning that names
+// the risk and the two ways out.
 func TestApplyClaudeSessionBus_fallbackWhenProxyMissing(t *testing.T) {
 	realBus := filepath.Join(t.TempDir(), "bus")
 	os.WriteFile(realBus, nil, 0o600) //nolint:errcheck
@@ -142,7 +142,7 @@ func TestApplyClaudeSessionBus_fallbackWhenProxyMissing(t *testing.T) {
 	rc := &config.RunConfig{}
 	applyClaudeSessionBus(&warn, rc)()
 
-	assertUnfilteredBus(t, rc, realBus)
+	assertNoBus(t, rc, realBus)
 	for _, want := range []string{"xdg-dbus-proxy", "systemd1", `allow = ["session-bus"]`} {
 		if !strings.Contains(warn.String(), want) {
 			t.Errorf("warning %q does not mention %q", warn.String(), want)
@@ -160,7 +160,7 @@ func TestApplyClaudeSessionBus_fallbackWhenProxyFails(t *testing.T) {
 	rc := &config.RunConfig{}
 	applyClaudeSessionBus(&warn, rc)()
 
-	assertUnfilteredBus(t, rc, realBus)
+	assertNoBus(t, rc, realBus)
 	if !strings.Contains(warn.String(), "cannot connect upstream") {
 		t.Errorf("warning should quote the proxy's error: %q", warn.String())
 	}
@@ -179,7 +179,7 @@ func TestApplyClaudeSessionBus_fallbackWhenProxyHangs(t *testing.T) {
 	rc := &config.RunConfig{}
 	applyClaudeSessionBus(&warn, rc)()
 
-	assertUnfilteredBus(t, rc, realBus)
+	assertNoBus(t, rc, realBus)
 	if !strings.Contains(warn.String(), "not ready") {
 		t.Errorf("warning should say the proxy was not ready: %q", warn.String())
 	}
@@ -277,5 +277,26 @@ func TestStartDBusProxy_real(t *testing.T) {
 	if err := exec.Command(dbusSend, "--bus=unix:path="+proxy.socket, "--print-reply",
 		"--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.ListNames").Run(); err == nil {
 		t.Error("the proxy socket still answers after stop()")
+	}
+}
+
+// assertNoBus checks that rc gives the sandbox no session bus: the address is
+// neither inherited nor set, and the real socket is neither bound nor exempt
+// from the session-bus hide rule.
+func assertNoBus(t *testing.T, rc *config.RunConfig, realBus string) {
+	t.Helper()
+	if slices.Contains(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS") {
+		t.Error("the host bus address must not be inherited without the filter")
+	}
+	if _, ok := rc.Env.Set["DBUS_SESSION_BUS_ADDRESS"]; ok {
+		t.Error("no bus address must be set without the filter")
+	}
+	for _, m := range rc.Mounts {
+		if m.Src == realBus || m.Dest == realBus || m.Dest == sandboxDBusSocket {
+			t.Errorf("bus mounted without the filter: %+v", m)
+		}
+	}
+	if slices.Contains(rc.HideExempt, realBus) {
+		t.Error("the real bus must stay hidden without the filter")
 	}
 }
