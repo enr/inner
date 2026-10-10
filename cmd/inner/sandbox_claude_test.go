@@ -814,7 +814,9 @@ func TestApplyClaude_inheritsDBusSessionBusAddress(t *testing.T) {
 	})
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 
-	rc := &config.RunConfig{}
+	// The unfiltered passthrough is the explicit opt-in: without it and without
+	// a working xdg-dbus-proxy the sandbox gets no bus (sandbox_dbus_test.go).
+	rc := &config.RunConfig{Allow: []string{"session-bus"}}
 	cleanup, err := applyClaude(rc)
 	if err != nil {
 		t.Fatalf("applyClaude: %v", err)
@@ -990,7 +992,7 @@ func TestApplyClaude_bindsDbusSocket(t *testing.T) {
 	}
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+sock+",guid=abc123")
 
-	rc := &config.RunConfig{}
+	rc := &config.RunConfig{Allow: []string{"session-bus"}}
 	cleanup, err := applyClaude(rc)
 	if err != nil {
 		t.Fatalf("applyClaude: %v", err)

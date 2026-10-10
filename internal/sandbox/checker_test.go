@@ -316,6 +316,37 @@ func TestCheck_dockerSocket_fail_when_socket_accepts(t *testing.T) {
 	}
 }
 
+func TestCheck_dockerSocket_coversDockerDesktopSocket(t *testing.T) {
+	// No DockerSocketPath: every docker-socket entry of the hide list is
+	// checked, Docker Desktop's under the home included. The home is kept short
+	// because sun_path is 108 bytes.
+	home, err := os.MkdirTemp("", "inner-h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	dir := filepath.Join(home, ".docker", "desktop")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", filepath.Join(dir, "docker.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	ch, _ := newChecker(t)
+	ch.HomeDir = home
+	ch.dialFn = net.DialTimeout
+	r := ch.checkDockerSocket()
+	if r.Passed {
+		t.Error("expected docker-socket to fail when the Docker Desktop socket accepts connections")
+	}
+	if !strings.Contains(r.Detail, "~/.docker/desktop/docker.sock") {
+		t.Errorf("detail should name the socket, got %q", r.Detail)
+	}
+}
+
 // ── netrc ─────────────────────────────────────────────────────────────────────
 
 func TestCheck_netrc_pass_when_absent(t *testing.T) {

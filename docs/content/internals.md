@@ -468,7 +468,7 @@ The following resources are hidden by default:
 | `gpg-keys` | `~/.gnupg` | `--tmpfs` (empty dir) |
 | `git-credentials` | `~/.git-credentials` | `--bind /dev/null` |
 | `netrc` | `~/.netrc` | `--bind /dev/null` |
-| `docker-socket` | `/var/run/docker.sock` | `--bind /dev/null` |
+| `docker-socket` | `/var/run/docker.sock`, `/run/user/<uid>/docker.sock`, `~/.docker/desktop/docker.sock` | `--bind /dev/null` |
 | `podman-socket` | `/run/user/<uid>/podman/podman.sock` | `--bind /dev/null` |
 | `bash-history` | `~/.bash_history` | `--bind /dev/null` |
 | `zsh-history` | `~/.zsh_history` | `--bind /dev/null` |

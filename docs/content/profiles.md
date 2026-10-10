@@ -713,7 +713,7 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `ssh-keys` | `~/.ssh/` directory (read-only) |
 | `git-credentials` | Git credential store / helpers |
 | `gpg-keys` | GPG keyring |
-| `docker-socket` | `/var/run/docker.sock` (Docker daemon socket) |
+| `docker-socket` | `/var/run/docker.sock` (Docker daemon socket), `/run/user/$UID/docker.sock` (rootless Docker), `~/.docker/desktop/docker.sock` (Docker Desktop) |
 | `podman-socket` | `/run/user/$UID/podman/podman.sock` (Podman rootless socket, per-user path) |
 | `nested-user-ns` | Unprivileged user namespaces inside sandbox (required for Podman) |
 | `netrc` | `~/.netrc` |
@@ -764,7 +764,7 @@ A profile that does not need the host home should use
 [`home = "isolated"`](#home-filesystem-model) instead — that is the allowlist
 model, and it is what the built-in agent profiles use.
 
-The two socket entries are distinct because they point to different paths: `docker-socket` is the system-level Docker daemon socket, while `podman-socket` is the per-user Podman rootless socket.
+The two socket keys are distinct because they point to different paths: `docker-socket` covers the Docker daemon sockets (system, rootless and Docker Desktop — each one is root-equivalent on your files, since `docker run -v $HOME:/h` writes the host home), while `podman-socket` is the per-user Podman rootless socket. When `docker.sock` is a symlink to the Podman socket (so that the docker CLI talks to Podman), `allow = ["podman-socket"]` is enough: a hide rule never covers a path that resolves to a resource the profile allows.
 
 > **Note on `DOCKER_HOST`:** unlocking `podman-socket` only bind-mounts the socket file into the sandbox. The `DOCKER_HOST` variable is **not** set automatically — you must add it explicitly in `[env]` so that Docker-compatible clients find the socket:
 >
@@ -1357,11 +1357,15 @@ name the token refresh needs, `org.freedesktop.secrets`, and points the
 sandbox's `DBUS_SESSION_BUS_ADDRESS` at the proxy socket
 (`/tmp/inner-dbus/bus`). The real bus socket stays hidden.
 
-If `xdg-dbus-proxy` is missing or fails to start, `inner` falls back to the
-previous behaviour — the unfiltered bus — and prints a warning each run.
-Install `xdg-dbus-proxy` to remove the warning; or, if you knowingly want the
-whole bus inside the sandbox, add `allow = ["session-bus"]` to the profile,
-which also silences it.
+If `xdg-dbus-proxy` is missing or fails to start, the sandbox gets **no**
+session bus and `inner` prints a warning each run: claude starts normally, but
+an OAuth token that expires in the middle of a session cannot be refreshed
+there. Install `xdg-dbus-proxy` to get the refresh back; or, if you knowingly
+want the whole bus inside the sandbox, add `allow = ["session-bus"]` to the
+profile.
+
+Even filtered, `org.freedesktop.secrets` is the whole Secret Service API: the
+sandbox can read every item of an unlocked keyring, not only Claude's token.
 
 ### Cross-session messaging socket
 

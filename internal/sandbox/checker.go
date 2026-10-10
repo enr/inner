@@ -190,7 +190,7 @@ type Checker struct {
 	ShimMountPath    string                                                                 // defaults to "/tmp/inner-shims"
 	MountInfoPath    string                                                                 // defaults to "/proc/self/mountinfo"
 	UID              string                                                                 // defaults to os.Getuid(); selects /run/user/<uid> in the hide list
-	DockerSocketPath string                                                                 // defaults to "/var/run/docker.sock"
+	DockerSocketPath string                                                                 // defaults to every docker-socket entry of the hide list
 	dialFn           func(network, address string, timeout time.Duration) (net.Conn, error) // defaults to net.DialTimeout
 }
 
@@ -432,21 +432,30 @@ func (c *Checker) checkDockerSocket() CheckResult {
 	// Judged like every other hidden socket (see resourceExposed): a hidden
 	// socket is a /dev/null bind, so the path exists either way and only a
 	// successful connect(2) proves access.
-	res := config.SensitiveResource{Key: "docker-socket", Path: c.dockerSocketPath()}
-	if exposed, detail := c.resourceExposed(res); exposed {
-		r.Passed = false
-		r.Detail = detail
-		return r
+	for _, res := range c.dockerSockets() {
+		if exposed, detail := c.resourceExposed(res); exposed {
+			r.Passed = false
+			r.Detail = tildify(c.homeDir(), detail)
+			return r
+		}
 	}
 	r.Passed = true
 	return r
 }
 
-func (c *Checker) dockerSocketPath() string {
+// dockerSockets returns the docker-socket entries of the hide list (system,
+// rootless and Docker Desktop), or only DockerSocketPath when a test set it.
+func (c *Checker) dockerSockets() []config.SensitiveResource {
 	if c.DockerSocketPath != "" {
-		return c.DockerSocketPath
+		return []config.SensitiveResource{{Key: "docker-socket", Path: c.DockerSocketPath}}
 	}
-	return "/var/run/docker.sock"
+	var out []config.SensitiveResource
+	for _, res := range config.SensitiveResources(c.homeDir(), c.uid()) {
+		if res.Key == "docker-socket" {
+			out = append(out, res)
+		}
+	}
+	return out
 }
 
 func (c *Checker) checkNetrc() CheckResult {

@@ -253,19 +253,34 @@ func validateAllowUnderIsolatedHome(r *Result, p *config.Profile) {
 	home = filepath.Clean(home)
 	prefixes := homeReexposingPrefixes(p)
 
+	// A key is neutralised only when every path it names is: docker-socket
+	// covers the system socket as well as Docker Desktop's under the home, and
+	// the system one still works under an isolated home.
+	var order []string
+	lost := map[string]string{} // key -> first path removed with the home
+	reachable := map[string]bool{}
 	for _, res := range config.SensitiveResources(home, strconv.Itoa(os.Getuid())) {
 		if !slices.Contains(p.Sandbox.Allow, res.Key) {
 			continue
 		}
-		if !config.PathCoveredBy([]string{home}, res.Path) {
-			continue // outside the home: the mode does not affect it
+		if !config.PathCoveredBy([]string{home}, res.Path) || config.PathCoveredBy(prefixes, res.Path) {
+			// Outside the home (the mode does not affect it), or something
+			// puts it back: the allow key does its job.
+			reachable[res.Key] = true
+			continue
 		}
-		if config.PathCoveredBy(prefixes, res.Path) {
-			continue // something puts it back, the allow key does its job
+		if _, seen := lost[res.Key]; !seen {
+			order = append(order, res.Key)
+			lost[res.Key] = res.Path
+		}
+	}
+	for _, key := range order {
+		if reachable[key] {
+			continue
 		}
 		r.addWarning(fmt.Sprintf(
 			"[sandbox] allow %q has no effect under home = \"isolated\": %s is removed with the rest of the home — add that path to home_allow (or a [mounts] entry) to make it reachable, or drop the allow key",
-			res.Key, res.Path))
+			key, lost[key]))
 	}
 }
 

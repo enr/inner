@@ -106,6 +106,10 @@ func SensitiveResources(home, uid string) []SensitiveResource {
 		{"git-credentials", join(".git-credentials"), false},
 		{"netrc", join(".netrc"), false},
 		{"docker-socket", "/var/run/docker.sock", false},
+		// Rootless Docker and Docker Desktop: the same API, owned by the user,
+		// so `docker run -v $HOME:/h` writes the host home from the sandbox.
+		{"docker-socket", "/run/user/" + uid + "/docker.sock", false},
+		{"docker-socket", join(".docker", "desktop", "docker.sock"), false},
 		{"podman-socket", "/run/user/" + uid + "/podman/podman.sock", false},
 		{"bash-history", join(".bash_history"), false},
 		{"zsh-history", join(".zsh_history"), false},

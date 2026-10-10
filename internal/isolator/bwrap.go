@@ -533,9 +533,30 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		homeIsolated := cfg.HomeIsolated()
 		uid := strconv.Itoa(os.Getuid())
 
+		evalSymlinks := b.evalSymlinksFn
+		if evalSymlinks == nil {
+			evalSymlinks = filepath.EvalSymlinks
+		}
+
 		// The table itself lives in the config package so that the profile
 		// validator can reason about the same list (see config.SensitiveResources).
-		for _, r := range config.SensitiveResources(home, uid) {
+		resources := config.SensitiveResources(home, uid)
+
+		// Where the resources the profile keeps visible really live. Two
+		// entries can name the same object through a symlink — a
+		// /run/user/<uid>/docker.sock linked to podman/podman.sock, so that the
+		// docker CLI talks to podman — and hiding one would then cover the
+		// other, which the profile allowed.
+		kept := make(map[string]bool)
+		for _, r := range resources {
+			if isAllowed(cfg.Allow, r.Key) || slices.Contains(cfg.HideExempt, r.Path) {
+				if resolved, err := evalSymlinks(r.Path); err == nil {
+					kept[resolved] = true
+				}
+			}
+		}
+
+		for _, r := range resources {
 			if isAllowed(cfg.Allow, r.Key) {
 				continue
 			}
@@ -567,10 +588,6 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 			// systems where /var/run is a symlink to /run, passing the
 			// unresolved path as a bind destination fails because bwrap
 			// cannot create a mount point through a symlink in the sandbox.
-			evalSymlinks := b.evalSymlinksFn
-			if evalSymlinks == nil {
-				evalSymlinks = filepath.EvalSymlinks
-			}
 			bindPath, err := evalSymlinks(r.Path)
 			if err != nil {
 				// r.Path exists (checked above) but EvalSymlinks failed — broken
@@ -596,6 +613,9 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 					continue
 				}
 				return nil, fmt.Errorf("hide %s: cannot resolve %s: %w", r.Key, r.Path, err)
+			}
+			if kept[bindPath] {
+				continue // the same object as an allowed resource (see kept)
 			}
 			switch placeholder, ok := cfg.HidePlaceholders[r.Path]; {
 			case r.Dir:
