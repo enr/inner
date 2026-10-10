@@ -219,8 +219,9 @@ keep `Build` free of side effects:
 
 1. **Planning and placeholders — host side, `prepareSandbox`.** `applyGitGuard`
    passes every `rw` mount (after the `safe-rw` step, so the mounts are final)
-   to `gitguard.Build`, which inspects the mount root and its direct
-   subdirectories for a `.git` entry and returns a `gitguard.Plan`, stored on
+   to `gitguard.Build`, which searches each mount breadth-first for `.git`
+   entries (at most 8 levels and 20000 directories, no symlinks, no
+   `node_modules`) and returns a `gitguard.Plan`, stored on
    `RunConfig.GitGuard`. `gitguard.Materialize` then creates the placeholders
    the read-only binds need: a path that does not exist cannot be a mount
    point, and the sandbox could otherwise create it. Placeholders are a

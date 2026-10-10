@@ -660,9 +660,12 @@ git_dir = "ro"   # the agent edits files; you review and commit outside
 ```
 
 The protection applies to every writable mount (the workdir, `rw` entries in
-`[mounts]`, `-m SRC:DEST:rw`), to the mount root and to its direct
-subdirectories, so a workdir that is a directory of projects is covered one
-level deep.
+`[mounts]`, `-m SRC:DEST:rw`) and to every repository inside it up to 8
+directory levels deep, so a workdir that is a tree of projects
+(`~/src/github.com/org/repo`) is covered too. The search does not follow
+symbolic links and skips `node_modules`; a workdir with more than 20000
+directories is not searched to the end, and the run starts with a warning
+saying so (narrow the workdir, or use `git_dir = "ro"`).
 
 **Placeholders.** A file that does not exist cannot be made read-only: the
 sandbox could simply create it. So `inner` creates a few placeholders on the

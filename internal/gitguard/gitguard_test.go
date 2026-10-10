@@ -143,22 +143,87 @@ func TestBuild_rw_protectsNothing(t *testing.T) {
 	}
 }
 
-func TestBuild_scansOneLevelDown(t *testing.T) {
+func TestBuild_scansNestedProjectTrees(t *testing.T) {
 	isolateHostConfig(t)
 	parent := t.TempDir()
-	gitdir := fakeRepo(t, filepath.Join(parent, "proj"), true)
-	fakeRepo(t, filepath.Join(parent, "a", "deep"), true) // two levels: not scanned
+	shallow := fakeRepo(t, filepath.Join(parent, "proj"), true)
+	// ~/src/github.com/org/repo layout: three levels below the mount.
+	deep := fakeRepo(t, filepath.Join(parent, "github.com", "org", "repo"), true)
+	// A repository nested inside another one's working tree.
+	nested := fakeRepo(t, filepath.Join(parent, "proj", "vendor", "lib"), true)
 
 	plan := Build(ModeProtected, []Mount{{Src: parent, Dest: parent}})
 
 	ro := roSrcs(plan)
-	if !slices.Contains(ro, filepath.Join(gitdir, "config")) {
-		t.Errorf("repository one level below the mount must be protected: %v", ro)
+	for _, gitdir := range []string{shallow, deep, nested} {
+		for _, f := range []string{"config", "hooks"} {
+			if want := filepath.Join(gitdir, f); !slices.Contains(ro, want) {
+				t.Errorf("ReadOnly is missing %s: %v", want, ro)
+			}
+		}
+	}
+	if len(plan.Warnings) > 0 {
+		t.Errorf("unexpected warnings: %v", plan.Warnings)
+	}
+}
+
+func TestBuild_scanSkipsNodeModulesAndSymlinks(t *testing.T) {
+	isolateHostConfig(t)
+	parent := t.TempDir()
+	fakeRepo(t, filepath.Join(parent, "node_modules", "pkg"), true)
+	outside := t.TempDir()
+	fakeRepo(t, filepath.Join(outside, "repo"), true)
+	if err := os.Symlink(outside, filepath.Join(parent, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := Build(ModeProtected, []Mount{{Src: parent, Dest: parent}})
+
+	if !plan.Empty() {
+		t.Errorf("node_modules and symlinked directories must not be searched: %+v", plan)
+	}
+}
+
+func TestBuild_scanDepthLimit(t *testing.T) {
+	isolateHostConfig(t)
+	old := maxScanDepth
+	maxScanDepth = 2
+	t.Cleanup(func() { maxScanDepth = old })
+	parent := t.TempDir()
+	atLimit := fakeRepo(t, filepath.Join(parent, "a", "b"), true)
+	fakeRepo(t, filepath.Join(parent, "a", "b", "c"), true) // depth 3: past the limit
+
+	plan := Build(ModeProtected, []Mount{{Src: parent, Dest: parent}})
+
+	ro := roSrcs(plan)
+	if !slices.Contains(ro, filepath.Join(atLimit, "config")) {
+		t.Errorf("repository at the depth limit must be protected: %v", ro)
 	}
 	for _, src := range ro {
-		if strings.Contains(src, filepath.Join("a", "deep")) {
-			t.Errorf("unexpected bind two levels down: %s", src)
+		if strings.Contains(src, filepath.Join("b", "c")) {
+			t.Errorf("unexpected bind past the depth limit: %s", src)
 		}
+	}
+}
+
+func TestBuild_scanBudgetWarns(t *testing.T) {
+	isolateHostConfig(t)
+	old := maxScanDirs
+	maxScanDirs = 3
+	t.Cleanup(func() { maxScanDirs = old })
+	parent := t.TempDir()
+	first := fakeRepo(t, filepath.Join(parent, "a"), true)
+	for _, d := range []string{"b", "c", "d"} {
+		fakeRepo(t, filepath.Join(parent, d), true)
+	}
+
+	plan := Build(ModeProtected, []Mount{{Src: parent, Dest: parent}})
+
+	if !slices.Contains(roSrcs(plan), filepath.Join(first, "config")) {
+		t.Errorf("repositories within the budget must still be protected: %v", roSrcs(plan))
+	}
+	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "too large") {
+		t.Errorf("an exhausted budget must be reported once: %v", plan.Warnings)
 	}
 }
 

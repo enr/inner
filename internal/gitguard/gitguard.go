@@ -115,6 +115,14 @@ func (p Plan) Empty() bool {
 // slashes, so a gitdir can sit several directories deep.
 const maxModuleDepth = 16
 
+// maxScanDepth and maxScanDirs bound the search for repositories in the
+// writable mounts (see scan): depth 0 is the mount root. Variables so the
+// tests can lower them.
+var (
+	maxScanDepth = 8
+	maxScanDirs  = 20000
+)
+
 type planner struct {
 	mode   string
 	mounts []Mount
@@ -133,9 +141,8 @@ type planner struct {
 // mode means ModeProtected. The mounts are inspected on the host filesystem;
 // Build writes nothing.
 //
-// For each mount, the mount root and its direct subdirectories are checked for
-// a .git entry, so a workdir that is a directory of projects is covered one
-// level deep.
+// Each mount is searched for .git entries up to maxScanDepth levels deep (see
+// scan), so a workdir that is a tree of projects is covered too.
 func Build(mode string, mounts []Mount) Plan {
 	if mode == "" {
 		mode = ModeProtected
@@ -176,18 +183,45 @@ func cleanMounts(in []Mount) []Mount {
 	return out
 }
 
+// scan looks for repositories in every writable mount, breadth-first, so that
+// a workdir laid out as a tree of projects (~/src/github.com/org/repo) gets
+// every repository protected, not only the ones at its root. The walk never
+// follows symbolic links and never enters a .git directory or node_modules
+// (dependency trees, where a repository the user runs git in does not live).
+// It is bounded by maxScanDepth and, across all mounts, by maxScanDirs: a
+// workdir too large to walk is reported, since the repositories past the
+// budget are left unprotected.
 func (p *planner) scan() {
+	type item struct {
+		dir   string
+		depth int
+	}
+	budget := maxScanDirs
 	for _, m := range p.mounts {
-		p.inspect(m.Src)
-		entries, err := os.ReadDir(m.Src)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if !e.IsDir() || e.Name() == ".git" {
+		queue := []item{{m.Src, 0}}
+		for len(queue) > 0 {
+			if budget == 0 {
+				p.warn("%s is too large to search for git repositories (more than %d directories): repositories deeper than the ones already found are not protected; use a narrower workdir or git_dir = \"ro\"", m.Src, maxScanDirs)
+				break
+			}
+			budget--
+			it := queue[0]
+			queue = queue[1:]
+			p.inspect(it.dir)
+			if it.depth == maxScanDepth {
 				continue
 			}
-			p.inspect(filepath.Join(m.Src, e.Name()))
+			entries, err := os.ReadDir(it.dir)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				// DirEntry.IsDir is false for a symlink, so links are not followed.
+				if !e.IsDir() || e.Name() == ".git" || e.Name() == "node_modules" {
+					continue
+				}
+				queue = append(queue, item{filepath.Join(it.dir, e.Name()), it.depth + 1})
+			}
 		}
 	}
 }
