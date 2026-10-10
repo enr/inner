@@ -293,7 +293,19 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// readable remainder only fingerprints the machine, and masking costs
 	// nothing. /proc/keys is masked for the same reason; the keys themselves
 	// stay reachable through keyctl(2), which only a seccomp filter can close.
+	//
+	// Skipped under nested-user-ns: the kernel lets a user namespace mount a
+	// fresh procfs or sysfs only when every mount already covering one is on
+	// an empty directory (mnt_already_visible), and these masks are not. With
+	// them, runc inside the sandbox fails at "error mounting proc" and podman
+	// with it. The container runtime masks its own /proc and /sys, so the
+	// containers are covered either way; the sandbox loses only fingerprinting
+	// noise.
+	nestedUserNS := isAllowed(cfg.Allow, "nested-user-ns")
 	for _, p := range maskedKernelPaths {
+		if nestedUserNS {
+			break
+		}
 		if !b.pathExists(p.path) {
 			continue
 		}

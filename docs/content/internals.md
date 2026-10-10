@@ -165,6 +165,12 @@ unreadable, and the rest identify the hardware — but it costs nothing. Masking
 `/proc/keys` does not hide the user's kernel keyrings: `keyctl(2)` still
 reaches them, and only a seccomp filter can close that.
 
+The masks are **not** applied when `nested-user-ns` is allowed. A user
+namespace may mount a fresh procfs or sysfs only if every mount already
+covering one sits on an empty directory, and these do not: with them, runc
+inside the sandbox fails with `error mounting "proc"` (and podman with it).
+The container runtime masks the containers' own `/proc` and `/sys`.
+
 
 `/dev/pts` is bound read-write from the host **only when the host's pty multiplexer, `/dev/pts/ptmx`, can be opened by the user running `inner`**. The bind exists because interactive TUI apps (Node.js/claude, gemini) call `ttyname_r()` internally to resolve their controlling terminal path (e.g. `/dev/pts/3`), and with bwrap's own fresh `devpts` instance that path does not exist inside the sandbox.
 

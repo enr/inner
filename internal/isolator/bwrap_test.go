@@ -203,6 +203,21 @@ func TestBuild_masksKernelPaths_afterProc(t *testing.T) {
 	}
 }
 
+func TestBuild_masksKernelPaths_notUnderNestedUserNS(t *testing.T) {
+	// The masks make the kernel refuse a fresh procfs/sysfs in a nested user
+	// namespace, which breaks runc (and podman) inside the sandbox.
+	iso := testIsolatorAllExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		Allow:      []string{"nested-user-ns"},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	})
+	for _, p := range maskedKernelPaths {
+		if slices.Contains(args, p.path) {
+			t.Errorf("%s masked under nested-user-ns: %v", p.path, args)
+		}
+	}
+}
+
 func TestBuild_masksKernelPaths_skipsMissing(t *testing.T) {
 	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "sh"}})
