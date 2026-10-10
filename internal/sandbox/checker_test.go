@@ -610,3 +610,63 @@ func TestReport_render_allowOverride_showsInfo(t *testing.T) {
 		t.Errorf("expected 'explicitly allowed' in output, got: %s", out)
 	}
 }
+
+// ── abstract-sockets ──────────────────────────────────────────────────────────
+
+// fakeProcNetUnix writes a /proc/net/unix with one line per abstract name.
+func fakeProcNetUnix(t *testing.T, names ...string) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("Num       RefCount Protocol Flags    Type St Inode Path\n")
+	for _, n := range names {
+		b.WriteString("0000000000000000: 00000002 00000000 00010000 0001 01 12345 " + n + "\n")
+	}
+	b.WriteString("0000000000000000: 00000002 00000000 00010000 0001 01 12346 /run/some.sock\n")
+	path := filepath.Join(t.TempDir(), "unix")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestCheck_abstractSockets_failWhenReachable(t *testing.T) {
+	l, err := net.Listen("unix", "@inner-verify-abstract-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+
+	ch, _ := newChecker(t)
+	ch.NetworkMode = config.NetworkFull
+	ch.dialFn = net.DialTimeout
+	ch.ProcNetUnixPath = fakeProcNetUnix(t, "@inner-verify-no-listener", l.Addr().String())
+	r := ch.checkAbstractSockets()
+	if r.Passed {
+		t.Error("expected abstract-sockets to fail when a host abstract socket accepts connections")
+	}
+	if !strings.Contains(r.Detail, "@inner-verify-abstract-test") {
+		t.Errorf("detail should name the socket, got %q", r.Detail)
+	}
+}
+
+func TestCheck_abstractSockets_passWhenRefused(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.NetworkMode = config.NetworkFull
+	ch.dialFn = net.DialTimeout
+	ch.ProcNetUnixPath = fakeProcNetUnix(t, "@inner-verify-no-listener")
+	if r := ch.checkAbstractSockets(); !r.Passed {
+		t.Errorf("expected pass when no abstract socket accepts, got %q", r.Detail)
+	}
+}
+
+func TestCheck_abstractSockets_passInPrivateNetns(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.NetworkMode = config.NetworkOff
+	ch.dialFn = func(string, string, time.Duration) (net.Conn, error) {
+		t.Fatal("no probe expected in a private network namespace")
+		return nil, nil
+	}
+	if r := ch.checkAbstractSockets(); !r.Passed {
+		t.Errorf("expected pass, got %q", r.Detail)
+	}
+}

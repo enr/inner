@@ -55,6 +55,9 @@ var ValidAllowKeys = []string{
 	"password-store", "keyrings", "onepassword-config", "browser-profiles",
 	// Host runtime sockets under $XDG_RUNTIME_DIR (see HostPrivilegeAllowKeys).
 	"session-bus", "systemd-user", "ssh-agent", "gpg-agent",
+	// The host's abstract unix sockets under network_mode = "full" (no
+	// filesystem path: lifts the Landlock scope, see internal/landlock).
+	"abstract-sockets",
 	// Verify-only declassification keys (no filesystem hide action).
 	"env-secrets", "shims-active", "network-policy",
 }

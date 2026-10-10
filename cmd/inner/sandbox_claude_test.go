@@ -25,6 +25,11 @@ func TestMain(m *testing.M) {
 	// that exercise the unfiltered passthrough independent of it. The proxy
 	// path has its own tests, which install a fake proxy explicitly.
 	dbusProxyLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	// Likewise the kernel's Landlock support: without this, every test that
+	// prepares a network_mode = "full" sandbox would see a different
+	// entrypoint on a 6.12+ kernel than on the CI runner. cmd_scope_test.go
+	// sets it explicitly.
+	landlockABI = func() int { return 0 }
 	if os.Getenv(fakeDBusProxyEnv) != "" {
 		os.Exit(fakeDBusProxyMain())
 	}

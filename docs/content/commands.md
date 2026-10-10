@@ -414,6 +414,7 @@ was actually built rather than what the file says.
 | `~/.netrc` not accessible | MEDIUM | `~/.netrc` must be absent or empty |
 | shims active in PATH | MEDIUM | Shim directory must be first in `PATH` |
 | network restricted | MEDIUM | TCP connection to 8.8.8.8:53 must fail |
+| host abstract unix sockets not reachable | HIGH | Under `network_mode = "full"`, no abstract socket listed in `/proc/net/unix` may accept a connection (needs Linux 6.12+, see `inner doctor`); passes in the other modes, which have a private network namespace |
 
 Custom checks can be added to a profile under `[verify.custom]` — see [Profiles](/inner/profiles/).
 
@@ -750,6 +751,7 @@ Checks performed:
   sudo sysctl -w dev.tty.legacy_tiocsti=0
   echo 'dev.tty.legacy_tiocsti = 0' | sudo tee /etc/sysctl.d/90-tiocsti.conf
   ```
+- Host abstract unix sockets blocked. A `network_mode = "full"` sandbox shares the host network namespace, where the X server listens on an abstract socket (`@/tmp/.X11-unix/X0`) that no mount can hide: through it a sandboxed process can type into any window of your session. On Linux 6.12+ (Landlock ABI 6) `inner` blocks the host's abstract sockets; on older kernels this line is a warning, and `network_mode = "allowlist"` or `"off"` is the way to keep an untrusted agent away from them.
 - `~/.config/inner/profiles/` directory exists and each profile is validated (unknown `allow` keys, missing mounts, etc.)
 - `~/.config/inner/logs/` directory exists
 - `ANTHROPIC_API_KEY` environment variable set

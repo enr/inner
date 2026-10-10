@@ -198,6 +198,11 @@ func passSessionBusUnfiltered(rc *config.RunConfig, addr string) {
 	rc.Env.Inherit = append(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS")
 	sock := dbusSocketPath(addr)
 	if sock == "" {
+		// An abstract bus lives in the network namespace: the scope that keeps
+		// the sandbox off the host's abstract sockets would cut it off.
+		if strings.Contains(addr, "abstract=") {
+			rc.KeepHostAbstractSockets = true
+		}
 		return
 	}
 	if _, err := os.Stat(sock); err != nil {

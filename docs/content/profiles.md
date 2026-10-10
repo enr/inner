@@ -704,6 +704,33 @@ warnings when the run starts.
 A profile downloaded from a URL cannot select `"rw"`: it is hardened to
 `"protected"` (see [`inner run` from a URL](commands.md#profiles-downloaded-from-a-url)).
 
+### Abstract unix sockets {#abstract-unix-sockets}
+
+Abstract unix sockets (`@name` in `/proc/net/unix`) belong to the network
+namespace, not to the filesystem, so no mount can hide them. A sandbox with
+`network_mode = "full"` shares the host's network namespace and could connect
+to all of them — the X server first of all (`@/tmp/.X11-unix/X0`), which lets
+a client type into any window of your session, with or without
+`clipboard = true`.
+
+On Linux 6.12 and later (Landlock ABI 6) `inner` starts the entrypoint through
+`inner __scope`, which applies a Landlock scope and then execs it: connections
+to abstract sockets created outside the sandbox are refused, while TCP,
+filesystem sockets (docker, podman, the bound D-Bus proxy) and the abstract
+sockets the sandbox creates itself keep working — nested Podman included. The
+other network modes need nothing: their network namespace is private.
+
+The scope is not applied:
+
+- with `allow = ["abstract-sockets"]`;
+- when the claude capability passes an unfiltered session bus whose address is
+  `unix:abstract=…`;
+- with `clipboard = true` on X11: that profile already hands the X server over,
+  and Xlib and xcb only fall back from the abstract socket to `/tmp/.X11-unix`
+  when it is missing, not when it is refused;
+- on older kernels — `inner doctor` warns, and the `inner verify` check
+  "host abstract unix sockets not reachable" fails.
+
 ### `allow` — sensitive resource opt-in
 
 By default `inner` blocks access to sensitive host resources. To grant access, list items in `allow`:
@@ -716,6 +743,7 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `docker-socket` | `/var/run/docker.sock` (Docker daemon socket), `/run/user/$UID/docker.sock` (rootless Docker), `~/.docker/desktop/docker.sock` (Docker Desktop) |
 | `podman-socket` | `/run/user/$UID/podman/podman.sock` (Podman rootless socket, per-user path) |
 | `nested-user-ns` | Unprivileged user namespaces inside sandbox (required for Podman) |
+| `abstract-sockets` | The host's abstract unix sockets under `network_mode = "full"` (the X server, an abstract D-Bus address, …). Blocked by default on Linux 6.12+ — see [abstract unix sockets](#abstract-unix-sockets) |
 | `netrc` | `~/.netrc` |
 | `aws-credentials` | `~/.aws/` |
 | `gcloud-credentials` | `~/.config/gcloud/` |

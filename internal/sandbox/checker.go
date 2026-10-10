@@ -191,6 +191,7 @@ type Checker struct {
 	MountInfoPath    string                                                                 // defaults to "/proc/self/mountinfo"
 	UID              string                                                                 // defaults to os.Getuid(); selects /run/user/<uid> in the hide list
 	DockerSocketPath string                                                                 // defaults to every docker-socket entry of the hide list
+	ProcNetUnixPath  string                                                                 // defaults to "/proc/net/unix"
 	dialFn           func(network, address string, timeout time.Duration) (net.Conn, error) // defaults to net.DialTimeout
 }
 
@@ -255,6 +256,7 @@ func (c *Checker) Run() Report {
 		c.checkHomeIsolated(),
 		c.checkShimsActive(),
 		c.checkNetworkPolicy(),
+		c.checkAbstractSockets(),
 	}
 	results = append(results, c.checkSensitiveResources()...)
 	for _, cc := range c.Custom {
@@ -632,6 +634,61 @@ func (c *Checker) checkNetworkPolicy() CheckResult {
 	conn.Close()
 	r.Passed = false
 	r.Detail = "TCP connection to 8.8.8.8:53 succeeded"
+	return r
+}
+
+// maxAbstractProbes bounds the connect attempts of checkAbstractSockets.
+const maxAbstractProbes = 64
+
+// checkAbstractSockets proves that the host's abstract unix sockets are out of
+// reach. They live in the network namespace, so only network_mode = "full"
+// can see them; there inner applies a Landlock scope (internal/landlock), and
+// this check is what tells a kernel without it apart from one with it.
+//
+// The candidates come from /proc/net/unix, which in the host network
+// namespace lists the host's sockets; one accepted connection fails the
+// check. Connecting has no effect on the listener beyond a client that
+// disconnects at once.
+func (c *Checker) checkAbstractSockets() CheckResult {
+	r := CheckResult{
+		ID:       "abstract-sockets",
+		Name:     "host abstract unix sockets not reachable",
+		Severity: SeverityHigh,
+		Suggest:  "use Linux 6.12 or later (Landlock ABI 6), where inner blocks them; or network_mode = \"allowlist\"; or allow = [\"abstract-sockets\"] to accept the exposure",
+		Passed:   true,
+	}
+	if c.NetworkMode != "" && c.NetworkMode != config.NetworkFull {
+		r.Detail = "private network namespace"
+		return r
+	}
+	path := c.ProcNetUnixPath
+	if path == "" {
+		path = "/proc/net/unix"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return r
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 8 || !strings.HasPrefix(fields[7], "@") || seen[fields[7]] {
+			continue
+		}
+		name := fields[7]
+		seen[name] = true
+		if len(seen) > maxAbstractProbes {
+			break
+		}
+		conn, err := c.dial("unix", name, 500*time.Millisecond)
+		if err != nil {
+			continue
+		}
+		conn.Close()
+		r.Passed = false
+		r.Detail = name + " accepts connections"
+		return r
+	}
 	return r
 }
 
