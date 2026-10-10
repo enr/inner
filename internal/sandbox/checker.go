@@ -434,12 +434,18 @@ func (c *Checker) checkDockerSocket() CheckResult {
 	// Judged like every other hidden socket (see resourceExposed): a hidden
 	// socket is a /dev/null bind, so the path exists either way and only a
 	// successful connect(2) proves access.
+	// Every exposed socket is named, not just the first: a host running both
+	// the system daemon and rootless Docker must learn about both.
+	var exposedDetails []string
 	for _, res := range c.dockerSockets() {
 		if exposed, detail := c.resourceExposed(res); exposed {
-			r.Passed = false
-			r.Detail = tildify(c.homeDir(), detail)
-			return r
+			exposedDetails = append(exposedDetails, tildify(c.homeDir(), detail))
 		}
+	}
+	if len(exposedDetails) > 0 {
+		r.Passed = false
+		r.Detail = strings.Join(exposedDetails, "; ")
+		return r
 	}
 	r.Passed = true
 	return r
