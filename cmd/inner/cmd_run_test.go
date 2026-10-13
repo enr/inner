@@ -1103,3 +1103,80 @@ func TestPrintDryRun_listsRuntimeShims(t *testing.T) {
 		t.Errorf("dry-run does not name the runtime shim:\n%s", out.String())
 	}
 }
+
+// ── start-failure diagnosis (ISS-18) ──────────────────────────────────────────
+
+// scriptIsolator stands in for bwrap with a shell: Build runs script with the
+// entrypoint as positional parameters ($0 = cmd, $@ = args), so a script can
+// fail like bwrap does or hand over to the entrypoint with `"$0" "$@"`.
+type scriptIsolator struct{ script string }
+
+func (s *scriptIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
+	args := append([]string{"-c", s.script, cfg.Entrypoint.Cmd}, cfg.Entrypoint.Args...)
+	return exec.Command("sh", args...), nil
+}
+func (s *scriptIsolator) Available() (bool, string) { return true, "script" }
+
+func runWithScriptIsolator(t *testing.T, script, profile string) (string, error) {
+	t.Helper()
+	app, dir := newRunTestApp(t)
+	app.isolatorFn = func() (isolator.Isolator, error) { return &scriptIsolator{script: script}, nil }
+	minimalProfile(t, dir, "p", profile)
+	var buf bytes.Buffer
+	err := app.runSandbox(&buf, runCLIFlags{profile: "p"}, nil)
+	return buf.String(), err
+}
+
+func TestRunSandbox_bwrapSetupFailureIsDiagnosed(t *testing.T) {
+	out, err := runWithScriptIsolator(t,
+		`echo "bwrap: Can't find source path /nope: No such file or directory" >&2; exit 1`,
+		"[entrypoint]\ncmd = \"sh\"\n")
+	var exitErr exitCoder
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("err = %v, want exit code 1", err)
+	}
+	if !strings.Contains(out, "sandbox did not start: mount source /nope does not exist on the host") {
+		t.Errorf("missing diagnosis; got:\n%s", out)
+	}
+	if !strings.Contains(out, "hint: ") {
+		t.Errorf("missing hint; got:\n%s", out)
+	}
+}
+
+func TestRunSandbox_missingEntrypointIsDiagnosed(t *testing.T) {
+	out, err := runWithScriptIsolator(t, `"$0" "$@"`,
+		"[entrypoint]\ncmd = \"inner-test-no-such-command\"\n")
+	if err == nil {
+		t.Fatal("expected a non-zero exit")
+	}
+	if !strings.Contains(out, "sandbox did not start: entrypoint inner-test-no-such-command was not found inside the sandbox") {
+		t.Errorf("missing diagnosis; got:\n%s", out)
+	}
+}
+
+// An entrypoint that starts and exits 1 on its own is not a start failure: the
+// probe succeeds and nothing is printed.
+func TestRunSandbox_entrypointExitOneIsNotDiagnosed(t *testing.T) {
+	out, err := runWithScriptIsolator(t, `"$0" "$@"`,
+		"[entrypoint]\ncmd = \"sh\"\nargs = [\"-c\", \"exit 1\"]\n")
+	var exitErr exitCoder
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("err = %v, want exit code 1", err)
+	}
+	if strings.Contains(out, "sandbox did not start") {
+		t.Errorf("unexpected diagnosis for the entrypoint's own exit code:\n%s", out)
+	}
+}
+
+// Exit codes a start failure cannot produce are passed through without a probe.
+func TestRunSandbox_otherExitCodesAreNotProbed(t *testing.T) {
+	out, err := runWithScriptIsolator(t,
+		`echo "bwrap: Can't find source path /nope: No such file or directory" >&2; exit 7`,
+		"[entrypoint]\ncmd = \"sh\"\n")
+	if err == nil {
+		t.Fatal("expected a non-zero exit")
+	}
+	if strings.Contains(out, "sandbox did not start") {
+		t.Errorf("exit code 7 should not be diagnosed:\n%s", out)
+	}
+}

@@ -279,6 +279,10 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	//        sanitized gitconfig, capability directories, safe-rw mounts.
 	//        Shared with `inner verify` so both commands build the same sandbox;
 	//        see sandboxOptions for the steps they deliberately differ on.
+	//        The entrypoint is recorded first: preparation can wrap it in
+	//        inner's own __scope / __net-relay, and a start-failure diagnosis
+	//        must look for the command the user asked for.
+	entrypoint := rc.Entrypoint.Cmd
 	cleanupPrep, err := prepareSandbox(rc, runSandboxOptions())
 	if err != nil {
 		return err
@@ -353,6 +357,8 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		return err
 	}
 	if result.ExitCode != 0 {
+		// 16. If the sandbox may never have started, say why in one line.
+		diagnoseStartFailure(w, iso, *rc, entrypoint, result.ExitCode)
 		return exitCodeError{code: result.ExitCode}
 	}
 	return nil

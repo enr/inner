@@ -19,7 +19,7 @@ tipo, priorità, dimensione stimata, fonti e dipendenze. Le issue "abilitanti"
 | **P2** | Reale ma con raggio d'azione limitato |
 | **P3** | Miglioria / da valutare su richiesta |
 
-**Ordine di lavoro consigliato:** ISS-18 → ISS-13 → ISS-08 → ISS-06
+**Ordine di lavoro consigliato:** ISS-13 → ISS-08 → ISS-06
 → ISS-14/15 → ISS-34, ISS-37 → resto.
 ISS-01, ISS-02, ISS-03, ISS-04, ISS-05, ISS-07, ISS-09, ISS-10, ISS-11, ISS-12,
 ISS-19, ISS-20 e ISS-21 sono chiuse; ISS-01/02/03 hanno
@@ -434,7 +434,7 @@ il figlio non lo dichiara (il nome ricavato dal file non conta come "definito"),
 quindi anche `RunConfig.Name` di un run riporta la base; `explain` usa il nome
 del layer richiesto.
 
-### ISS-18 · Triage amichevole dei fallimenti bwrap
+### ISS-18 · Triage amichevole dei fallimenti bwrap — **FATTO**
 `ux` · **P2** · Size S · Fonte: NONO_COMPARISON U5
 
 Mappare i fallimenti comuni (mount dest mancante, userns disabilitati,
@@ -442,6 +442,22 @@ quirk ptmx) a messaggi one-line azionabili che puntano a `inner doctor`,
 invece del solo exit code di bwrap.
 
 *Acceptance:* i tre casi citati producono messaggi specifici riconoscibili.
+
+*Stato:* con exit code 1, 126 o 127 `inner run` ricostruisce la stessa sandbox
+con un probe come entrypoint (`command -v` dell'entrypoint richiesto) e ne
+cattura lo stderr: la run reale non si può filtrare perché il terminale passa
+alla sandbox così com'è. Se fallisce anche il probe, `isolator.DiagnoseBwrapError`
+mappa l'errore di bwrap a una riga `error: sandbox did not start: …` + `hint:`:
+user namespace (con il sysctl colpevole: `unprivileged_userns_clone`,
+`max_user_namespaces`, `apparmor_restrict_unprivileged_userns`), sorgente di
+mount mancante, destinazione non creabile sotto la root read-only, devpts/ptmx,
+entrypoint non trovato (`execvp` o probe con 127). Probe riuscito = exit code
+dell'entrypoint stesso, nessun messaggio. `inner doctor` ora nomina anche
+`max_user_namespaces = 0` (errore) e la restrizione AppArmor (warning).
+Non coperto: `inner verify` (non usa ancora la diagnosi) e i fallimenti di
+`systemd-run` quando ci sono i resource limits (il probe gira senza wrapper).
+I messaggi user-namespace sono testati su stringhe note di bwrap, non riprodotti
+su macchina reale.
 
 ---
 
@@ -571,7 +587,7 @@ che in file leggibili dall'agente.
 |---|---|
 | **P0** | — (ISS-01, ISS-02, ISS-03 chiuse; firma e2e con `.sdlc/e2e-security`) |
 | **P1** | ~~ISS-04~~ · ~~ISS-05~~ · ISS-06 credential injection · ~~ISS-07~~ · ISS-08 run-ID + `--json` |
-| **P2** | ~~ISS-09~~ · ~~ISS-10~~ · ~~ISS-11~~ · ~~ISS-12~~ · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ~~ISS-17~~ · ISS-18 triage bwrap |
+| **P2** | ~~ISS-09~~ · ~~ISS-10~~ · ~~ISS-11~~ · ~~ISS-12~~ · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ~~ISS-17~~ · ~~ISS-18~~ |
 | **P2** (nuove) | ISS-34 copertura denylist |
 | **P3** | ~~ISS-19~~ · ~~ISS-20~~ · ~~ISS-21~~ · ISS-22…ISS-30 · ISS-37 residui gate remoto (parziale) |
 

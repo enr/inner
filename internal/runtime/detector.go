@@ -86,15 +86,67 @@ func detectDisplay() (DisplayServer, string, string) {
 	return DisplayNone, "", ""
 }
 
-// checkUserNamespaces returns true if unprivileged user namespaces are enabled.
-// On kernels that do not expose the sysctl, we assume they are enabled.
+// checkUserNamespaces returns true if nothing on the host stops an
+// unprivileged user from creating a user namespace. On kernels that do not
+// expose the sysctls, we assume they are enabled.
 func checkUserNamespaces() bool {
-	data, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone")
-	if err != nil {
-		// Sysctl not present — most distros default to enabled.
-		return true
+	for _, r := range UserNSRestrictions() {
+		if r.Blocking {
+			return false
+		}
 	}
-	return strings.TrimSpace(string(data)) == "1"
+	return true
+}
+
+// UserNSRestriction is a host setting that can stop bwrap from creating the
+// sandbox's user namespace.
+type UserNSRestriction struct {
+	Setting string // the sysctl and its value, e.g. "kernel.unprivileged_userns_clone = 0"
+	Fix     string // what to do about it
+	// Blocking is false for the AppArmor restriction: it only blocks programs
+	// whose AppArmor profile does not allow user namespaces, and distributions
+	// that enable it usually ship such a profile for bwrap.
+	Blocking bool
+}
+
+// sysctlDir is where UserNSRestrictions reads the sysctls. A package variable
+// so tests can point it at a fixture.
+var sysctlDir = "/proc/sys"
+
+// UserNSRestrictions lists the host settings that restrict unprivileged user
+// namespaces. Missing sysctls restrict nothing.
+func UserNSRestrictions() []UserNSRestriction {
+	read := func(name string) string {
+		data, err := os.ReadFile(filepath.Join(sysctlDir, filepath.FromSlash(name)))
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(data))
+	}
+	var out []UserNSRestriction
+	if read("kernel/unprivileged_userns_clone") == "0" {
+		out = append(out, UserNSRestriction{
+			Setting:  "kernel.unprivileged_userns_clone = 0",
+			Fix:      "sudo sysctl -w kernel.unprivileged_userns_clone=1 (persist it in /etc/sysctl.d/)",
+			Blocking: true,
+		})
+	}
+	if read("user/max_user_namespaces") == "0" {
+		out = append(out, UserNSRestriction{
+			Setting:  "user.max_user_namespaces = 0",
+			Fix:      "sudo sysctl -w user.max_user_namespaces=15000 (persist it in /etc/sysctl.d/)",
+			Blocking: true,
+		})
+	}
+	if read("kernel/apparmor_restrict_unprivileged_userns") == "1" {
+		out = append(out, UserNSRestriction{
+			Setting: "kernel.apparmor_restrict_unprivileged_userns = 1",
+			Fix: "bwrap needs an AppArmor profile that allows user namespaces " +
+				"(Ubuntu ships one in the apparmor package: /etc/apparmor.d/bwrap-userns-restrict); " +
+				"check it is loaded with 'sudo aa-status', or for a bwrap outside /usr/bin add a profile with 'userns,'",
+		})
+	}
+	return out
 }
 
 // TIOCSTIStatus says whether a process that shares the user's terminal can

@@ -48,6 +48,14 @@ func (a *App) doctor(w io.Writer) error {
 	} else {
 		errLine("user namespaces: disabled (bwrap requires unprivileged user namespaces)")
 	}
+	for _, r := range runtime.UserNSRestrictions() {
+		line := "user namespaces: " + r.Setting + " — " + r.Fix
+		if r.Blocking {
+			errLine(line)
+		} else {
+			warnLine(line)
+		}
+	}
 
 	// ── terminal injection (TIOCSTI) ─────────────────────────────────────────
 	// The sandbox shares the terminal inner was started from (inner runs no

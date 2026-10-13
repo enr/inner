@@ -188,6 +188,31 @@ The `resource limits` block shows the **effective** caps for this exact run
 [`[sandbox.limits]`](profiles.md#sandbox-limits-resource-limits) for how the
 values are resolved and auto-detected.
 
+### When the sandbox does not start
+
+If the sandbox exits with a code that a start failure can produce (1, 126 or
+127), `inner` rebuilds the same sandbox with a tiny probe as the entrypoint and
+reads bwrap's error from it (the real run hands the terminal to the sandbox
+unfiltered, so its stderr cannot be captured). When the probe fails too, one
+actionable line follows bwrap's own message:
+
+```
+bwrap: execvp claude: No such file or directory
+error: sandbox did not start: entrypoint claude was not found inside the sandbox
+  hint: check that it is installed and on the sandbox PATH ([env] path_prepend); with home = "isolated", list its directory in [sandbox] home_allow
+```
+
+| bwrap error | Diagnosis |
+|---|---|
+| `No permissions to create new namespace`, `setting up uid map`, `loopback: Failed RTM_NEWADDR`, … | user namespaces disabled or restricted; the hint names the sysctl at fault (`kernel.unprivileged_userns_clone`, `user.max_user_namespaces`, `kernel.apparmor_restrict_unprivileged_userns`) |
+| `Can't find source path P` | mount source missing on the host |
+| `Can't mkdir P`, `Can't create file at P` | mount destination cannot be created under the read-only host root |
+| messages about `ptmx` / `devpts` | pseudo-terminal setup |
+| `execvp CMD` (or the probe cannot find `CMD`) | entrypoint not on the sandbox PATH |
+
+When the probe succeeds the sandbox did start, the exit code is the
+entrypoint's own, and nothing is added.
+
 ---
 
 ## `inner profile`
@@ -779,7 +804,7 @@ inner doctor
 Checks performed:
 
 - `bwrap` binary found and version reported
-- Unprivileged user namespaces supported
+- Unprivileged user namespaces supported, naming the setting that blocks them: `kernel.unprivileged_userns_clone = 0` (Debian) or `user.max_user_namespaces = 0` are errors; `kernel.apparmor_restrict_unprivileged_userns = 1` (Ubuntu 23.10+) is a warning, since it only blocks a bwrap without an AppArmor profile that allows user namespaces
 - Terminal injection (`TIOCSTI`) blocked by the kernel. The sandbox shares the terminal `inner` was started from, so on a kernel that allows `ioctl(TIOCSTI)` a sandboxed process can type commands your shell runs after the sandbox exits. Linux 6.2+ can refuse it (`dev.tty.legacy_tiocsti = 0`); older kernels cannot. A warning names the fix:
 
   ```bash
