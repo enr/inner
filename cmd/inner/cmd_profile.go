@@ -24,6 +24,7 @@ func (a *App) newProfileCmd() *cobra.Command {
 	cmd.AddCommand(
 		a.profileListCmd(),
 		a.profileShowCmd(),
+		a.profileExplainCmd(),
 		a.profileValidateCmd(),
 		a.profileNewCmd(),
 		a.profileEditCmd(),
@@ -287,6 +288,114 @@ func (a *App) profileShowExplain(w io.Writer, nameOrPath string) error {
 		printCapabilityExplain(w, name, cap.Explain())
 	}
 	return nil
+}
+
+// profileExplain writes the effective policy of a profile: its extends chain,
+// then every value of the merged profile grouped by TOML table, each tagged
+// with the layer that set it ("[default]" when no layer does), followed by the
+// resolved network settings and the capabilities, as in `profile show --explain`.
+func (a *App) profileExplain(w io.Writer, nameOrPath string) error {
+	e, err := a.loader.ExplainProfile(nameOrPath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(w, "profile: %s\n", e.Name)
+	fmt.Fprintln(w, "chain (base first, later layers win):")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for i, l := range e.Layers {
+		if l.Label == l.Path {
+			fmt.Fprintf(tw, "  %d.\t%s\n", i+1, tildePath(l.Path))
+			continue
+		}
+		fmt.Fprintf(tw, "  %d.\t%s\t%s\n", i+1, l.Label, tildePath(l.Path))
+	}
+	tw.Flush()
+
+	section, lastKey := "", ""
+	for _, v := range e.Values {
+		sec, key := explainSection(v.Key)
+		if sec != section {
+			tw.Flush()
+			section, lastKey = sec, ""
+			fmt.Fprintln(w)
+			printExplainHeader(w, sec)
+		}
+		// Elements of one list or map share their key: print it once.
+		shownKey := key
+		if key == lastKey {
+			shownKey = ""
+		}
+		lastKey = key
+		layer := "default"
+		if v.Layer != "" {
+			layer = tildePath(v.Layer)
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t[%s]\n", shownKey, explainValue(v), layer)
+	}
+	tw.Flush()
+
+	fmt.Fprintln(w)
+	printProfileNetwork(w, e.Profile)
+	for _, name := range e.Profile.Capabilities {
+		cap, ok := capabilityRegistry[name]
+		if !ok {
+			continue
+		}
+		fmt.Fprintln(w)
+		printCapabilityExplain(w, name, cap.Explain())
+	}
+	return nil
+}
+
+// tildePath abbreviates a path under the home directory to ~/….
+func tildePath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(filepath.Separator)) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
+// explainSection splits a dotted profile key into the TOML table it belongs to
+// and the key within that table. Top-level keys belong to "profile", except
+// [mounts], which is a table of its own.
+func explainSection(key string) (section, rest string) {
+	sec, rest, ok := strings.Cut(key, ".")
+	if !ok {
+		if key == "mounts" {
+			// The [mounts] table: its entries are keyed by source path.
+			return "mounts", ""
+		}
+		return "profile", key
+	}
+	if sec == "verify" {
+		// verify.custom.checks is the only verify key: name the section after it.
+		return "verify.custom", strings.TrimPrefix(rest, "custom.")
+	}
+	return sec, rest
+}
+
+// explainValue renders one explained value for the explain table.
+func explainValue(v config.ExplainedValue) string {
+	switch {
+	case v.Item == "":
+		return v.Value
+	case v.Key == "mounts":
+		return v.Item + " → " + v.Value
+	case v.Key == "verify.custom.checks":
+		return v.Item + ": " + v.Value
+	case v.Value != "":
+		return v.Item + " = " + v.Value
+	default:
+		return v.Item
+	}
 }
 
 // printProfileNetwork writes the effective network settings of a merged
@@ -680,6 +789,30 @@ func (a *App) profileShowCmd() *cobra.Command {
 		return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault
 	}
 	return cmd
+}
+
+func (a *App) profileExplainCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "explain [NAME|PATH]",
+		Short: "Show the effective policy of a profile and which layer set each value",
+		Long: "Show the effective policy of a profile (name or file path): the extends\n" +
+			"chain, then every value of the merged profile with the layer that set it.\n\n" +
+			"Scalars belong to the last layer that sets them, list elements to the first\n" +
+			"layer that adds them, map entries to the last layer that sets the key.\n" +
+			"[default] marks a built-in value no layer sets.\n\n" +
+			"With no argument it explains the current profile.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := a.loader.DefaultProfileName()
+			if len(args) > 0 {
+				target = args[0]
+			}
+			return a.profileExplain(cmd.OutOrStdout(), target)
+		},
+		ValidArgsFunction: func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+			return a.loader.ProfileNames(), cobra.ShellCompDirectiveDefault
+		},
+	}
 }
 
 func (a *App) profileValidateCmd() *cobra.Command {

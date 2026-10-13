@@ -19,7 +19,7 @@ tipo, priorità, dimensione stimata, fonti e dipendenze. Le issue "abilitanti"
 | **P2** | Reale ma con raggio d'azione limitato |
 | **P3** | Miglioria / da valutare su richiesta |
 
-**Ordine di lavoro consigliato:** ISS-17 + ISS-18 → ISS-13 → ISS-08 → ISS-06
+**Ordine di lavoro consigliato:** ISS-18 → ISS-13 → ISS-08 → ISS-06
 → ISS-14/15 → ISS-34, ISS-37 → resto.
 ISS-01, ISS-02, ISS-03, ISS-04, ISS-05, ISS-07, ISS-09, ISS-10, ISS-11, ISS-12,
 ISS-19, ISS-20 e ISS-21 sono chiuse; ISS-01/02/03 hanno
@@ -410,7 +410,7 @@ Permettere esperimenti senza editare TOML: `--allow <key>` (chiavi di
 *Acceptance:* `inner run --block rm …` blocca `rm` senza profilo dedicato;
 `--dry-run` riflette i flag.
 
-### ISS-17 · `inner profile explain <name>`: policy effettiva della catena `extends`
+### ISS-17 · `inner profile explain <name>`: policy effettiva della catena `extends` — **FATTO**
 `ux` · **P2** · Size M · Fonte: NONO_COMPARISON U4
 
 Vista orientata al profilo (non al run come `--dry-run`) del merge finale:
@@ -420,6 +420,19 @@ valore. Riusa il plumbing `Explain` delle capability. Rende banale il debug di
 
 *Acceptance:* per un profilo con 2 livelli di `extends`, l'output attribuisce
 correttamente ogni valore al layer che lo definisce.
+
+*Stato:* `inner profile explain [NAME|PATH]` stampa la catena (base per prima)
+e ogni valore del profilo fuso con il layer che lo imposta, seguendo le regole
+di `mergeProfiles`: scalari → ultimo layer che li definisce, elementi di lista →
+primo layer che li aggiunge, chiavi di mappa → ultimo layer che le imposta,
+`[default]` per i valori built-in. Seguono le sezioni rete e capability di
+`profile show --explain`. Il loader espone la catena (`loadProfileChain`) e
+`config.ExplainProfile` calcola la provenienza; un test fallisce se
+`mergeProfiles` acquisisce un campo che la provenienza non attribuisce.
+Effetto collaterale notato: il profilo fuso eredita il `name` della base quando
+il figlio non lo dichiara (il nome ricavato dal file non conta come "definito"),
+quindi anche `RunConfig.Name` di un run riporta la base; `explain` usa il nome
+del layer richiesto.
 
 ### ISS-18 · Triage amichevole dei fallimenti bwrap
 `ux` · **P2** · Size S · Fonte: NONO_COMPARISON U5
@@ -558,7 +571,7 @@ che in file leggibili dall'agente.
 |---|---|
 | **P0** | — (ISS-01, ISS-02, ISS-03 chiuse; firma e2e con `.sdlc/e2e-security`) |
 | **P1** | ~~ISS-04~~ · ~~ISS-05~~ · ISS-06 credential injection · ~~ISS-07~~ · ISS-08 run-ID + `--json` |
-| **P2** | ~~ISS-09~~ · ~~ISS-10~~ · ~~ISS-11~~ · ~~ISS-12~~ · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ISS-17 profile explain · ISS-18 triage bwrap |
+| **P2** | ~~ISS-09~~ · ~~ISS-10~~ · ~~ISS-11~~ · ~~ISS-12~~ · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ~~ISS-17~~ · ISS-18 triage bwrap |
 | **P2** (nuove) | ISS-34 copertura denylist |
 | **P3** | ~~ISS-19~~ · ~~ISS-20~~ · ~~ISS-21~~ · ISS-22…ISS-30 · ISS-37 residui gate remoto (parziale) |
 

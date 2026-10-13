@@ -1168,3 +1168,82 @@ name = "plain2"
 		t.Errorf("expected the network section, got:\n%s", out)
 	}
 }
+
+// TestProfileExplain_attributesEachValueToItsLayer covers ISS-17 end to end:
+// with leaf → mid → base, the output lists the chain and tags each value with
+// the layer that set it.
+func TestProfileExplain_attributesEachValueToItsLayer(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[sandbox]
+home = "host-ro"
+allow = ["ssh-agent"]
+
+[env]
+inherit = ["TERM"]
+`)
+	writeTestFile(t, filepath.Join(dir, "profiles", "mid.toml"), `
+extends = "base"
+capabilities = ["claude"]
+
+[sandbox]
+home = "isolated"
+
+[mounts]
+"/src" = { dest = "/work", mode = "rw" }
+`)
+	writeTestFile(t, filepath.Join(dir, "profiles", "leaf.toml"), `
+extends = "mid"
+
+[sandbox]
+allow = ["gpg-agent"]
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileExplain(&buf, "leaf"); err != nil {
+		t.Fatalf("profileExplain: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "profile: leaf\n") {
+		t.Errorf("expected the requested profile's name in the header; got:\n%s", out)
+	}
+	lineWith := func(parts ...string) bool {
+		for _, line := range strings.Split(out, "\n") {
+			ok := true
+			for _, p := range parts {
+				ok = ok && strings.Contains(line, p)
+			}
+			if ok {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range [][]string{
+		{"1.", "base", "base.toml"},
+		{"2.", "mid", "mid.toml"},
+		{"3.", "leaf", "leaf.toml"},
+		{"home", `"isolated"`, "[mid]"},
+		{"allow", "ssh-agent", "[base]"},
+		{"gpg-agent", "[leaf]"},
+		{"inherit", "TERM", "[base]"},
+		{"capabilities", "claude", "[mid]"},
+		{"/src → /work (rw)", "[mid]"},
+		{"network_mode", `"off"`, "[default]"},
+		{"── network"},
+		{"── capability: claude"},
+	} {
+		if !lineWith(want...) {
+			t.Errorf("expected a line with %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestProfileExplain_unknownProfile(t *testing.T) {
+	app, _ := newTestApp(t)
+	var buf bytes.Buffer
+	if err := app.profileExplain(&buf, "missing"); err == nil {
+		t.Fatal("expected an error for a missing profile")
+	}
+}

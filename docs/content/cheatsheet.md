@@ -23,6 +23,7 @@ weight: 7
 | List with paths & shadowed | `inner profile list -w` |
 | View profile TOML | `inner profile show <name>` |
 | Explain capabilities/mounts | `inner profile show <name> --explain` |
+| Which layer set each value | `inner profile explain <name>` |
 | Create from template | `inner profile new <name>` |
 | Edit in `$EDITOR` | `inner profile edit <name>` |
 | Clone a profile | `inner profile clone <src> <dest>` |

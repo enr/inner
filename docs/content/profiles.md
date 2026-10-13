@@ -224,6 +224,8 @@ timeout_seconds = 7200       # overrides base value
 
 Inheritance chains are supported — `A extends B extends C` produces the result of applying B on C, then A on that. Cycles are detected and reported as an error.
 
+`inner profile explain A` shows the merged result with the layer each value comes from.
+
 ### `extends` resolution
 
 If the value contains `/`, starts with `~`, or is an absolute path, it is treated as a file path (with `~` expansion). Otherwise it is looked up by name in `~/.config/inner/profiles/`.

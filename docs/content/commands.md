@@ -292,6 +292,41 @@ capability defaults, a `@group` reference, or the profile itself:
     telemetry.example.com
 ```
 
+### `inner profile explain`
+
+Show the effective policy of a profile: the `extends` chain, then every value of
+the merged profile with the layer that set it. With no argument it explains the
+current profile.
+
+```bash
+inner profile explain leaf
+```
+
+```
+profile: leaf
+chain (base first, later layers win):
+  1.  base  ~/.config/inner/profiles/base.toml
+  2.  mid   ~/.config/inner/profiles/mid.toml
+  3.  leaf  ~/.config/inner/profiles/leaf.toml
+
+── sandbox ───────────────────────────────────────────────────────
+  network_mode   "allowlist"  [mid]
+  allow          ssh-agent    [base]
+                 gpg-agent    [leaf]
+  home           "isolated"   [mid]
+
+── mounts ────────────────────────────────────────────────────────
+    ~/src → /work (rw)  [mid]
+```
+
+The attribution follows the merge rules of `extends`: a scalar belongs to the
+last layer that sets it, a list element to the first layer that adds it, a map
+entry (`[mounts]`, `[env] set`, …) to the last layer that sets its key.
+`[default]` marks a built-in value that no layer sets. When two layers share a
+name (a local profile extending the global one of the same name) they are
+labelled by path. The network and capability sections of `profile show
+--explain` follow.
+
 ### `inner profile new`
 
 Create a new profile from a template, then open it in `$EDITOR`:
