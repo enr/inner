@@ -19,9 +19,10 @@ tipo, priorità, dimensione stimata, fonti e dipendenze. Le issue "abilitanti"
 | **P2** | Reale ma con raggio d'azione limitato |
 | **P3** | Miglioria / da valutare su richiesta |
 
-**Ordine di lavoro consigliato:** ISS-08 → ISS-17 → ISS-06 → bug P2 (ISS-10…14)
-→ ISS-18/19 → ISS-34…37 → resto.
-ISS-01, ISS-02, ISS-03, ISS-04, ISS-05 e ISS-07 sono chiuse; ISS-01/02/03 hanno
+**Ordine di lavoro consigliato:** ISS-17 + ISS-18 → ISS-13 → ISS-08 → ISS-06
+→ ISS-14/15 → ISS-34, ISS-37 → resto.
+ISS-01, ISS-02, ISS-03, ISS-04, ISS-05, ISS-07, ISS-09, ISS-10, ISS-11, ISS-12,
+ISS-19, ISS-20 e ISS-21 sono chiuse; ISS-01/02/03 hanno
 avuto un secondo giro di fix (buchi residui e regressioni trovati in analisi),
 da firmare con `.sdlc/e2e-security` su macchina reale. ISS-06 (credential injection) puo'
 partire: si appoggia al proxy di ISS-05, ora in tree.
@@ -185,6 +186,12 @@ workdir). Altri errori di risoluzione restano fatali.
   bus host resta raggiungibile dal namespace di rete condiviso anche col proxy;
 - l'euristica dei nomi env "segreti" resta una denylist.
 
+*Stato parziale:* il secondo punto è chiuso su Linux 6.12+ (Landlock ABI 6):
+con `network = full` l'entrypoint parte via `inner __scope`, che rifiuta i
+socket astratti dell'host. Resta aperto su kernel più vecchi, con
+`allow = ["abstract-sockets"]`, con un session bus astratto non filtrato e con
+`clipboard = true` su X11 (`inner doctor`/`inner verify` lo segnalano).
+
 ---
 
 ## P1 — Alto impatto
@@ -300,7 +307,7 @@ il run ID stampato è riutilizzabile con `inner log`.
 
 ## P2 — Bug reali a raggio limitato
 
-### ISS-09 · `parseMount` CLI rifiuta `safe-rw`/`tmpfs`
+### ISS-09 · `parseMount` CLI rifiuta `safe-rw`/`tmpfs` — **FATTO**
 `bug` · **P2** · Size S · Fonte: SECURITY_REVIEW #4
 
 I profili accettano 4 modi di mount, il flag `-m SRC:DEST[:MODE]` solo
@@ -309,7 +316,11 @@ che non ha sorgente host). Messaggio d'errore con l'elenco completo dei modi.
 
 *Acceptance:* table test su tutti i modi validi + uno invalido.
 
-### ISS-10 · Rollback incompleto su fallimento parziale di `MkdirAll` nei workspace
+*Stato:* `-m` accetta `ro`/`rw`/`safe-rw`; `tmpfs` è rifiutato con un messaggio
+che rimanda alla tabella `[mounts]` del profilo (non ha sorgente host). Table
+test in `cmd/inner/cmd_run_test.go`.
+
+### ISS-10 · Rollback incompleto su fallimento parziale di `MkdirAll` nei workspace — **FATTO**
 `bug` · **P2** · Size S · Fonte: SECURITY_REVIEW #5
 
 In `internal/workspace/manager.go` le directory da creare sono aggiunte alla
@@ -320,7 +331,10 @@ catena lascia directory orfane. Registrare `dirsToCreate(dest)` in `created`
 *Acceptance:* test con mkdir che fallisce a metà catena → nessuna directory
 residua.
 
-### ISS-11 · `extractExpiresAt` itera una map → decisione token nondeterministica
+*Stato:* `dirsToCreate(dest)` entra in `created` prima di `MkdirAll`. Test:
+`TestPrepareRollbackCleansIntermediateDirs`.
+
+### ISS-11 · `extractExpiresAt` itera una map → decisione token nondeterministica — **FATTO**
 `bug` · **P2** · Size S · Fonte: SECURITY_REVIEW #6
 
 Con più oggetti annidati che portano un campo di scadenza, il valore restituito
@@ -331,7 +345,10 @@ di priorità, o la scadenza più vicina).
 *Acceptance:* unit test con due `expiresAt` annidati → stesso valore su molte
 esecuzioni.
 
-### ISS-12 · `checkUsrReadonly` fail-open (deduce read-only da una write fallita)
+*Stato:* raccoglie tutti i candidati e sceglie la scadenza più vicina. Test:
+`TestExtractExpiresAt_multipleNestedObjects_deterministic`.
+
+### ISS-12 · `checkUsrReadonly` fail-open (deduce read-only da una write fallita) — **FATTO**
 `bug` `security` · **P2** · Size S · Fonte: SECURITY_REVIEW #8
 
 Un check di sicurezza che può solo "passare in silenzio" dà falsa assicurazione
@@ -341,6 +358,10 @@ sistemare il test (skip con uid 0 o `UsrDir` iniettata realmente read-only).
 
 *Acceptance:* il check riporta correttamente lo stato in-sandbox e la suite
 passa anche da root.
+
+*Stato:* il check legge il flag `ro` del mount che copre `/usr` da
+`/proc/self/mountinfo`; fallisce (non passa) se il file non è leggibile o
+nessun mount lo copre.
 
 ### ISS-13 · Deny anche sul path canonico per i comandi bloccati
 `security` · **P2** · Size S · Fonte: NONO_COMPARISON S6
@@ -413,23 +434,32 @@ invece del solo exit code di bwrap.
 
 ## P3 — Migliorie e polish
 
-### ISS-19 · `quoteGitConfigValue` riscrive `\r` come `\n`
+### ISS-19 · `quoteGitConfigValue` riscrive `\r` come `\n` — **FATTO**
 `bug` · **P3** · Size XS · Fonte: SECURITY_REVIEW #7
 
 Case `'\r'` copia-incollato dal case `'\n'` in `internal/git/sanitizer.go`:
 emettere `\r`. Test di round-trip.
 
-### ISS-20 · `expandAliases` splitta sugli spazi ignorando le quote
+*Stato:* emette il byte CR grezzo dentro le virgolette, come fa git stesso
+(`\r` a due caratteri non è un escape valido per il parser di git).
+
+### ISS-20 · `expandAliases` splitta sugli spazi ignorando le quote — **FATTO**
 `bug` · **P3** · Size S · Fonte: SECURITY_REVIEW #10
 
 `strings.Fields` rompe alias con argomenti quotati multi-parola. Usare un
 tokenizer shell-like (shlex). Test su alias con argomento quotato.
 
-### ISS-21 · Ampliare i pattern di `checkEnvSecrets` e dichiararlo euristico
+*Stato:* `splitArgs` in `cmd/inner/root.go` gestisce quote singole/doppie ed
+escape.
+
+### ISS-21 · Ampliare i pattern di `checkEnvSecrets` e dichiararlo euristico — **FATTO**
 `security` · **P3** · Size XS · Fonte: SECURITY_REVIEW #11
 
 Aggiungere `API_KEY`, `ACCESS_KEY`, `_KEY`, `PASSWD`, `AUTH` ai pattern;
 ammorbidire il wording del check (euristica, non garanzia).
+
+*Stato:* pattern ampliati; il dettaglio del check dice "heuristic, may include
+false positives".
 
 ### ISS-22 · Filtro seccomp opzionale (defense-in-depth)
 `security` · **P3** · Size M · Fonte: NONO_COMPARISON S7
@@ -437,7 +467,9 @@ ammorbidire il wording del check (euristica, non garanzia).
 bwrap accetta `--seccomp <fd>`: filtro conservativo di default (deny `ptrace`,
 `process_vm_readv`, `keyctl`, `bpf`, `mount`, `open_by_handle_at`, …) con
 opt-out da profilo. Valutare in parallelo Landlock via `go-landlock` (compone
-con bwrap).
+con bwrap). *Nota:* Landlock è in tree (`internal/landlock`), per ora usato
+solo per lo scope dei socket astratti (vedi ISS-37); il filtro seccomp resta da
+fare.
 
 Dal confronto con drop, due regole con valore concreto: `ioctl(TIOCSTI)` e
 `ioctl(TIOCLINUX)` → `EPERM` (su kernel < 6.2, o con
@@ -525,10 +557,10 @@ che in file leggibili dall'agente.
 | Priorità | Issue |
 |---|---|
 | **P0** | — (ISS-01, ISS-02, ISS-03 chiuse; firma e2e con `.sdlc/e2e-security`) |
-| **P1** | ISS-04 home isolata · ISS-05 proxy rete allowlist · ISS-06 credential injection · ISS-07 sign-off TUI/PID-ns · ISS-08 run-ID + `--json` |
-| **P2** | ISS-09 parseMount · ISS-10 rollback workspace · ISS-11 extractExpiresAt · ISS-12 checkUsrReadonly · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ISS-17 profile explain · ISS-18 triage bwrap |
+| **P1** | ~~ISS-04~~ · ~~ISS-05~~ · ISS-06 credential injection · ~~ISS-07~~ · ISS-08 run-ID + `--json` |
+| **P2** | ~~ISS-09~~ · ~~ISS-10~~ · ~~ISS-11~~ · ~~ISS-12~~ · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ISS-17 profile explain · ISS-18 triage bwrap |
 | **P2** (nuove) | ISS-34 copertura denylist |
-| **P3** | ISS-19…ISS-30 · ISS-37 residui gate remoto |
+| **P3** | ~~ISS-19~~ · ~~ISS-20~~ · ~~ISS-21~~ · ISS-22…ISS-30 · ISS-37 residui gate remoto (parziale) |
 
 ### Grafo delle dipendenze (enabler)
 
