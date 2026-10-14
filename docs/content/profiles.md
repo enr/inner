@@ -1273,6 +1273,26 @@ rewrite = { "docker" = "podman", "docker-compose" = "podman-compose" }
 
 Shims are generated as shell scripts placed on `$PATH` inside the sandbox, so they transparently intercept calls by name.
 
+A `block` shim is also bind-mounted over the real binary wherever it exists — in
+every directory of the sandbox `PATH` and in `/usr/local/sbin`, `/usr/local/bin`,
+`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`, with symlinks resolved — so calling it
+by path (`/usr/bin/rm`, `/bin/rm`) hits the shim too. `rewrite` shims stay
+`PATH`-only: the real binary is what they hand over to.
+
+Two binaries are left alone, with a warning at every run:
+
+- a binary also reachable under a name that is not blocked: a multi-call binary
+  (busybox, single-binary coreutils) or an `/etc/alternatives` target
+  (`vi` → `vim.basic`, which `vim` also runs). Shadowing it would block the
+  other commands too. When every other name is blocked as well (`yum` and `dnf`
+  → `dnf-3`), it is shadowed;
+- the shims' own interpreter, `/bin/sh` (e.g. `block = ["dash"]` on Debian).
+
+`block` is a guard against mistakes, not an exec policy: a sandboxed process
+that copies the binary elsewhere (say to `/tmp`) can still run the copy, and a
+`PATH` entry that exists only as the destination of a profile mount is not
+covered. Closing those takes exec control (Landlock or seccomp), not mounts.
+
 ---
 
 ## `[verify.custom]`

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,6 +39,12 @@ type BwrapIsolator struct {
 	// ptmxUsableFn reports whether the host's /dev/pts/ptmx is openable.
 	// Defaults to hostPtmxUsable. Overridable in tests.
 	ptmxUsableFn func() bool
+	// binDirs are the directories searched for blocked commands on top of the
+	// sandbox PATH. Defaults to standardBinDirs when nil. Overridable in tests.
+	binDirs []string
+	// shellPath is the interpreter of the shim scripts. Defaults to /bin/sh.
+	// Overridable in tests.
+	shellPath string
 }
 
 // pathExists reports whether the path exists on the host.
@@ -122,6 +129,16 @@ func isUnderTmpfs(mounts []config.Mount, path string) bool {
 		}
 	}
 	return false
+}
+
+// isDir reports whether path is a directory on the host.
+func (b *BwrapIsolator) isDir(path string) bool {
+	stat := b.statFn
+	if stat == nil {
+		stat = os.Lstat
+	}
+	fi, err := stat(path)
+	return err == nil && fi != nil && fi.IsDir()
 }
 
 // danglingTarget follows the symlink chain starting at path and returns the
@@ -214,6 +231,117 @@ func sandboxPathBeforeShim(cfg config.RunConfig) string {
 		return base
 	}
 	return strings.Join(cfg.Env.PathPrepend, ":") + ":" + base
+}
+
+// standardBinDirs are searched for blocked commands in addition to the
+// sandbox PATH: an absolute path works whatever PATH says.
+var standardBinDirs = []string{"/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"}
+
+// shimBind is one shim file bound over a real binary.
+type shimBind struct{ src, dest string }
+
+// blockedBinaryBinds returns, for every [noop] block command, the binds that
+// put its shim over the real binary at each canonical path where it exists:
+// every directory of the sandbox PATH plus standardBinDirs, with symlinks
+// resolved (/bin/rm → /usr/bin/rm on merged-/usr systems). The destination is
+// the resolved file because bwrap refuses to mount on a symlink.
+//
+// Two cases are left alone, with a warning:
+//   - the resolved binary has another name and is also reachable under a
+//     name that is not blocked (busybox, coreutils multi-call,
+//     /etc/alternatives): shadowing it would block that command too. When
+//     every other name is blocked as well (yum and dnf → dnf-3) it is shadowed;
+//   - the resolved binary is the shims' own interpreter (/bin/sh): every shim
+//     would stop working.
+//
+// Paths are resolved on the host, which the sandbox sees read-only at the same
+// place; a PATH entry that only exists as the destination of a profile mount
+// is not covered. Neither is a copy of the binary made inside the sandbox:
+// closing that needs exec control (Landlock or seccomp), not mounts.
+func (b *BwrapIsolator) blockedBinaryBinds(cfg config.RunConfig) []shimBind {
+	if cfg.ShimDir == "" || len(cfg.Noop.Block) == 0 {
+		return nil
+	}
+	evalSymlinks := b.evalSymlinksFn
+	if evalSymlinks == nil {
+		evalSymlinks = filepath.EvalSymlinks
+	}
+	shellPath := b.shellPath
+	if shellPath == "" {
+		shellPath = "/bin/sh"
+	}
+	shell, _ := evalSymlinks(shellPath)
+
+	searchDirs := b.binDirs
+	if searchDirs == nil {
+		searchDirs = standardBinDirs
+	}
+	var dirs []string
+	for _, dir := range append(strings.Split(sandboxPathBeforeShim(cfg), ":"), searchDirs...) {
+		if filepath.IsAbs(dir) && !slices.Contains(dirs, dir) {
+			dirs = append(dirs, filepath.Clean(dir))
+		}
+	}
+
+	var binds []shimBind
+	seen := map[string]bool{}
+	for _, cmd := range cfg.Noop.Block {
+		for _, dir := range dirs {
+			path := filepath.Join(dir, cmd)
+			if !b.pathExists(path) {
+				continue
+			}
+			real, err := evalSymlinks(path)
+			if err != nil || seen[real] || b.isDir(real) {
+				continue
+			}
+			seen[real] = true
+			if real == shell {
+				b.warnf("noop.block %q: %s is the shims' own interpreter (%s) — not shadowed, so %s still runs it", cmd, real, shellPath, path)
+				continue
+			}
+			if filepath.Base(real) != cmd {
+				// Shadowed only when every other name of the binary is blocked
+				// too (yum and dnf → dnf-3): then it takes nothing away.
+				if others := unblockedAliases(real, dirs, cfg.Noop.Block); len(others) > 0 {
+					b.warnf("noop.block %q: %s resolves to %s, shared with %s — not shadowed, so %s still runs it",
+						cmd, path, real, strings.Join(others, ", "), path)
+					continue
+				}
+			}
+			binds = append(binds, shimBind{src: filepath.Join(cfg.ShimDir, cmd), dest: real})
+		}
+	}
+	return binds
+}
+
+// unblockedAliases returns the names, across dirs, under which the binary at
+// real can also be run (symlinks or hard links) and that are not in block.
+// The binary's own name is not counted: called as dnf-3, dnf-3 is the same
+// program as the blocked dnf.
+func unblockedAliases(real string, dirs, block []string) []string {
+	target, err := os.Stat(real)
+	if err != nil {
+		return []string{filepath.Base(real)}
+	}
+	var others []string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if name == filepath.Base(real) || slices.Contains(block, name) || slices.Contains(others, name) {
+				continue
+			}
+			if fi, err := os.Stat(filepath.Join(dir, name)); err == nil && os.SameFile(fi, target) {
+				others = append(others, name)
+			}
+		}
+	}
+	sort.Strings(others)
+	return others
 }
 
 // NewBwrapIsolator creates a BwrapIsolator after verifying that bwrap is
@@ -654,6 +782,13 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		// Shims must win over everything else, including path_prepend, so the
 		// shim mount is prefixed onto the same effective PATH computed above.
 		args = append(args, "--setenv", "PATH", shimMount+":"+sandboxPathBeforeShim(cfg))
+
+		// A PATH-first shim only wins for a bare command name: "/usr/bin/rm"
+		// skips PATH entirely. Bind each blocking shim over the real binaries
+		// too, so the canonical path hits the shim as well.
+		for _, bind := range b.blockedBinaryBinds(cfg) {
+			args = append(args, "--ro-bind", bind.src, bind.dest)
+		}
 	}
 
 	// ── containers.conf override (rootless podman) ───────────────────────────

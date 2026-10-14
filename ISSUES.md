@@ -19,7 +19,7 @@ tipo, priorità, dimensione stimata, fonti e dipendenze. Le issue "abilitanti"
 | **P2** | Reale ma con raggio d'azione limitato |
 | **P3** | Miglioria / da valutare su richiesta |
 
-**Ordine di lavoro consigliato:** ISS-13 → ISS-08 → ISS-06
+**Ordine di lavoro consigliato:** ISS-08 → ISS-06
 → ISS-14/15 → ISS-34, ISS-37 → resto.
 ISS-01, ISS-02, ISS-03, ISS-04, ISS-05, ISS-07, ISS-09, ISS-10, ISS-11, ISS-12,
 ISS-19, ISS-20 e ISS-21 sono chiuse; ISS-01/02/03 hanno
@@ -363,7 +363,7 @@ passa anche da root.
 `/proc/self/mountinfo`; fallisce (non passa) se il file non è leggibile o
 nessun mount lo copre.
 
-### ISS-13 · Deny anche sul path canonico per i comandi bloccati
+### ISS-13 · Deny anche sul path canonico per i comandi bloccati — **FATTO**
 `security` · **P2** · Size S · Fonte: NONO_COMPARISON S6
 
 Gli shim `[noop] block` vincono solo via PATH: `/bin/rm` resta invocabile.
@@ -373,6 +373,17 @@ del binario altrove).
 
 *Acceptance:* con `block = ["rm"]`, sia `rm` sia `/usr/bin/rm` falliscono con
 il messaggio dello shim.
+
+*Stato:* `Build` monta lo shim di ogni comando `block` sopra il binario reale,
+in ogni directory del `PATH` della sandbox più `/usr/local/sbin`,
+`/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`, risolvendo i symlink
+(bwrap rifiuta di montare su un symlink). Esclusi, con warning: un binario
+raggiungibile anche con un nome non bloccato (busybox, coreutils multi-call,
+alternatives; se tutti gli altri nomi sono bloccati, come `yum`+`dnf` →
+`dnf-3`, viene coperto) e `/bin/sh`, interprete degli shim. Verificato con bwrap
+0.9: `rm`, `/usr/bin/rm` e `/bin/rm` danno il messaggio dello shim. Gap
+residui documentati in `profiles.md`: copia del binario altrove, voci di `PATH`
+che esistono solo come destinazione di un mount.
 
 ### ISS-14 · Audit log strutturato per run (NDJSON + redaction)
 `feature` `security` · **P2** · Size M · Fonte: NONO_COMPARISON S4 · Dipende da: ISS-08
@@ -587,7 +598,7 @@ che in file leggibili dall'agente.
 |---|---|
 | **P0** | — (ISS-01, ISS-02, ISS-03 chiuse; firma e2e con `.sdlc/e2e-security`) |
 | **P1** | ~~ISS-04~~ · ~~ISS-05~~ · ISS-06 credential injection · ~~ISS-07~~ · ISS-08 run-ID + `--json` |
-| **P2** | ~~ISS-09~~ · ~~ISS-10~~ · ~~ISS-11~~ · ~~ISS-12~~ · ISS-13 deny path canonico · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ~~ISS-17~~ · ~~ISS-18~~ |
+| **P2** | ~~ISS-09~~ · ~~ISS-10~~ · ~~ISS-11~~ · ~~ISS-12~~ · ~~ISS-13~~ · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ~~ISS-17~~ · ~~ISS-18~~ |
 | **P2** (nuove) | ISS-34 copertura denylist |
 | **P3** | ~~ISS-19~~ · ~~ISS-20~~ · ~~ISS-21~~ · ISS-22…ISS-30 · ISS-37 residui gate remoto (parziale) |
 
