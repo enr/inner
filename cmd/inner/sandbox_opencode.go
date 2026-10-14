@@ -138,6 +138,9 @@ func applyOpencode(rc *config.RunConfig) (func(), error) {
 		Dest: dataDir,
 		Mode: "rw",
 	})
+	// The copy carries auth.json on purpose: keep the agent-credentials hide
+	// rule from covering it.
+	rc.HideExempt = append(rc.HideExempt, filepath.Join(dataDir, "auth.json"))
 
 	return func() {
 		for _, fn := range cleanups {

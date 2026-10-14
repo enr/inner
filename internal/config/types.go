@@ -53,6 +53,8 @@ var ValidAllowKeys = []string{
 	"terraform-credentials", "maven-settings", "gradle-properties",
 	"helm-config", "pgpass", "mysql-config",
 	"password-store", "keyrings", "onepassword-config", "browser-profiles",
+	"containers-auth", "vault-token", "rclone-config", "s3cfg", "age-keys",
+	"pulumi-credentials", "mail-profiles", "agent-credentials",
 	// Host runtime sockets under $XDG_RUNTIME_DIR (see HostPrivilegeAllowKeys).
 	"session-bus", "systemd-user", "ssh-agent", "gpg-agent",
 	// The host's abstract unix sockets under network_mode = "full" (no
@@ -101,7 +103,18 @@ func HidePlaceholder(r SensitiveResource) string {
 // profiles that do not need the host home — this list is the floor for the
 // profiles that stay on home = "host-ro". When adding a tool here, also add
 // its path to the canary list in TestSensitiveResources_coverWellKnownSecrets.
+//
+// Tools that move their files through the environment (KUBECONFIG,
+// GNUPGHOME, XDG_CONFIG_HOME, …) are covered at the relocated path too, see
+// relocatedSensitiveResources: the table is evaluated against the host
+// environment of the inner process.
 func SensitiveResources(home, uid string) []SensitiveResource {
+	base := fixedSensitiveResources(home, uid)
+	return append(base, relocatedSensitiveResources(home, base)...)
+}
+
+// fixedSensitiveResources is the table of well-known locations.
+func fixedSensitiveResources(home, uid string) []SensitiveResource {
 	join := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
 	return []SensitiveResource{
 		{"ssh-keys", join(".ssh"), true},
@@ -153,6 +166,45 @@ func SensitiveResources(home, uid string) []SensitiveResource {
 		{"browser-profiles", join(".config", "microsoft-edge"), true},
 		{"browser-profiles", join(".config", "vivaldi"), true},
 		{"browser-profiles", join(".config", "opera"), true},
+		// The same browsers installed as flatpak or snap keep their profiles
+		// under the sandboxed app's own home.
+		{"browser-profiles", join(".var", "app", "org.mozilla.firefox"), true},
+		{"browser-profiles", join(".var", "app", "com.google.Chrome"), true},
+		{"browser-profiles", join(".var", "app", "org.chromium.Chromium"), true},
+		{"browser-profiles", join(".var", "app", "com.brave.Browser"), true},
+		{"browser-profiles", join(".var", "app", "com.microsoft.Edge"), true},
+		{"browser-profiles", join("snap", "firefox"), true},
+		{"browser-profiles", join("snap", "chromium"), true},
+		// Mail clients: stored passwords and the mail itself (password-reset
+		// links included).
+		{"mail-profiles", join(".thunderbird"), true},
+		{"mail-profiles", join(".var", "app", "org.mozilla.Thunderbird"), true},
+		{"mail-profiles", join("snap", "thunderbird"), true},
+		// More credential files. Files, not directories, where the rest of the
+		// directory is configuration a tool may legitimately read.
+		{"git-credentials", join(".config", "git", "credentials"), false},
+		{"containers-auth", join(".config", "containers", "auth.json"), false},
+		{"containers-auth", "/run/user/" + uid + "/containers/auth.json", false},
+		{"vault-token", join(".vault-token"), false},
+		{"rclone-config", join(".config", "rclone", "rclone.conf"), false},
+		{"s3cfg", join(".s3cfg"), false},
+		{"age-keys", join(".config", "sops", "age"), true},
+		{"age-keys", join(".config", "age"), true},
+		{"pulumi-credentials", join(".pulumi", "credentials.json"), false},
+		// The agents' own login tokens. A capability that copies its directory
+		// into the sandbox exempts its token (RunConfig.HideExempt): this entry
+		// keeps it from every other profile, a plain shell included.
+		{"agent-credentials", join(".claude", ".credentials.json"), false},
+		{"agent-credentials", join(".gemini", "oauth_creds.json"), false},
+		{"agent-credentials", join(".local", "share", "opencode", "auth.json"), false},
+		{"agent-credentials", join(".config", "cursor", "auth.json"), false},
+		// More histories: database and REPL clients record what was typed,
+		// passwords in connection strings included.
+		{"shell-history", join(".local", "share", "fish", "fish_history"), false},
+		{"shell-history", join(".python_history"), false},
+		{"shell-history", join(".psql_history"), false},
+		{"shell-history", join(".mysql_history"), false},
+		{"shell-history", join(".node_repl_history"), false},
 		// Host runtime sockets. The root bind makes /run/user/<uid> visible,
 		// and neither a read-only bind nor --unshare-net stops connect(2) on a
 		// Unix socket that lives on the filesystem. Behind these sockets sit
