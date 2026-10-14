@@ -68,7 +68,8 @@ weight: 7
 | Task | Command |
 |------|---------|
 | List recent runs | `inner log list` |
-| View specific run log | `inner log show <run-id>` |
+| View specific run log | `inner log show <run-id>` (or `inner log <run-id>`) |
+| Machine-readable output | `--json` on `run --dry-run`, `verify`, `doctor`, `profile list`, `log list/show` |
 | Clean logs (default 30d) | `inner log clean` |
 | Clean older than 7 days | `inner log clean --older-than 7` |
 

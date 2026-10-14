@@ -43,13 +43,28 @@ type profileEntry struct {
 	path     string
 	isLocal  bool
 	shadowed bool // global profile hidden by a local profile of the same name
+	// description and experimental as written in the profile, for --json
+	// (desc above carries the "[experimental] " display prefix).
+	description  string
+	experimental bool
+}
+
+// profileListItem is one element of `inner profile list --json`.
+type profileListItem struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Path         string `json:"path"`
+	Scope        string `json:"scope"` // "global" or "local"
+	Default      bool   `json:"default"`
+	Shadowed     bool   `json:"shadowed"` // a local profile of the same name wins
+	Experimental bool   `json:"experimental"`
 }
 
 // profileList writes a table of available profiles to w.
 // When wide is true, a wider format is used with SCOPE and PATH columns;
 // shadowed global profiles (overridden by a local profile with the same name)
 // are also shown in wide mode but hidden in normal mode.
-func (a *App) profileList(w io.Writer, wide bool) error {
+func (a *App) profileList(w io.Writer, wide, asJSON bool) error {
 	defaultName := a.loader.DefaultProfileName()
 	// default_profile may be a file path (e.g. ".config/inner/profiles/foo.toml");
 	// normalise to the bare stem so it matches the name column.
@@ -73,6 +88,9 @@ func (a *App) profileList(w io.Writer, wide bool) error {
 	}
 
 	if os.IsNotExist(globalErr) && len(localEntries) == 0 {
+		if asJSON {
+			return writeJSON(w, []profileListItem{})
+		}
 		fmt.Fprintln(w, "No profiles directory found. Run 'inner doctor' for setup help.")
 		return nil
 	}
@@ -93,19 +111,15 @@ func (a *App) profileList(w io.Writer, wide bool) error {
 		}
 		name := strings.TrimSuffix(e.Name(), ".toml")
 		path := filepath.Join(a.loader.ProfilesDir(), e.Name())
-		desc := ""
-		if p, err := a.loader.LoadProfileFromPath(path); err == nil {
-			desc = p.Description
-			if p.Experimental {
-				desc = "[experimental] " + desc
-			}
-		}
+		desc, description, experimental := a.profileListDesc(path)
 		entries = append(entries, profileEntry{
-			name:     name,
-			desc:     desc,
-			path:     path,
-			isLocal:  false,
-			shadowed: localNames[name],
+			name:         name,
+			desc:         desc,
+			path:         path,
+			isLocal:      false,
+			shadowed:     localNames[name],
+			description:  description,
+			experimental: experimental,
 		})
 	}
 
@@ -115,19 +129,33 @@ func (a *App) profileList(w io.Writer, wide bool) error {
 		}
 		name := strings.TrimSuffix(e.Name(), ".toml")
 		path := filepath.Join(localDir, e.Name())
-		desc := ""
-		if p, err := a.loader.LoadProfileFromPath(path); err == nil {
-			desc = p.Description
-			if p.Experimental {
-				desc = "[experimental] " + desc
-			}
-		}
+		desc, description, experimental := a.profileListDesc(path)
 		entries = append(entries, profileEntry{
-			name:    name,
-			desc:    desc,
-			path:    path,
-			isLocal: true,
+			name:         name,
+			desc:         desc,
+			path:         path,
+			isLocal:      true,
+			description:  description,
+			experimental: experimental,
 		})
+	}
+
+	if asJSON {
+		items := make([]profileListItem, 0, len(entries))
+		for _, en := range entries {
+			scope := "global"
+			if en.isLocal {
+				scope = "local"
+			}
+			items = append(items, profileListItem{
+				Name: en.name, Description: en.description, Path: en.path, Scope: scope,
+				// A shadowed global is not the one a bare name resolves to.
+				Default:      en.name == defaultName && !en.shadowed,
+				Shadowed:     en.shadowed,
+				Experimental: en.experimental,
+			})
+		}
+		return writeJSON(w, items)
 	}
 
 	home, _ := os.UserHomeDir()
@@ -184,6 +212,20 @@ func (a *App) profileList(w io.Writer, wide bool) error {
 	}
 
 	return tw.Flush()
+}
+
+// profileListDesc loads the profile at path for its description: the display
+// form (with an "[experimental] " prefix) and the raw fields.
+func (a *App) profileListDesc(path string) (desc, description string, experimental bool) {
+	p, err := a.loader.LoadProfileFromPath(path)
+	if err != nil {
+		return "", "", false
+	}
+	desc = p.Description
+	if p.Experimental {
+		desc = "[experimental] " + desc
+	}
+	return desc, p.Description, p.Experimental
 }
 
 // profileShow writes the raw TOML content of a named profile to w, followed by
@@ -737,16 +779,17 @@ timeout_seconds = 0
 // ── Cobra wiring (thin) ───────────────────────────────────────────────────────
 
 func (a *App) profileListCmd() *cobra.Command {
-	var wide bool
+	var wide, asJSON bool
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List available profiles",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return a.profileList(cmd.OutOrStdout(), wide)
+			return a.profileList(cmd.OutOrStdout(), wide, asJSON)
 		},
 	}
 	cmd.Flags().BoolVarP(&wide, "wide", "w", false, "Show scope, path, and shadowed profiles")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the profiles as a JSON array (shadowed ones included)")
 	return cmd
 }
 

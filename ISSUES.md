@@ -11,7 +11,7 @@ dimensione, dipendenze.
 | **P2** | Reale, raggio limitato |
 | **P3** | Miglioria, su richiesta |
 
-**Ordine consigliato:** ISS-08 → ISS-06 → ISS-14/15 → ISS-34, ISS-37 → resto.
+**Ordine consigliato:** ISS-06 → ISS-14/15 → ISS-37 → resto.
 
 **Da firmare su macchina reale:** gli e2e di ISS-01/02/03/04 con
 `.sdlc/e2e-security`.
@@ -29,22 +29,16 @@ policy → 403. Il token non entra mai nella sandbox.
 *Acceptance:* chiamata API autenticata riuscita senza token leggibile in env o
 filesystem della sandbox; endpoint fuori policy → 403.
 
-**ISS-08 · Run ID visibile + `--json`** · `ux` · M · enabler per ISS-14, ISS-15
-Stampare il run ID a inizio/fine run e accettarlo ovunque (`inner log <run-id>`).
-`--json` per `verify`, `doctor`, `profile list`, `log`, `run --dry-run`.
-*Acceptance:* JSON valido e stabile per ogni comando; il run ID stampato
-funziona con `inner log`.
-
 ### P2
 
-**ISS-14 · Audit log per run (NDJSON + redaction)** · `security` · M · dipende da ISS-08
-Record append-only per run: profilo risolto, mount, `allow`, rete, entrypoint,
-verify, exit code, durata, richieste del proxy; segreti in argv/env redatti.
-Hash chain come passo successivo.
+**ISS-14 · Audit log per run (NDJSON + redaction)** · `security` · M
+Il record per run esiste già (`<run-id>.json`, ISS-08): estenderlo con
+profilo risolto, mount, `allow`, verify e richieste del proxy; segreti in
+argv/env redatti. Hash chain come passo successivo.
 *Acceptance:* `inner log show <run-id> --json` dà il record completo; un token
 passato con `-e` compare redatto.
 
-**ISS-15 · Snapshot del workspace e rollback** · `feature` · L · dipende da ISS-08
+**ISS-15 · Snapshot del workspace e rollback** · `feature` · L
 Snapshot pre/post dei soli mount scrivibili (reflink su btrfs/XFS, altrimenti
 dedup per hash; esclusioni gitignore, cap di spazio). `inner rollback <run-id>
 --diff|--restore`. v0 per repo git: stato dirty pre-run + `git diff` post-run.
@@ -55,15 +49,6 @@ torna allo stato pre-run.
 `--allow <key>`, `--block <cmd>`, `--allow-domain <dom>`: stessa semantica dei
 campi profilo, priorità alla CLI.
 *Acceptance:* `inner run --block rm` blocca `rm`; `--dry-run` riflette i flag.
-
-**ISS-34 · Denylist: path rilocati e tool mancanti** · `security` · M
-Non coperti: path spostati da env (`XDG_*`, `GNUPGHOME`, `KUBECONFIG`,
-`DOCKER_CONFIG`, `GH_CONFIG_DIR`, `AWS_SHARED_CREDENTIALS_FILE`, …), browser
-flatpak/snap, varie credenziali (`~/.config/git/credentials`,
-`containers/auth.json`, `~/.vault-token`, rclone, sops/age, …) e le credenziali
-degli agenti nei profili shell (serve integrazione con le capability). Ogni
-voce può rompere un workflow `host-ro`; la risposta vera resta
-`home = "isolated"`.
 
 ### P3
 
@@ -129,6 +114,7 @@ blocco. Da rivalutare dopo ISS-06.
 | ISS-04 | Home isolata | `home = "isolated"` + `home_allow`; default per i profili agente; check `home-isolated` in verify. |
 | ISS-05 | Proxy di rete con allowlist | `network_mode = "allowlist"`, liste a livelli con provenienza, gruppi `@npm`/`@github`…, always-deny di loopback/LAN/metadata, scoping delle porte. Dettagli in `network.md`. |
 | ISS-07 | Sign-off TUI/PID namespace | Checklist manuale ok il 2026-08-25. |
+| ISS-08 | Run ID + `--json` | Run ID stampato su stderr a inizio/fine run; record `<run-id>.json` per ogni run (anche interattiva) nella dir dei log; `inner log <run-id>`, `log list/show` sui record. `--json` su `run --dry-run`, `verify`, `doctor`, `profile list`, `log list/show`. |
 | ISS-09 | `-m` rifiuta `safe-rw` | `-m` accetta `ro`/`rw`/`safe-rw`; `tmpfs` rifiutato con rimando a `[mounts]`. |
 | ISS-10 | Rollback parziale dei workspace | Directory registrate prima di `MkdirAll`. |
 | ISS-11 | Scadenza token nondeterministica | Sceglie la scadenza più vicina. |
@@ -139,6 +125,7 @@ blocco. Da rivalutare dopo ISS-06.
 | ISS-19 | `\r` riscritto come `\n` | CR grezzo tra virgolette, come git. |
 | ISS-20 | Alias splittati sugli spazi | Tokenizer con quote ed escape. |
 | ISS-21 | Pattern di `checkEnvSecrets` | Pattern ampliati, dichiarato euristico. |
+| ISS-34 | Denylist: path rilocati e tool mancanti | Path spostati da env (`XDG_*`, `KUBECONFIG`, `GNUPGHOME`, `DOCKER_CONFIG`, `CARGO_HOME`, `AWS_*_FILE`, `SSH_AUTH_SOCK`, …) nascosti sotto la stessa chiave; nuove voci (browser flatpak/snap, Thunderbird, git XDG, containers auth, vault, rclone, s3cfg, age/sops, pulumi, history REPL) e token degli agenti (`agent-credentials`, esentato dalla capability che lo copia). Residuo: `verify` controlla solo i path fissi (env pulito in sandbox). |
 | ISS-31 | `.git` scrivibile = escape | `git_dir = "protected"` (default): config, hooks, commondir… in sola lettura, commit ok. Residuo: un repo annidato registrato come gitlink esegue il suo `core.fsmonitor` sull'host; possibile avviso a fine run. |
 | ISS-32 | Check TIOCSTI in `doctor` | Avviso se `legacy_tiocsti` non è 0. |
 | ISS-33 | Maschere su `/proc` e `/sys` | Come runc, solo se i path esistono. |
@@ -152,6 +139,5 @@ blocco. Da rivalutare dopo ISS-06.
 ```
 ISS-05 (fatta) ──► ISS-06 ──► ISS-30
                └─► ISS-16 (--allow-domain), ISS-14 (eventi rete)
-ISS-08 ──► ISS-14, ISS-15
 ISS-01 (fatta) ──► ISS-23, ISS-27
 ```

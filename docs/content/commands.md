@@ -505,27 +505,48 @@ Exit code is `1` if any check fails and is not overridden by `[sandbox].allow`.
 
 ## `inner log`
 
-Manage execution logs stored in `~/.config/inner/logs/` (or the path set in global config).
+Every `inner run` gets a run ID, printed on stderr when it starts and when it
+ends:
+
+```
+inner: run 20261014-182411-6a37
+...
+inner: run 20261014-182411-6a37 exited with code 1 (inner log 20261014-182411-6a37)
+```
+
+For every run, interactive ones included, inner writes a record
+(`<run-id>.json`: profile, command, workdir, home and network mode, start, end,
+exit code, path of the output log) to the logs directory: `log_dir` from the
+config, or `~/.config/inner/logs/`. The output itself is logged only for
+non-interactive runs with `[output] log` set. Records are `0600` and store the
+entrypoint arguments as given, prompts included.
+
+```bash
+inner log <run-id>              # same as: inner log show <run-id>
+```
 
 ### `inner log list`
 
-Show all run logs as a table with ID, date, and size:
+All runs, newest first, with date, profile, exit code and log size:
 
 ```bash
 inner log list
+inner log list --json
 ```
 
 ### `inner log show`
 
-Display a log file, paginated through `$PAGER` (default: `less`):
+The run record, then the output log (through `$PAGER`, default `less`, when
+writing to a terminal):
 
 ```bash
 inner log show <run-id>
+inner log show <run-id> --json   # the record alone, as JSON
 ```
 
 ### `inner log clean`
 
-Delete old log files:
+Delete old runs (record, log and legacy summary):
 
 ```bash
 inner log clean
@@ -533,16 +554,35 @@ inner log clean
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--older-than` | `30` | Delete logs older than this many days |
+| `--older-than` | `30` | Delete runs older than this many days |
 | `--dry-run` | false | Preview deletions without removing files |
 
 ```bash
 # Preview what would be deleted (older than 7 days)
 inner log clean --dry-run --older-than 7
 
-# Actually delete logs older than 14 days
+# Actually delete runs older than 14 days
 inner log clean --older-than 14
 ```
+
+---
+
+## JSON output
+
+`--json` prints machine-readable output with stable `snake_case` keys, on
+stdout only (warnings go to stderr):
+
+| Command | Output |
+|---|---|
+| `inner run --dry-run --json` | the resolved sandbox: profile, entrypoint (as requested, before inner's own wrappers), home, network with the origin of each allow entry, mounts, env, noop, allow, capabilities, limits, full command line |
+| `inner verify --json` | `{profile, conformant, checks: [{id, name, passed, severity, detail, suggest, allow_override}]}`; exit code as without `--json` |
+| `inner doctor --json` | `{checks: [{status, check, message}], errors, warnings}` |
+| `inner profile list --json` | `[{name, description, path, scope, default, shadowed, experimental}]`, shadowed profiles included |
+| `inner log list --json` | `[{run_id, started_at, profile, exit_code, log_path, log_size}]` |
+| `inner log show RUN_ID --json` | the run record |
+
+`inner run --json` without `--dry-run` is refused: a run's output belongs to
+its entrypoint; its record is `inner log RUN_ID --json`.
 
 ---
 

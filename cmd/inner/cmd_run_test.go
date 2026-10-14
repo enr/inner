@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1178,5 +1180,67 @@ func TestRunSandbox_otherExitCodesAreNotProbed(t *testing.T) {
 	}
 	if strings.Contains(out, "sandbox did not start") {
 		t.Errorf("exit code 7 should not be diagnosed:\n%s", out)
+	}
+}
+
+// ── run --dry-run --json (ISS-08) ─────────────────────────────────────────────
+
+func TestRunSandbox_dryRunJSON(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "p", `
+[sandbox]
+network_mode = "allowlist"
+network_allow = ["example.com"]
+allow = ["ssh-agent"]
+
+[entrypoint]
+cmd = "sh"
+args = ["-c", "true"]
+
+[noop]
+block = ["apt"]
+`)
+	var stdout, stderr bytes.Buffer
+	if err := app.runSandbox(&stderr, runCLIFlags{profile: "p", dryRun: true, jsonOut: &stdout}, nil); err != nil {
+		t.Fatalf("dry-run: %v\nstderr:\n%s", err, stderr.String())
+	}
+	var out dryRunJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Profile != "p" || out.Entrypoint.Cmd != "sh" || out.Network.Mode != "allowlist" {
+		t.Errorf("unexpected header: %+v", out)
+	}
+	found := false
+	for _, r := range out.Network.Allow {
+		if r.Entry == "example.com" && r.Origin != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("example.com with its origin missing from %+v", out.Network.Allow)
+	}
+	if !slices.Contains(out.Noop.Block, "apt") || !slices.Contains(out.Allow, "ssh-agent") || len(out.Command) == 0 {
+		t.Errorf("unexpected body: %+v", out)
+	}
+	// Lists are [] rather than null even when empty.
+	if !strings.Contains(stdout.String(), `"shims": []`) {
+		t.Errorf("empty shims should be [], got:\n%s", stdout.String())
+	}
+	// The entrypoint is the requested one, not the relay wrapping it.
+	if strings.Join(out.Entrypoint.Args, " ") != "-c true" {
+		t.Errorf("entrypoint args = %v, want the requested ones", out.Entrypoint.Args)
+	}
+}
+
+func TestRunCmd_jsonNeedsDryRun(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "default", "[entrypoint]\ncmd = \"sh\"\n")
+	cmd := app.newRunCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--json"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--json needs --dry-run") {
+		t.Errorf("err = %v, want --json needs --dry-run", err)
 	}
 }

@@ -18,7 +18,7 @@ import (
 // runVerifyOutside is called from the host. It builds a sandbox with the inner
 // binary itself as the entrypoint and passes --inside so the binary re-executes
 // the checks from within the sandboxed environment.
-func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) error {
+func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest, asJSON bool) error {
 	if profileName == "" {
 		profileName = "default"
 	}
@@ -46,6 +46,11 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 	innerArgs := []string{"verify", "--inside"}
 	if suggest {
 		innerArgs = append(innerArgs, "--suggest")
+	}
+	if asJSON {
+		innerArgs = append(innerArgs, "--json")
+		// The report is the only thing on stdout: warnings go to stderr.
+		w = a.errW()
 	}
 	rc.Entrypoint = config.Entrypoint{
 		Cmd:         innerBin,
@@ -128,7 +133,7 @@ func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest bool) er
 // It reads the profile to get Allow/Custom/Network settings, runs all checks,
 // renders the report, and exits with a non-zero code if the sandbox is not
 // conformant.
-func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
+func (a *App) runVerifyInside(w io.Writer, suggest, asJSON bool) error {
 	profileName := os.Getenv("INNER_VERIFY_PROFILE")
 	if profileName == "" {
 		profileName = "default"
@@ -181,12 +186,52 @@ func (a *App) runVerifyInside(w io.Writer, suggest bool) error {
 	}
 
 	report := checker.Run()
-	report.Render(w, suggest)
+	if asJSON {
+		if err := writeJSON(w, newVerifyJSON(profileName, report, suggest)); err != nil {
+			return err
+		}
+	} else {
+		report.Render(w, suggest)
+	}
 
 	if !report.Conformant() {
 		return exitCodeError{code: 1}
 	}
 	return nil
+}
+
+// verifyJSON is the output of `inner verify --json`.
+type verifyJSON struct {
+	Profile    string            `json:"profile"`
+	Conformant bool              `json:"conformant"`
+	Checks     []verifyCheckJSON `json:"checks"`
+}
+
+type verifyCheckJSON struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Passed        bool   `json:"passed"`
+	Severity      string `json:"severity"` // "info", "medium", "high", "critical"
+	Detail        string `json:"detail,omitempty"`
+	Suggest       string `json:"suggest,omitempty"`        // only with --suggest
+	AllowOverride bool   `json:"allow_override,omitempty"` // downgraded to info by [sandbox] allow
+}
+
+func newVerifyJSON(profile string, report sandbox.Report, suggest bool) verifyJSON {
+	out := verifyJSON{Profile: profile, Conformant: report.Conformant(), Checks: []verifyCheckJSON{}}
+	for _, c := range report.Results {
+		item := verifyCheckJSON{
+			ID: c.ID, Name: c.Name, Passed: c.Passed,
+			Severity:      strings.ToLower(c.Severity.String()),
+			Detail:        c.Detail,
+			AllowOverride: c.AllowOverride,
+		}
+		if suggest && !c.Passed {
+			item.Suggest = c.Suggest
+		}
+		out.Checks = append(out.Checks, item)
+	}
+	return out
 }
 
 // ── Verify context passed through the environment ─────────────────────────────
@@ -245,6 +290,7 @@ func (a *App) newVerifyCmd() *cobra.Command {
 		profile string
 		suggest bool
 		inside  bool
+		json    bool
 	}
 
 	cmd := &cobra.Command{
@@ -261,14 +307,15 @@ directly into your profile.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inside := flags.inside || os.Getenv("INNER_VERIFY_INSIDE") == "1"
 			if inside {
-				return a.runVerifyInside(cmd.OutOrStdout(), flags.suggest)
+				return a.runVerifyInside(cmd.OutOrStdout(), flags.suggest, flags.json)
 			}
-			return a.runVerifyOutside(cmd.OutOrStdout(), flags.profile, flags.suggest)
+			return a.runVerifyOutside(cmd.OutOrStdout(), flags.profile, flags.suggest, flags.json)
 		},
 	}
 
 	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", `Profile to use (default: "default")`)
 	cmd.Flags().BoolVar(&flags.suggest, "suggest", false, "Show TOML snippets for failed checks")
+	cmd.Flags().BoolVar(&flags.json, "json", false, "Print the report as JSON")
 	cmd.Flags().BoolVar(&flags.inside, "inside", false, "Run checks directly (internal flag, set automatically inside the sandbox)")
 	_ = cmd.Flags().MarkHidden("inside")
 
