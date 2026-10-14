@@ -510,7 +510,14 @@ The following resources are hidden by default:
 | `password-store` | `~/.password-store` | `--tmpfs` (empty dir) |
 | `keyrings` | `~/.local/share/keyrings` | `--tmpfs` (empty dir) |
 | `onepassword-config` | `~/.config/op` | `--tmpfs` (empty dir) |
-| `browser-profiles` | `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware`, `~/.config/microsoft-edge`, `~/.config/vivaldi`, `~/.config/opera` | `--tmpfs` (empty dir) |
+| `browser-profiles` | `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`, `~/.config/BraveSoftware`, `~/.config/microsoft-edge`, `~/.config/vivaldi`, `~/.config/opera`, flatpak (`~/.var/app/…`) and snap (`~/snap/…`) installs | `--tmpfs` (empty dir) |
+| `mail-profiles` | `~/.thunderbird`, `~/.var/app/org.mozilla.Thunderbird`, `~/snap/thunderbird` | `--tmpfs` (empty dir) |
+| `git-credentials` | `~/.config/git/credentials` | `--bind /dev/null` |
+| `containers-auth` | `~/.config/containers/auth.json`, `/run/user/<uid>/containers/auth.json` | `--bind /dev/null` |
+| `vault-token`, `rclone-config`, `s3cfg`, `pulumi-credentials` | `~/.vault-token`, `~/.config/rclone/rclone.conf`, `~/.s3cfg`, `~/.pulumi/credentials.json` | `--bind /dev/null` |
+| `age-keys` | `~/.config/sops/age`, `~/.config/age` | `--tmpfs` (empty dir) |
+| `agent-credentials` | `~/.claude/.credentials.json`, `~/.gemini/oauth_creds.json`, `~/.local/share/opencode/auth.json`, `~/.config/cursor/auth.json` | `--bind /dev/null`, skipped (`HideExempt`) for the token a capability copies in |
+| `shell-history` | fish, python, psql, mysql, node REPL histories | `--bind /dev/null` |
 | `session-bus` | `/run/user/<uid>/bus` | `--bind /dev/null` |
 | `systemd-user` | `/run/user/<uid>/systemd` | `--tmpfs` (empty dir) |
 | `ssh-agent` | `/run/user/<uid>/ssh-agent.socket`, `/run/user/<uid>/openssh_agent`, `/run/user/<uid>/gcr/ssh`, `/run/user/<uid>/keyring/ssh` | `--bind /dev/null` |
@@ -527,6 +534,12 @@ file size (every socket has size 0).
 
 A key may cover several paths (`browser-profiles`, `maven-settings`): all of
 them are hidden, and listing the key in `allow` un-hides all of them.
+
+The table is completed from the host environment
+(`config.relocatedSensitiveResources`): `KUBECONFIG`, `GNUPGHOME`,
+`XDG_CONFIG_HOME` and the other variables listed in the profiles reference move
+an entry, and the relocated path is hidden under the same key. Entries that
+would cover `/` or the home are dropped.
 
 `~/.m2/settings.xml` gets an empty `<settings/>` document instead of
 `/dev/null`: Maven refuses to start on a settings file it cannot read or that is

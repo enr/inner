@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1101,5 +1103,144 @@ func TestPrintDryRun_listsRuntimeShims(t *testing.T) {
 
 	if !strings.Contains(out.String(), "shims (added by capabilities): claude") {
 		t.Errorf("dry-run does not name the runtime shim:\n%s", out.String())
+	}
+}
+
+// ── start-failure diagnosis (ISS-18) ──────────────────────────────────────────
+
+// scriptIsolator stands in for bwrap with a shell: Build runs script with the
+// entrypoint as positional parameters ($0 = cmd, $@ = args), so a script can
+// fail like bwrap does or hand over to the entrypoint with `"$0" "$@"`.
+type scriptIsolator struct{ script string }
+
+func (s *scriptIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
+	args := append([]string{"-c", s.script, cfg.Entrypoint.Cmd}, cfg.Entrypoint.Args...)
+	return exec.Command("sh", args...), nil
+}
+func (s *scriptIsolator) Available() (bool, string) { return true, "script" }
+
+func runWithScriptIsolator(t *testing.T, script, profile string) (string, error) {
+	t.Helper()
+	app, dir := newRunTestApp(t)
+	app.isolatorFn = func() (isolator.Isolator, error) { return &scriptIsolator{script: script}, nil }
+	minimalProfile(t, dir, "p", profile)
+	var buf bytes.Buffer
+	err := app.runSandbox(&buf, runCLIFlags{profile: "p"}, nil)
+	return buf.String(), err
+}
+
+func TestRunSandbox_bwrapSetupFailureIsDiagnosed(t *testing.T) {
+	out, err := runWithScriptIsolator(t,
+		`echo "bwrap: Can't find source path /nope: No such file or directory" >&2; exit 1`,
+		"[entrypoint]\ncmd = \"sh\"\n")
+	var exitErr exitCoder
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("err = %v, want exit code 1", err)
+	}
+	if !strings.Contains(out, "sandbox did not start: mount source /nope does not exist on the host") {
+		t.Errorf("missing diagnosis; got:\n%s", out)
+	}
+	if !strings.Contains(out, "hint: ") {
+		t.Errorf("missing hint; got:\n%s", out)
+	}
+}
+
+func TestRunSandbox_missingEntrypointIsDiagnosed(t *testing.T) {
+	out, err := runWithScriptIsolator(t, `"$0" "$@"`,
+		"[entrypoint]\ncmd = \"inner-test-no-such-command\"\n")
+	if err == nil {
+		t.Fatal("expected a non-zero exit")
+	}
+	if !strings.Contains(out, "sandbox did not start: entrypoint inner-test-no-such-command was not found inside the sandbox") {
+		t.Errorf("missing diagnosis; got:\n%s", out)
+	}
+}
+
+// An entrypoint that starts and exits 1 on its own is not a start failure: the
+// probe succeeds and nothing is printed.
+func TestRunSandbox_entrypointExitOneIsNotDiagnosed(t *testing.T) {
+	out, err := runWithScriptIsolator(t, `"$0" "$@"`,
+		"[entrypoint]\ncmd = \"sh\"\nargs = [\"-c\", \"exit 1\"]\n")
+	var exitErr exitCoder
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("err = %v, want exit code 1", err)
+	}
+	if strings.Contains(out, "sandbox did not start") {
+		t.Errorf("unexpected diagnosis for the entrypoint's own exit code:\n%s", out)
+	}
+}
+
+// Exit codes a start failure cannot produce are passed through without a probe.
+func TestRunSandbox_otherExitCodesAreNotProbed(t *testing.T) {
+	out, err := runWithScriptIsolator(t,
+		`echo "bwrap: Can't find source path /nope: No such file or directory" >&2; exit 7`,
+		"[entrypoint]\ncmd = \"sh\"\n")
+	if err == nil {
+		t.Fatal("expected a non-zero exit")
+	}
+	if strings.Contains(out, "sandbox did not start") {
+		t.Errorf("exit code 7 should not be diagnosed:\n%s", out)
+	}
+}
+
+// ── run --dry-run --json (ISS-08) ─────────────────────────────────────────────
+
+func TestRunSandbox_dryRunJSON(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "p", `
+[sandbox]
+network_mode = "allowlist"
+network_allow = ["example.com"]
+allow = ["ssh-agent"]
+
+[entrypoint]
+cmd = "sh"
+args = ["-c", "true"]
+
+[noop]
+block = ["apt"]
+`)
+	var stdout, stderr bytes.Buffer
+	if err := app.runSandbox(&stderr, runCLIFlags{profile: "p", dryRun: true, jsonOut: &stdout}, nil); err != nil {
+		t.Fatalf("dry-run: %v\nstderr:\n%s", err, stderr.String())
+	}
+	var out dryRunJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Profile != "p" || out.Entrypoint.Cmd != "sh" || out.Network.Mode != "allowlist" {
+		t.Errorf("unexpected header: %+v", out)
+	}
+	found := false
+	for _, r := range out.Network.Allow {
+		if r.Entry == "example.com" && r.Origin != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("example.com with its origin missing from %+v", out.Network.Allow)
+	}
+	if !slices.Contains(out.Noop.Block, "apt") || !slices.Contains(out.Allow, "ssh-agent") || len(out.Command) == 0 {
+		t.Errorf("unexpected body: %+v", out)
+	}
+	// Lists are [] rather than null even when empty.
+	if !strings.Contains(stdout.String(), `"shims": []`) {
+		t.Errorf("empty shims should be [], got:\n%s", stdout.String())
+	}
+	// The entrypoint is the requested one, not the relay wrapping it.
+	if strings.Join(out.Entrypoint.Args, " ") != "-c true" {
+		t.Errorf("entrypoint args = %v, want the requested ones", out.Entrypoint.Args)
+	}
+}
+
+func TestRunCmd_jsonNeedsDryRun(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "default", "[entrypoint]\ncmd = \"sh\"\n")
+	cmd := app.newRunCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--json"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--json needs --dry-run") {
+		t.Errorf("err = %v, want --json needs --dry-run", err)
 	}
 }

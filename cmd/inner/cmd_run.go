@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -57,6 +58,9 @@ type runCLIFlags struct {
 	limitMemory string // e.g. "4G", "512M"
 	limitCPU    string // e.g. "200%" or "2.0" (cores)
 	limitPids   int    // max processes; 0 = no override
+	// jsonOut, with dryRun, receives the dry-run as JSON instead of text;
+	// everything else runSandbox prints then goes to its w (stderr).
+	jsonOut io.Writer
 }
 
 // ── Business logic ────────────────────────────────────────────────────────────
@@ -279,6 +283,11 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	//        sanitized gitconfig, capability directories, safe-rw mounts.
 	//        Shared with `inner verify` so both commands build the same sandbox;
 	//        see sandboxOptions for the steps they deliberately differ on.
+	//        The entrypoint is recorded first: preparation can wrap it in
+	//        inner's own __scope / __net-relay, and a start-failure diagnosis
+	//        must look for the command the user asked for.
+	entrypoint := rc.Entrypoint.Cmd
+	entrypointArgs := slices.Clone(rc.Entrypoint.Args)
 	cleanupPrep, err := prepareSandbox(rc, runSandboxOptions())
 	if err != nil {
 		return err
@@ -323,6 +332,9 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 
 	// 14. Dry-run: print profile, effective config, and sandbox command.
 	if flags.dryRun {
+		if flags.jsonOut != nil {
+			return writeJSON(flags.jsonOut, newDryRunJSON(a.loader.ResolveProfilePath(profileName), a.loader.GlobalConfigPath(), a.loader.LocalConfigPath(), rc, entrypoint, entrypointArgs, cmd.Args))
+		}
 		printDryRun(w, a.loader.ResolveProfilePath(profileName), a.loader.GlobalConfigPath(), a.loader.LocalConfigPath(), rc, cmd.Args)
 		return nil
 	}
@@ -339,7 +351,33 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		defer wm.Release()
 	}
 
-	// 15. Launch.
+	// 15. Launch, under a run ID that is printed and recorded so the run can
+	//     be found again with `inner log <run-id>`, interactive runs included.
+	runID := executor.GenerateRunID()
+	logsDir := a.logsDir()
+	rec := &runRecord{
+		RunID:       runID,
+		Profile:     rc.Name,
+		ProfilePath: a.loader.ResolveProfilePath(profileName),
+		Entrypoint:  entrypoint,
+		Args:        entrypointArgs,
+		Workdir:     rc.Workdir,
+		Interactive: rc.Entrypoint.Interactive,
+		Home:        rc.HomeMode,
+		Network:     rc.EffectiveNetworkMode(),
+		StartedAt:   time.Now(),
+	}
+	if remote.isRemote() {
+		rec.ProfilePath = remote.url
+	}
+	if rec.Home == "" {
+		rec.Home = config.HomeHostRO
+	}
+	if err := writeRunRecord(logsDir, rec); err != nil {
+		fmt.Fprintf(a.errW(), "inner: warning: cannot write run record: %v\n", err)
+	}
+	fmt.Fprintf(a.errW(), "inner: run %s\n", runID)
+
 	launcher := a.launcherFn()
 	result, err := launcher.Run(cmd, executor.RunOptions{
 		Interactive:  rc.Entrypoint.Interactive,
@@ -348,11 +386,19 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		PostStart:    postStart,
 		Timeout:      rc.Timeout,
 		LogDir:       rc.LogDir,
+		RunID:        runID,
 	})
+	rec.finish(result.ExitCode, err, result.LogPath)
+	if werr := writeRunRecord(logsDir, rec); werr != nil {
+		fmt.Fprintf(a.errW(), "inner: warning: cannot write run record: %v\n", werr)
+	}
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(a.errW(), "inner: run %s exited with code %d (inner log %s)\n", runID, result.ExitCode, runID)
 	if result.ExitCode != 0 {
+		// 16. If the sandbox may never have started, say why in one line.
+		diagnoseStartFailure(w, iso, *rc, entrypoint, result.ExitCode)
 		return exitCodeError{code: result.ExitCode}
 	}
 	return nil
@@ -1121,6 +1167,7 @@ func defaultSystemdUserSessionAvailable() bool {
 func (a *App) newRunCmd() *cobra.Command {
 	var flags runCLIFlags
 
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "run [-p PROFILE] [-w PATH] [flags] [-- extra-args]",
 		Short: "Run a command in an isolated sandbox",
@@ -1129,9 +1176,18 @@ func (a *App) newRunCmd() *cobra.Command {
 Flags override the loaded profile. Extra arguments after -- are appended
 to the entrypoint command.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runSandbox(cmd.OutOrStdout(), flags, args)
+			out := cmd.OutOrStdout()
+			if asJSON {
+				if !flags.dryRun {
+					return fmt.Errorf("--json needs --dry-run: a run's own output is the entrypoint's (its record is in 'inner log RUN_ID --json')")
+				}
+				// Only the JSON goes to stdout; warnings go to stderr.
+				flags.jsonOut, out = out, cmd.ErrOrStderr()
+			}
+			return a.runSandbox(out, flags, args)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "With --dry-run, print the resolved sandbox as JSON")
 
 	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", "Profile to use (default: \"default\")")
 	cmd.Flags().StringVarP(&flags.workdir, "workdir", "w", "", "Mount PATH read-write in the sandbox (at the same path)")

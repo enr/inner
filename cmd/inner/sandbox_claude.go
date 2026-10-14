@@ -588,6 +588,9 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		Dest: claudeDir,
 		Mode: "rw",
 	})
+	// The copy carries the login token on purpose: keep the agent-credentials
+	// hide rule from covering it.
+	rc.HideExempt = append(rc.HideExempt, credPath)
 
 	// ── Session bus for mid-session token refresh ─────────────────────────────
 	// The sandbox clears the environment. Without DBUS_SESSION_BUS_ADDRESS,

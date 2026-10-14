@@ -80,6 +80,8 @@ var CredentialAllowKeys = []string{
 	"terraform-credentials", "maven-settings", "gradle-properties",
 	"helm-config", "pgpass", "mysql-config",
 	"password-store", "keyrings", "onepassword-config", "browser-profiles",
+	"containers-auth", "vault-token", "rclone-config", "s3cfg", "age-keys",
+	"pulumi-credentials", "mail-profiles", "agent-credentials",
 }
 
 // HostPrivilegeAllowKeys are the [sandbox] allow keys that hand the sandbox a

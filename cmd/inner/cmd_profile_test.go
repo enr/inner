@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,7 +79,7 @@ func TestProfileList_empty(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	if !strings.Contains(buf.String(), "NAME") {
@@ -94,7 +95,7 @@ func TestProfileList_withProfiles(t *testing.T) {
 		`name = "beta"\ndescription = "Beta profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -111,7 +112,7 @@ func TestProfileList_noDir(t *testing.T) {
 	// profiles dir does not exist
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatalf("expected no error when profiles dir missing: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No profiles") {
@@ -125,7 +126,7 @@ func TestProfileList_ignoresNonToml(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "profiles", "README.md"), `# ignore me`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -142,7 +143,7 @@ func TestProfileList_localProfiles(t *testing.T) {
 		`name = "local"\ndescription = "Local profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -166,7 +167,7 @@ func TestProfileList_defaultMarked(t *testing.T) {
 		`name = "beta"\ndescription = "Beta profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -193,7 +194,7 @@ func TestProfileList_defaultAsPath(t *testing.T) {
 		`name = "local-prof"\ndescription = "My local profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -209,7 +210,7 @@ func TestProfileList_localDefaultMarked(t *testing.T) {
 		`name = "local-prof"\ndescription = "My local profile"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -714,7 +715,7 @@ func TestProfileList_sameNameNormalMode(t *testing.T) {
 		`name = "foo"\ndescription = "local foo"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, false); err != nil {
+	if err := app.profileList(&buf, false, false); err != nil {
 		t.Fatalf("profileList: %v", err)
 	}
 	out := buf.String()
@@ -740,7 +741,7 @@ func TestProfileList_wideShadowed(t *testing.T) {
 		`name = "foo"\ndescription = "local foo"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, true); err != nil {
+	if err := app.profileList(&buf, true, false); err != nil {
 		t.Fatalf("profileList wide: %v", err)
 	}
 	out := buf.String()
@@ -765,7 +766,7 @@ func TestProfileList_wideMode(t *testing.T) {
 		`name = "beta"\ndescription = "Beta"`)
 
 	var buf bytes.Buffer
-	if err := app.profileList(&buf, true); err != nil {
+	if err := app.profileList(&buf, true, false); err != nil {
 		t.Fatalf("profileList wide: %v", err)
 	}
 	out := buf.String()
@@ -1166,5 +1167,113 @@ name = "plain2"
 	}
 	if !strings.Contains(out, "mode: off") {
 		t.Errorf("expected the network section, got:\n%s", out)
+	}
+}
+
+// TestProfileExplain_attributesEachValueToItsLayer covers ISS-17 end to end:
+// with leaf → mid → base, the output lists the chain and tags each value with
+// the layer that set it.
+func TestProfileExplain_attributesEachValueToItsLayer(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+[sandbox]
+home = "host-ro"
+allow = ["ssh-agent"]
+
+[env]
+inherit = ["TERM"]
+`)
+	writeTestFile(t, filepath.Join(dir, "profiles", "mid.toml"), `
+extends = "base"
+capabilities = ["claude"]
+
+[sandbox]
+home = "isolated"
+
+[mounts]
+"/src" = { dest = "/work", mode = "rw" }
+`)
+	writeTestFile(t, filepath.Join(dir, "profiles", "leaf.toml"), `
+extends = "mid"
+
+[sandbox]
+allow = ["gpg-agent"]
+`)
+
+	var buf bytes.Buffer
+	if err := app.profileExplain(&buf, "leaf"); err != nil {
+		t.Fatalf("profileExplain: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "profile: leaf\n") {
+		t.Errorf("expected the requested profile's name in the header; got:\n%s", out)
+	}
+	lineWith := func(parts ...string) bool {
+		for _, line := range strings.Split(out, "\n") {
+			ok := true
+			for _, p := range parts {
+				ok = ok && strings.Contains(line, p)
+			}
+			if ok {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range [][]string{
+		{"1.", "base", "base.toml"},
+		{"2.", "mid", "mid.toml"},
+		{"3.", "leaf", "leaf.toml"},
+		{"home", `"isolated"`, "[mid]"},
+		{"allow", "ssh-agent", "[base]"},
+		{"gpg-agent", "[leaf]"},
+		{"inherit", "TERM", "[base]"},
+		{"capabilities", "claude", "[mid]"},
+		{"/src → /work (rw)", "[mid]"},
+		{"network_mode", `"off"`, "[default]"},
+		{"── network"},
+		{"── capability: claude"},
+	} {
+		if !lineWith(want...) {
+			t.Errorf("expected a line with %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestProfileExplain_unknownProfile(t *testing.T) {
+	app, _ := newTestApp(t)
+	var buf bytes.Buffer
+	if err := app.profileExplain(&buf, "missing"); err == nil {
+		t.Fatal("expected an error for a missing profile")
+	}
+}
+
+func TestProfileList_json(t *testing.T) {
+	app, dir, workDir := newTestAppWithWorkDir(t)
+	writeTestFile(t, filepath.Join(dir, "profiles", "default.toml"), "description = \"global default\"\n")
+	writeTestFile(t, filepath.Join(dir, "profiles", "shared.toml"), "description = \"global shared\"\nexperimental = true\n")
+	writeTestFile(t, filepath.Join(workDir, ".config", "inner", "profiles", "shared.toml"), "description = \"local shared\"\n")
+
+	var buf bytes.Buffer
+	if err := app.profileList(&buf, false, true); err != nil {
+		t.Fatal(err)
+	}
+	var items []profileListItem
+	if err := json.Unmarshal(buf.Bytes(), &items); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	got := map[string]profileListItem{}
+	for _, it := range items {
+		got[it.Name+"/"+it.Scope] = it
+	}
+	if d := got["default/global"]; !d.Default || d.Description != "global default" {
+		t.Errorf("default profile: %+v", d)
+	}
+	if g := got["shared/global"]; !g.Shadowed || !g.Experimental || g.Description != "global shared" {
+		t.Errorf("shadowed global: %+v", g)
+	}
+	if l := got["shared/local"]; l.Shadowed || l.Description != "local shared" {
+		t.Errorf("local: %+v", l)
 	}
 }

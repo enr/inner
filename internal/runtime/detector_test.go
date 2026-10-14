@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -128,5 +129,64 @@ func TestDetectTIOCSTI(t *testing.T) {
 		if got := DetectTIOCSTI(); got != want {
 			t.Errorf("legacy_tiocsti = %q: got %v, want %v", content, got, want)
 		}
+	}
+}
+
+func writeSysctl(t *testing.T, dir, name, value string) {
+	t.Helper()
+	path := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(value+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUserNSRestrictions(t *testing.T) {
+	cases := []struct {
+		name         string
+		sysctls      map[string]string
+		wantSettings []string
+		wantEnabled  bool
+	}{
+		{"no sysctls", nil, nil, true},
+		{"all permissive", map[string]string{
+			"kernel/unprivileged_userns_clone":             "1",
+			"user/max_user_namespaces":                     "63000",
+			"kernel/apparmor_restrict_unprivileged_userns": "0",
+		}, nil, true},
+		{"debian clone off", map[string]string{"kernel/unprivileged_userns_clone": "0"},
+			[]string{"kernel.unprivileged_userns_clone = 0"}, false},
+		{"max namespaces zero", map[string]string{"user/max_user_namespaces": "0"},
+			[]string{"user.max_user_namespaces = 0"}, false},
+		// AppArmor restricts without blocking: bwrap usually has a profile.
+		{"apparmor", map[string]string{"kernel/apparmor_restrict_unprivileged_userns": "1"},
+			[]string{"kernel.apparmor_restrict_unprivileged_userns = 1"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, value := range c.sysctls {
+				writeSysctl(t, dir, name, value)
+			}
+			prev := sysctlDir
+			sysctlDir = dir
+			t.Cleanup(func() { sysctlDir = prev })
+
+			var got []string
+			for _, r := range UserNSRestrictions() {
+				got = append(got, r.Setting)
+				if r.Fix == "" {
+					t.Errorf("%s: empty Fix", r.Setting)
+				}
+			}
+			if strings.Join(got, "|") != strings.Join(c.wantSettings, "|") {
+				t.Errorf("settings = %v, want %v", got, c.wantSettings)
+			}
+			if enabled := checkUserNamespaces(); enabled != c.wantEnabled {
+				t.Errorf("checkUserNamespaces() = %v, want %v", enabled, c.wantEnabled)
+			}
+		})
 	}
 }

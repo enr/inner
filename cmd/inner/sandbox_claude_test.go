@@ -1113,3 +1113,33 @@ func TestCopyDir_recreatesSymlinkWithoutReadingIt(t *testing.T) {
 		t.Errorf("relative link target = %q, want it preserved", target)
 	}
 }
+
+// ISS-34: ~/.claude/.credentials.json is hidden from every profile by the
+// agent-credentials rule; the claude capability, whose copy carries the token
+// on purpose, must exempt it or the agent would start logged out.
+func TestApplyClaude_exemptsItsTokenFromHiding(t *testing.T) {
+	fakeHome := makeFakeHome(t)
+	claudeDir := filepath.Join(fakeHome, ".claude")
+	makeClaudeHome(t, claudeDir, map[string]string{".credentials.json": `{}`})
+
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
+	if err != nil {
+		t.Fatalf("applyClaude: %v", err)
+	}
+	defer cleanup()
+
+	cred := filepath.Join(claudeDir, ".credentials.json")
+	if !slices.Contains(rc.HideExempt, cred) {
+		t.Errorf("HideExempt = %v, want it to contain %s", rc.HideExempt, cred)
+	}
+	var hidden bool
+	for _, r := range config.SensitiveResources(fakeHome, "1000") {
+		if r.Path == cred && r.Key == "agent-credentials" {
+			hidden = true
+		}
+	}
+	if !hidden {
+		t.Errorf("%s is not in the hide table: the exemption has nothing to exempt", cred)
+	}
+}

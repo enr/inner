@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -52,9 +53,29 @@ var wellKnownSecretPaths = []string{
 	".config/microsoft-edge/Default/Cookies",
 	".config/vivaldi/Default/Cookies",
 	".config/opera/Cookies",
-	// Shell history: recorded secrets pasted on a command line.
+	// Flatpak/snap browsers and mail clients.
+	".var/app/org.mozilla.firefox/.mozilla/firefox/p.default/cookies.sqlite",
+	".var/app/com.google.Chrome/config/google-chrome/Default/Cookies",
+	"snap/firefox/common/.mozilla/firefox/p.default/logins.json",
+	".thunderbird/p.default/logins.json",
+	// More credential files.
+	".config/git/credentials",
+	".config/containers/auth.json",
+	".vault-token",
+	".config/rclone/rclone.conf",
+	".s3cfg",
+	".config/sops/age/keys.txt",
+	".pulumi/credentials.json",
+	// The agents' own login tokens.
+	".claude/.credentials.json",
+	".gemini/oauth_creds.json",
+	".local/share/opencode/auth.json",
+	".config/cursor/auth.json",
+	// Shell and REPL history: recorded secrets pasted on a command line.
 	".bash_history",
 	".zsh_history",
+	".local/share/fish/fish_history",
+	".psql_history",
 }
 
 func TestSensitiveResources_coverWellKnownSecrets(t *testing.T) {
@@ -76,10 +97,10 @@ func TestSensitiveResources_coverWellKnownSecrets(t *testing.T) {
 
 // Every key used by a hide entry must be declassifiable, otherwise a user hit
 // by a false positive (a tool that genuinely needs the path) has no escape
-// hatch. The two shell-history keys are the deliberate exception: nothing
-// legitimately needs the host's shell history inside a sandbox.
+// hatch. The history keys are the deliberate exception: nothing legitimately
+// needs the host's shell or REPL history inside a sandbox.
 func TestSensitiveResources_keysAreDeclassifiable(t *testing.T) {
-	nonDeclassifiable := []string{"bash-history", "zsh-history"}
+	nonDeclassifiable := []string{"bash-history", "zsh-history", "shell-history"}
 	for _, r := range SensitiveResources("/home/tester", "1000") {
 		if slices.Contains(nonDeclassifiable, r.Key) {
 			continue
@@ -94,7 +115,7 @@ func TestSensitiveResources_keysAreDeclassifiable(t *testing.T) {
 // which is what makes "network + credentials" reportable by the validator.
 func TestSensitiveResources_credentialKeysListed(t *testing.T) {
 	// Keys whose resource is not a readable secret file/dir on its own.
-	notCredentials := append([]string{"bash-history", "zsh-history"}, HostPrivilegeAllowKeys...)
+	notCredentials := append([]string{"bash-history", "zsh-history", "shell-history"}, HostPrivilegeAllowKeys...)
 	for _, r := range SensitiveResources("/home/tester", "1000") {
 		if slices.Contains(notCredentials, r.Key) {
 			continue
@@ -181,5 +202,105 @@ func TestAllowKeyEnabled(t *testing.T) {
 		if got := AllowKeyEnabled(tc.allow, tc.key); got != tc.want {
 			t.Errorf("AllowKeyEnabled(%v, %q) = %v, want %v", tc.allow, tc.key, got, tc.want)
 		}
+	}
+}
+
+// withEnv points the table at a fake host environment for one test.
+func withEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	prev := getenv
+	getenv = func(k string) string { return env[k] }
+	t.Cleanup(func() { getenv = prev })
+}
+
+func resourceFor(resources []SensitiveResource, path string) (SensitiveResource, bool) {
+	for _, r := range resources {
+		if r.Path == path {
+			return r, true
+		}
+	}
+	return SensitiveResource{}, false
+}
+
+// ISS-34: a secret moved by the environment is hidden at its new place, under
+// the key of the location it replaces.
+func TestSensitiveResources_relocatedByEnv(t *testing.T) {
+	const home = "/home/tester"
+	withEnv(t, map[string]string{
+		"KUBECONFIG":                  "/work/a.yaml:~/clusters/b.yaml",
+		"GNUPGHOME":                   "/keys/gnupg",
+		"XDG_CONFIG_HOME":             "/cfg",
+		"XDG_DATA_HOME":               "~/data",
+		"DOCKER_CONFIG":               "/opt/docker",
+		"CARGO_HOME":                  "/opt/cargo",
+		"AWS_SHARED_CREDENTIALS_FILE": "/secrets/aws",
+		"SSH_AUTH_SOCK":               "/run/user/1000/custom-agent.sock",
+	})
+	t.Setenv("HOME", home) // ExpandPath resolves ~ against it
+	resources := SensitiveResources(home, "1000")
+
+	want := map[string]struct {
+		key string
+		dir bool
+	}{
+		"/work/a.yaml":                     {"kube-config", false},
+		home + "/clusters/b.yaml":          {"kube-config", false},
+		"/keys/gnupg":                      {"gpg-keys", true},
+		"/cfg/gh":                          {"gh-config", true},
+		"/cfg/git/credentials":             {"git-credentials", false},
+		"/cfg/google-chrome":               {"browser-profiles", true},
+		home + "/data/keyrings":            {"keyrings", true},
+		home + "/data/opencode/auth.json":  {"agent-credentials", false},
+		"/opt/docker/config.json":          {"docker-config", false},
+		"/opt/cargo/credentials.toml":      {"cargo-credentials", false},
+		"/secrets/aws":                     {"aws-credentials", false},
+		"/run/user/1000/custom-agent.sock": {"ssh-agent", false},
+	}
+	for path, w := range want {
+		r, ok := resourceFor(resources, path)
+		if !ok {
+			t.Errorf("%s is not hidden", path)
+			continue
+		}
+		if r.Key != w.key || r.Dir != w.dir {
+			t.Errorf("%s: got key %q dir %v, want %q %v", path, r.Key, r.Dir, w.key, w.dir)
+		}
+	}
+	// The fixed locations stay hidden too.
+	if _, ok := resourceFor(resources, home+"/.kube"); !ok {
+		t.Error("~/.kube no longer hidden")
+	}
+}
+
+// A variable pointing at the home itself (or at /) must not hide everything.
+func TestSensitiveResources_relocationNeverCoversHome(t *testing.T) {
+	const home = "/home/tester"
+	withEnv(t, map[string]string{
+		"GNUPGHOME":          home,
+		"PASSWORD_STORE_DIR": "/",
+		"XDG_CONFIG_HOME":    "/home",
+		"SSH_AUTH_SOCK":      "/tmp/ssh-XYZ/agent.1",
+		"KUBECONFIG":         "relative/config",
+	})
+	for _, r := range SensitiveResources(home, "1000") {
+		if r.Dir && (r.Path == "/" || PathCoveredBy([]string{r.Path}, home)) {
+			t.Errorf("%s (%s) would hide the whole home", r.Path, r.Key)
+		}
+		if strings.HasPrefix(r.Path, "/tmp/") {
+			t.Errorf("%s: /tmp is a fresh tmpfs in the sandbox, nothing to hide", r.Path)
+		}
+		if !filepath.IsAbs(r.Path) {
+			t.Errorf("relative path %q in the table", r.Path)
+		}
+	}
+}
+
+// Without relocation variables the table is exactly the fixed one: a default
+// XDG_CONFIG_HOME adds no duplicate.
+func TestSensitiveResources_defaultXDGAddsNothing(t *testing.T) {
+	const home = "/home/tester"
+	withEnv(t, map[string]string{"XDG_CONFIG_HOME": home + "/.config"})
+	if got, want := len(SensitiveResources(home, "1000")), len(fixedSensitiveResources(home, "1000")); got != want {
+		t.Errorf("%d entries, want %d (no duplicates)", got, want)
 	}
 }

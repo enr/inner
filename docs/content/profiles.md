@@ -224,6 +224,8 @@ timeout_seconds = 7200       # overrides base value
 
 Inheritance chains are supported — `A extends B extends C` produces the result of applying B on C, then A on that. Cycles are detected and reported as an error.
 
+`inner profile explain A` shows the merged result with the layer each value comes from.
+
 ### `extends` resolution
 
 If the value contains `/`, starts with `~`, or is an absolute path, it is treated as a file path (with `~` expansion). Otherwise it is looked up by name in `~/.config/inner/profiles/`.
@@ -763,7 +765,16 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `password-store` | `~/.password-store/` |
 | `keyrings` | `~/.local/share/keyrings/` |
 | `onepassword-config` | `~/.config/op/` |
-| `browser-profiles` | `~/.mozilla/`, `~/.config/{google-chrome,chromium,BraveSoftware,microsoft-edge,vivaldi,opera}/` (cookies, saved passwords) |
+| `browser-profiles` | `~/.mozilla/`, `~/.config/{google-chrome,chromium,BraveSoftware,microsoft-edge,vivaldi,opera}/`, the same browsers as flatpak (`~/.var/app/…`) or snap (`~/snap/{firefox,chromium}`) (cookies, saved passwords) |
+| `mail-profiles` | `~/.thunderbird/`, `~/.var/app/org.mozilla.Thunderbird/`, `~/snap/thunderbird/` |
+| `git-credentials` | also `~/.config/git/credentials` (git's XDG credential store) |
+| `containers-auth` | `~/.config/containers/auth.json`, `/run/user/$UID/containers/auth.json` (podman/buildah registry logins) |
+| `vault-token` | `~/.vault-token` |
+| `rclone-config` | `~/.config/rclone/rclone.conf` |
+| `s3cfg` | `~/.s3cfg` |
+| `age-keys` | `~/.config/sops/age/`, `~/.config/age/` |
+| `pulumi-credentials` | `~/.pulumi/credentials.json` |
+| `agent-credentials` | `~/.claude/.credentials.json`, `~/.gemini/oauth_creds.json`, `~/.local/share/opencode/auth.json`, `~/.config/cursor/auth.json` — the agents' own login tokens. A capability exempts the token it copies in on purpose (`claude`, `cursor`, `opencode`), so agent profiles keep working; every other profile, a plain shell included, no longer reads them |
 | `session-bus` | `/run/user/$UID/bus` (the D-Bus session bus: through it the sandbox can ask `systemd --user` to start processes **outside** the sandbox, and read the keyring) |
 | `systemd-user` | `/run/user/$UID/systemd/` (the systemd user manager's private socket — same power as above) |
 | `ssh-agent` | `/run/user/$UID/{ssh-agent.socket,openssh_agent,gcr/ssh,keyring/ssh}` (ssh-agent sockets: sign with your keys without reading them) |
@@ -785,7 +796,28 @@ key.
 
 `~/.bash_history` and `~/.zsh_history` are hidden too and are **not**
 declassifiable: nothing legitimately needs the host shell history inside a
-sandbox.
+sandbox. The same holds for the fish history and the REPL/database client
+histories (`~/.python_history`, `~/.psql_history`, `~/.mysql_history`,
+`~/.node_repl_history`), which record passwords typed in connection strings.
+
+**Paths moved by the environment.** Tools that relocate their files through
+an environment variable are hidden at the new place too, under the key of the
+location it replaces (so the same `allow` key un-hides both). The variables are
+read from the environment `inner` runs in:
+
+| Variable | Hidden there (key) |
+|---|---|
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME` | every entry above under `~/.config` / `~/.local/share` |
+| `GNUPGHOME` | the directory (`gpg-keys`) |
+| `KUBECONFIG` (a list) | each file (`kube-config`) |
+| `DOCKER_CONFIG`, `CARGO_HOME`, `GRADLE_USER_HOME` | `config.json`, `credentials[.toml]`, `gradle.properties` inside it |
+| `PASSWORD_STORE_DIR`, `GH_CONFIG_DIR`, `CLOUDSDK_CONFIG`, `AZURE_CONFIG_DIR`, `HELM_CONFIG_HOME`, `PULUMI_HOME` | the directory, or the credential file inside it |
+| `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `NPM_CONFIG_USERCONFIG`, `PGPASSFILE`, `VAULT_CONFIG_PATH`, `RCLONE_CONFIG`, `SOPS_AGE_KEY_FILE` | the file |
+| `SSH_AUTH_SOCK` | the agent socket (`ssh-agent`), unless it is under `/tmp`, which the sandbox replaces anyway |
+
+A variable that would hide `/` or the home itself (`GNUPGHOME=$HOME`) is
+ignored. `inner verify` runs inside the sandbox, whose environment is cleared,
+so it checks the fixed locations only.
 
 The hide list is a denylist: it covers the paths listed above and nothing else.
 A profile that does not need the host home should use
@@ -1270,6 +1302,26 @@ rewrite = { "docker" = "podman", "docker-compose" = "podman-compose" }
 ```
 
 Shims are generated as shell scripts placed on `$PATH` inside the sandbox, so they transparently intercept calls by name.
+
+A `block` shim is also bind-mounted over the real binary wherever it exists — in
+every directory of the sandbox `PATH` and in `/usr/local/sbin`, `/usr/local/bin`,
+`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`, with symlinks resolved — so calling it
+by path (`/usr/bin/rm`, `/bin/rm`) hits the shim too. `rewrite` shims stay
+`PATH`-only: the real binary is what they hand over to.
+
+Two binaries are left alone, with a warning at every run:
+
+- a binary also reachable under a name that is not blocked: a multi-call binary
+  (busybox, single-binary coreutils) or an `/etc/alternatives` target
+  (`vi` → `vim.basic`, which `vim` also runs). Shadowing it would block the
+  other commands too. When every other name is blocked as well (`yum` and `dnf`
+  → `dnf-3`), it is shadowed;
+- the shims' own interpreter, `/bin/sh` (e.g. `block = ["dash"]` on Debian).
+
+`block` is a guard against mistakes, not an exec policy: a sandboxed process
+that copies the binary elsewhere (say to `/tmp`) can still run the copy, and a
+`PATH` entry that exists only as the destination of a profile mount is not
+covered. Closing those takes exec control (Landlock or seccomp), not mounts.
 
 ---
 

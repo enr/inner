@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
 
@@ -18,6 +19,17 @@ type App struct {
 	editorFn   func(path string) error
 	isolatorFn func() (isolator.Isolator, error)
 	launcherFn func() *executor.Launcher
+	// stderr receives what must not mix with a command's output: the run ID
+	// lines of `inner run`, warnings in --json mode. nil means os.Stderr.
+	stderr io.Writer
+}
+
+// errW returns the writer for diagnostics that must stay off stdout.
+func (a *App) errW() io.Writer {
+	if a.stderr != nil {
+		return a.stderr
+	}
+	return os.Stderr
 }
 
 // newApp creates an App wired to real production dependencies.

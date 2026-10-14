@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -73,7 +74,7 @@ func TestRunVerifyInside_usesEnvContextWhenProfileIsUnreadable(t *testing.T) {
 	var buf bytes.Buffer
 	// The report is expected to be non-conformant here (the test process is not
 	// in a sandbox, so home-isolated fails); only the network line matters.
-	_ = app.runVerifyInside(&buf, false)
+	_ = app.runVerifyInside(&buf, false, false)
 
 	out := buf.String()
 	if !strings.Contains(out, "network_mode=full in profile") {
@@ -100,7 +101,7 @@ func TestRunVerifyInside_networkModeWinsOverLegacyBool(t *testing.T) {
 	t.Setenv("INNER_VERIFY_CUSTOM", "")
 
 	var buf bytes.Buffer
-	_ = app.runVerifyInside(&buf, false)
+	_ = app.runVerifyInside(&buf, false, false)
 
 	if out := buf.String(); strings.Contains(out, "network_mode=full in profile") {
 		t.Errorf("legacy INNER_VERIFY_NETWORK overrode INNER_VERIFY_NETWORK_MODE:\n%s", out)
@@ -120,11 +121,50 @@ func TestRunVerifyInside_customChecksFromEnv(t *testing.T) {
 	t.Setenv("INNER_VERIFY_CUSTOM", `[{"name":"always-fails","cmd":"false","severity":"medium"}]`)
 
 	var buf bytes.Buffer
-	err := app.runVerifyInside(&buf, false)
+	err := app.runVerifyInside(&buf, false, false)
 	if err == nil {
 		t.Errorf("expected a non-zero exit: the custom check fails\n%s", buf.String())
 	}
 	if !strings.Contains(buf.String(), "always-fails") {
 		t.Errorf("custom check from the environment was not run:\n%s", buf.String())
+	}
+}
+
+func TestRunVerifyInside_json(t *testing.T) {
+	app, _ := newRunTestApp(t)
+
+	t.Setenv("INNER_VERIFY_PROFILE", "/nonexistent/profile.toml")
+	t.Setenv("INNER_VERIFY_HOME_MODE", config.HomeHostRO)
+	t.Setenv("INNER_VERIFY_NETWORK", "1")
+	t.Setenv("INNER_VERIFY_SHIMS", "0")
+	t.Setenv("INNER_VERIFY_ALLOW", "")
+	t.Setenv("INNER_VERIFY_CUSTOM", `[{"name":"always-fails","cmd":"false","severity":"medium"}]`)
+
+	var buf bytes.Buffer
+	err := app.runVerifyInside(&buf, true, true)
+	if err == nil {
+		t.Error("expected a non-zero exit: the custom check fails")
+	}
+	var report verifyJSON
+	if jerr := json.Unmarshal(buf.Bytes(), &report); jerr != nil {
+		t.Fatalf("invalid JSON: %v\n%s", jerr, buf.String())
+	}
+	if report.Conformant || report.Profile != "/nonexistent/profile.toml" {
+		t.Errorf("unexpected report header: %+v", report)
+	}
+	var found bool
+	for _, c := range report.Checks {
+		if c.Name == "always-fails" {
+			found = true
+			if c.Passed || c.Severity != "medium" {
+				t.Errorf("custom check: %+v", c)
+			}
+		}
+		if c.Passed && c.Suggest != "" {
+			t.Errorf("suggest set on a passing check: %+v", c)
+		}
+	}
+	if !found {
+		t.Errorf("custom check missing: %+v", report.Checks)
 	}
 }

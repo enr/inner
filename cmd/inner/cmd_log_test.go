@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/enr/inner/internal/isolator"
 )
 
 // writeLogFile creates a log file in dir/logs/ with the given modtime.
@@ -110,7 +113,7 @@ func TestFormatSize_megabytes(t *testing.T) {
 func TestLogList_noLogsDir(t *testing.T) {
 	app, _ := newTestApp(t)
 	var buf bytes.Buffer
-	if err := app.logList(&buf); err != nil {
+	if err := app.logList(&buf, false); err != nil {
 		t.Fatalf("logList: %v", err)
 	}
 	// Should print header only.
@@ -125,7 +128,7 @@ func TestLogList_withLogs(t *testing.T) {
 	writeLogFile(t, logsDir, "20240101-120000-aaaa", time.Now(), "content")
 
 	var buf bytes.Buffer
-	if err := app.logList(&buf); err != nil {
+	if err := app.logList(&buf, false); err != nil {
 		t.Fatalf("logList: %v", err)
 	}
 	if !strings.Contains(buf.String(), "20240101-120000-aaaa") {
@@ -206,5 +209,144 @@ func TestLogClean_noLogs_printsMessage(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "no logs to clean") {
 		t.Errorf("expected 'no logs to clean', got: %s", buf.String())
+	}
+}
+
+// ── run records (ISS-08) ──────────────────────────────────────────────────────
+
+// runAndCaptureID runs profile p through runSandbox and returns the run ID
+// printed on stderr.
+func runAndCaptureID(t *testing.T, app *App) string {
+	t.Helper()
+	var stderr bytes.Buffer
+	app.stderr = &stderr
+	_ = app.runSandbox(&bytes.Buffer{}, runCLIFlags{profile: "p"}, nil)
+	for _, line := range strings.Split(stderr.String(), "\n") {
+		if id, ok := strings.CutPrefix(line, "inner: run "); ok && !strings.Contains(id, " ") {
+			return id
+		}
+	}
+	t.Fatalf("no run ID printed; stderr:\n%s", stderr.String())
+	return ""
+}
+
+func TestRun_printedIDWorksWithInnerLog(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "p", "[entrypoint]\ncmd = \"sh\"\ninteractive = true\n")
+	id := runAndCaptureID(t, app)
+
+	var out bytes.Buffer
+	if err := app.logShow(&out, id, true); err != nil {
+		t.Fatalf("logShow: %v", err)
+	}
+	var rec runRecord
+	if err := json.Unmarshal(out.Bytes(), &rec); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+	}
+	if rec.RunID != id || rec.Profile != "p" || rec.Entrypoint != "sh" || !rec.Interactive {
+		t.Errorf("unexpected record: %+v", rec)
+	}
+	if rec.ExitCode == nil || *rec.ExitCode != 0 || rec.EndedAt == nil {
+		t.Errorf("record not finished: %+v", rec)
+	}
+
+	// The interactive run has no output log but is listed and shown anyway.
+	out.Reset()
+	if err := app.logList(&out, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), id) {
+		t.Errorf("run %s missing from log list:\n%s", id, out.String())
+	}
+	out.Reset()
+	if err := app.logShow(&out, id, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "run:         "+id) || !strings.Contains(out.String(), "exit code:   0") {
+		t.Errorf("unexpected show output:\n%s", out.String())
+	}
+}
+
+func TestRun_recordsNonZeroExit(t *testing.T) {
+	app, dir := newRunTestApp(t)
+	minimalProfile(t, dir, "p", "[entrypoint]\ncmd = \"sh\"\nargs = [\"-c\", \"exit 3\"]\n")
+	app.isolatorFn = func() (isolator.Isolator, error) { return &scriptIsolator{script: `"$0" "$@"`}, nil }
+	id := runAndCaptureID(t, app)
+	rec, err := readRunRecord(app.logsDir(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.ExitCode == nil || *rec.ExitCode != 3 {
+		t.Errorf("exit code = %v, want 3", rec.ExitCode)
+	}
+}
+
+func TestLogCmd_runIDShortcut(t *testing.T) {
+	app, dir := newTestApp(t)
+	logsDir := filepath.Join(dir, "logs")
+	writeLogFile(t, logsDir, "20240101-120000-aaaa", time.Now(), "hello from the run\n")
+
+	cmd := app.newLogCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"20240101-120000-aaaa"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("inner log RUN_ID: %v", err)
+	}
+	if !strings.Contains(out.String(), "hello from the run") {
+		t.Errorf("expected the log content, got:\n%s", out.String())
+	}
+}
+
+func TestLogShow_rejectsPathsAndUnknownRuns(t *testing.T) {
+	app, _ := newTestApp(t)
+	for _, id := range []string{"../config", "a/b", "..", ""} {
+		if err := app.logShow(&bytes.Buffer{}, id, false); err == nil || !strings.Contains(err.Error(), "invalid run ID") {
+			t.Errorf("run ID %q: err = %v, want invalid run ID", id, err)
+		}
+	}
+	if err := app.logShow(&bytes.Buffer{}, "20990101-000000-ffff", false); err == nil || !strings.Contains(err.Error(), "run not found") {
+		t.Errorf("unknown run: err = %v", err)
+	}
+}
+
+func TestLogList_json(t *testing.T) {
+	app, dir := newTestApp(t)
+	writeLogFile(t, filepath.Join(dir, "logs"), "20240101-120000-aaaa", time.Now(), "x")
+	var out bytes.Buffer
+	if err := app.logList(&out, true); err != nil {
+		t.Fatal(err)
+	}
+	var items []logListItem
+	if err := json.Unmarshal(out.Bytes(), &items); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+	}
+	if len(items) != 1 || items[0].RunID != "20240101-120000-aaaa" || items[0].LogSize != 1 {
+		t.Errorf("unexpected items: %+v", items)
+	}
+
+	// No runs: an empty array, not null.
+	app2, _ := newTestApp(t)
+	out.Reset()
+	if err := app2.logList(&out, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "[]" {
+		t.Errorf("empty list = %q, want []", out.String())
+	}
+}
+
+func TestLogClean_removesRecords(t *testing.T) {
+	app, dir := newTestApp(t)
+	logsDir := filepath.Join(dir, "logs")
+	old := time.Now().AddDate(0, 0, -40)
+	if err := writeRunRecord(logsDir, &runRecord{RunID: "20240101-120000-aaaa", StartedAt: old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.logClean(&bytes.Buffer{}, 30, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(logsDir, "20240101-120000-aaaa.json")); !os.IsNotExist(err) {
+		t.Errorf("record not removed: %v", err)
 	}
 }

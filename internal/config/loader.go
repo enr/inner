@@ -786,10 +786,34 @@ func (l *Loader) resolveExtendsPath(val string) string {
 	return l.ProfilePath(val)
 }
 
+// profileLayer is one file of an extends chain, as decoded from disk: the raw
+// profile (name back-filled from the file name) and the TOML metadata that
+// says which keys the file sets explicitly.
+type profileLayer struct {
+	path    string
+	profile *Profile
+	meta    toml.MetaData
+}
+
 // loadProfilePath loads a profile from an absolute path, recursively resolving
 // any extends chain. visited tracks paths already in the current chain so that
 // cycles are detected and reported as errors.
 func (l *Loader) loadProfilePath(absPath string, visited map[string]bool) (*Profile, error) {
+	chain, err := l.loadProfileChain(absPath, visited)
+	if err != nil {
+		return nil, err
+	}
+	merged := chain[0].profile
+	for _, layer := range chain[1:] {
+		merged = mergeProfiles(merged, layer.profile, layer.meta)
+	}
+	return merged, nil
+}
+
+// loadProfileChain decodes the profile at absPath and every profile it extends,
+// without merging them. The result is ordered base first: chain[0] extends
+// nothing and the last element is the profile at absPath.
+func (l *Loader) loadProfileChain(absPath string, visited map[string]bool) ([]profileLayer, error) {
 	// Canonicalize via symlinks so that two different path strings pointing to
 	// the same file are treated as one entry by the cycle detector.
 	if canonical, err := filepath.EvalSymlinks(absPath); err == nil {
@@ -811,8 +835,9 @@ func (l *Loader) loadProfilePath(absPath string, visited map[string]bool) (*Prof
 		p.Name = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 
+	self := profileLayer{path: absPath, profile: p, meta: meta}
 	if p.Extends == "" {
-		return p, nil
+		return []profileLayer{self}, nil
 	}
 
 	// Resolve the base profile path and load it recursively.
@@ -832,10 +857,9 @@ func (l *Loader) loadProfilePath(absPath string, visited map[string]bool) (*Prof
 	}
 	newVisited[absPath] = true
 
-	baseProfile, err := l.loadProfilePath(absBasePath, newVisited)
+	baseChain, err := l.loadProfileChain(absBasePath, newVisited)
 	if err != nil {
 		return nil, fmt.Errorf("extends %q: %w", p.Extends, err)
 	}
-
-	return mergeProfiles(baseProfile, p, meta), nil
+	return append(baseChain, self), nil
 }

@@ -17,22 +17,46 @@ import (
 
 // ── Business logic ────────────────────────────────────────────────────────────
 
-// doctor runs all diagnostic checks and writes the report to w.
-func (a *App) doctor(w io.Writer) error {
+// doctorCheck is one line of the doctor report. Check is the part of the
+// message before the first ": " (e.g. "bwrap", "user namespaces").
+type doctorCheck struct {
+	Status  string `json:"status"` // "ok", "warning" or "error"
+	Check   string `json:"check"`
+	Message string `json:"message"`
+}
+
+// doctorReport is the output of `inner doctor --json`.
+type doctorReport struct {
+	Checks   []doctorCheck `json:"checks"`
+	Errors   int           `json:"errors"`
+	Warnings int           `json:"warnings"`
+}
+
+// doctor runs all diagnostic checks and writes the report to w, as text or,
+// with asJSON, as a doctorReport.
+func (a *App) doctor(w io.Writer, asJSON bool) error {
 	info := runtime.Detect()
 
 	var nerrs, nwarns int
+	var checks []doctorCheck
 
+	record := func(status, symbol, color, line string) {
+		check, _, _ := strings.Cut(line, ": ")
+		checks = append(checks, doctorCheck{Status: status, Check: check, Message: line})
+		if !asJSON {
+			fmt.Fprintln(w, colorizeW(w, color, symbol)+"  "+line)
+		}
+	}
 	okLine := func(line string) {
-		fmt.Fprintln(w, colorizeW(w, ansiGreen, "[ok]")+"  "+line)
+		record("ok", "[ok]", ansiGreen, line)
 	}
 	errLine := func(line string) {
 		nerrs++
-		fmt.Fprintln(w, colorizeW(w, ansiBoldRed, "[!!]")+"  "+line)
+		record("error", "[!!]", ansiBoldRed, line)
 	}
 	warnLine := func(line string) {
 		nwarns++
-		fmt.Fprintln(w, colorizeW(w, ansiBoldYellow, "[??]")+"  "+line)
+		record("warning", "[??]", ansiBoldYellow, line)
 	}
 
 	// ── bwrap ────────────────────────────────────────────────────────────────
@@ -47,6 +71,14 @@ func (a *App) doctor(w io.Writer) error {
 		okLine("user namespaces: enabled")
 	} else {
 		errLine("user namespaces: disabled (bwrap requires unprivileged user namespaces)")
+	}
+	for _, r := range runtime.UserNSRestrictions() {
+		line := "user namespaces: " + r.Setting + " — " + r.Fix
+		if r.Blocking {
+			errLine(line)
+		} else {
+			warnLine(line)
+		}
 	}
 
 	// ── terminal injection (TIOCSTI) ─────────────────────────────────────────
@@ -110,7 +142,7 @@ func (a *App) doctor(w io.Writer) error {
 	}
 
 	// ── logs dir ─────────────────────────────────────────────────────────────
-	logsDir := filepath.Join(a.loader.Dir, "logs")
+	logsDir := a.logsDir()
 	if _, err := os.Stat(logsDir); err == nil {
 		okLine(fmt.Sprintf("logs dir: %s", logsDir))
 	} else {
@@ -161,6 +193,9 @@ func (a *App) doctor(w io.Writer) error {
 	}
 
 	// ── summary ──────────────────────────────────────────────────────────────
+	if asJSON {
+		return writeJSON(w, doctorReport{Checks: checks, Errors: nerrs, Warnings: nwarns})
+	}
 	fmt.Fprintln(w)
 	switch {
 	case nerrs > 0:
@@ -177,11 +212,14 @@ func (a *App) doctor(w io.Writer) error {
 // ── Cobra wiring (thin) ───────────────────────────────────────────────────────
 
 func (a *App) newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check host environment and configuration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return a.doctor(cmd.OutOrStdout())
+			return a.doctor(cmd.OutOrStdout(), asJSON)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the report as JSON")
+	return cmd
 }
