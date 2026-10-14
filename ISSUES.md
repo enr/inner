@@ -1,613 +1,157 @@
-# Backlog issue — correzioni e miglioramenti
+# Backlog issue
 
-Lista unificata di issue pronte per essere aperte su GitHub, ricavata da:
+Backlog unico, ricavato da `SECURITY_REVIEW.md` (rimosso; testo nella storia
+git), `NONO_COMPARISON.md` e dal confronto con drop. Ogni voce: tipo, priorità,
+dimensione, dipendenze.
 
-- **`SECURITY_REVIEW.md`** (rimosso: tutte le voci chiuse, testo nella storia git) — punti #1–#11;
-- **`NONO_COMPARISON.md`** — proposte S1–S7, F1–F5, P1–P4, U1–U6;
-- `docs/tasks/java-pinning.md` — **escluso**: tutti i task T1–T9 risultano completati.
-
-Le sovrapposizioni sono deduplicate (es. SR#1 ↔ S1, SR#2 ↔ S5). Ogni issue indica
-tipo, priorità, dimensione stimata, fonti e dipendenze. Le issue "abilitanti"
-(enabler) sbloccano altre voci della lista e sono segnalate come tali.
-
-**Priorità**
-
-| Livello | Significato |
+| Priorità | Significato |
 |---|---|
-| **P0** | Correggere subito: exploitabile o perde dati |
-| **P1** | Alto impatto: pianificare a breve |
-| **P2** | Reale ma con raggio d'azione limitato |
-| **P3** | Miglioria / da valutare su richiesta |
+| **P0** | Exploitabile o perde dati: subito |
+| **P1** | Alto impatto: a breve |
+| **P2** | Reale, raggio limitato |
+| **P3** | Miglioria, su richiesta |
 
-**Ordine di lavoro consigliato:** ISS-08 → ISS-06
-→ ISS-14/15 → ISS-34, ISS-37 → resto.
-ISS-01, ISS-02, ISS-03, ISS-04, ISS-05, ISS-07, ISS-09, ISS-10, ISS-11, ISS-12,
-ISS-19, ISS-20 e ISS-21 sono chiuse; ISS-01/02/03 hanno
-avuto un secondo giro di fix (buchi residui e regressioni trovati in analisi),
-da firmare con `.sdlc/e2e-security` su macchina reale. ISS-06 (credential injection) puo'
-partire: si appoggia al proxy di ISS-05, ora in tree.
-Razionale: prima i fix exploitabili e i quick win (P0), poi il sign-off manuale
-già dovuto, poi i due enabler strutturali (run-ID/JSON e proxy di rete) che
-sbloccano credenziali, audit e rollback.
+**Ordine consigliato:** ISS-08 → ISS-06 → ISS-14/15 → ISS-34, ISS-37 → resto.
+
+**Da firmare su macchina reale:** gli e2e di ISS-01/02/03/04 con
+`.sdlc/e2e-security`.
 
 ---
 
-## P0 — Sicurezza e correttezza da sistemare subito
+## Aperte
 
-### ISS-31 · `.git` scrivibile nel workdir = escape verso l'host — **FATTO**
-`security` · **P0** · Size M · Fonte: confronto con drop (monta `.git` ro)
+### P1
 
-Con il workdir `rw` l'agente poteva scrivere `.git/hooks/*`, `.git/config`
-(`core.fsmonitor`, `core.hooksPath`, …) o creare `.git/commondir` (redirect
-verso config/hook suoi): l'host li esegue al primo `git status`/`commit`.
-Verificato con git 2.55.
+**ISS-06 · Credential injection via proxy** · `security` `feature` · L · dipende da ISS-05 (fatta)
+Il proxy, in modalità reverse, inietta il token (keyring/env/file host) negli
+header verso l'upstream, opzionalmente ristretto a glob metodo+path; fuori
+policy → 403. Il token non entra mai nella sandbox.
+*Acceptance:* chiamata API autenticata riuscita senza token leggibile in env o
+filesystem della sandbox; endpoint fuori policy → 403.
 
-*Stato:* `[sandbox] git_dir = "protected" | "ro" | "rw"`, default
-`protected` (`internal/gitguard`): `.git` resta scrivibile (commit ok) ma
-config, hooks, commondir, config.worktree, include e `core.hooksPath` nel
-workdir sono ro, anche per worktree collegati e submodule; placeholder sul host
-per i path mancanti (`commondir` con `.`, rimosso dall'ultima run con flock
-condiviso). Worktree collegati: gitdir montato rw alla sua path. Remote
-profile: `rw` → `protected`. e2e manuale con bwrap 0.12 ok.
+**ISS-08 · Run ID visibile + `--json`** · `ux` · M · enabler per ISS-14, ISS-15
+Stampare il run ID a inizio/fine run e accettarlo ovunque (`inner log <run-id>`).
+`--json` per `verify`, `doctor`, `profile list`, `log`, `run --dry-run`.
+*Acceptance:* JSON valido e stabile per ogni comando; il run ID stampato
+funziona con `inner log`.
 
-*Rischio residuo / follow-up:* l'agente può creare un repo annidato e
-registrarlo come gitlink nell'index: il `git status` sull'host ci entra e ne
-esegue il `core.fsmonitor` (verificato). Nessun mount lo impedisce in
-`protected`; `ro` sì per la root. Possibile follow-up: a fine run confrontare
-i gitlink dell'index prima/dopo e avvisare. Manca anche un check in
-`inner verify` (verify non monta un workdir).
+### P2
 
----
+**ISS-14 · Audit log per run (NDJSON + redaction)** · `security` · M · dipende da ISS-08
+Record append-only per run: profilo risolto, mount, `allow`, rete, entrypoint,
+verify, exit code, durata, richieste del proxy; segreti in argv/env redatti.
+Hash chain come passo successivo.
+*Acceptance:* `inner log show <run-id> --json` dà il record completo; un token
+passato con `-e` compare redatto.
 
-### ISS-01 · Remote profiles: blocking consent + `--sha256` pinning — **FATTO**
-`security` · **P0** · Size M · Fonti: SECURITY_REVIEW #2, NONO_COMPARISON S5 · **Enabler** per ISS-23, ISS-27
+**ISS-15 · Snapshot del workspace e rollback** · `feature` · L · dipende da ISS-08
+Snapshot pre/post dei soli mount scrivibili (reflink su btrfs/XFS, altrimenti
+dedup per hash; esclusioni gitignore, cap di spazio). `inner rollback <run-id>
+--diff|--restore`. v0 per repo git: stato dirty pre-run + `git diff` post-run.
+*Acceptance:* `--diff` mostra file modificati/creati/cancellati, `--restore`
+torna allo stato pre-run.
 
-Un profilo TOML scaricato da URL controlla l'intera sandbox (`network`,
-`inherit_all`, `allow`, entrypoint) senza conferma né verifica di integrità:
-un URL malevolo = esfiltrazione dei segreti host. Richiede: (a) conferma
-bloccante che riassuma le impostazioni pericolose richieste dal profilo remoto
-(non auto-accettata da `--yes`); (b) flag `--sha256 <hash>` con abort su
-mismatch; (c) rifiuto di `inherit_all` da sorgente remota salvo opt-in separato.
+**ISS-16 · Flag di policy one-off su `inner run`** · `ux` · S
+`--allow <key>`, `--block <cmd>`, `--allow-domain <dom>`: stessa semantica dei
+campi profilo, priorità alla CLI.
+*Acceptance:* `inner run --block rm` blocca `rm`; `--dry-run` riflette i flag.
 
-*Stato:* primo giro in `b983f34` (hardening, consenso, `--sha256`). Secondo
-giro dopo analisi: il profilo poteva ancora leggere segreti host con
-l'espansione `$VAR` in `[env] set`/`path_prepend`, scegliere `[output] log`
-(scritto dall'host: `~/.bashrc.d` → esecuzione al prossimo shell),
-`[entrypoint] workdir` (bind rw → persistenza), `workspaces_path`,
-`clipboard`, e rilocare un path nascosto (`"~/.ssh" → /tmp/k`), il tutto
-senza comparire nel prompt. Ora `Loader.BuildUntrusted` risolve solo
-`$HOME/$USER/$UID` e ignora log/workdir/workspaces/clipboard;
-`hardenRemoteProfile` scarta i mount che rilocano path nascosti (sorgente
-risolta via symlink) e tutte le `HostPrivilegeAllowKeys`; il prompt elenca
-ogni mount, `home_allow`, valore env, con caratteri di controllo escapati; la
-validazione precede il consenso. `TestRemoteFieldPolicy_coversEveryProfileField`
-fallisce se si aggiunge un campo al profilo senza decidere la policy remota.
-Verificato con bwrap reale (script `.sdlc/e2e-security`, sezione B).
+**ISS-34 · Denylist: path rilocati e tool mancanti** · `security` · M
+Non coperti: path spostati da env (`XDG_*`, `GNUPGHOME`, `KUBECONFIG`,
+`DOCKER_CONFIG`, `GH_CONFIG_DIR`, `AWS_SHARED_CREDENTIALS_FILE`, …), browser
+flatpak/snap, varie credenziali (`~/.config/git/credentials`,
+`containers/auth.json`, `~/.vault-token`, rclone, sops/age, …) e le credenziali
+degli agenti nei profili shell (serve integrazione con le capability). Ogni
+voce può rompere un workflow `host-ro`; la risposta vera resta
+`home = "isolated"`.
 
-### ISS-02 · `safe-rw` e copie delle capability seguono i symlink — **FATTO**
-`security` `bug` · **P0** · Size S · Fonte: SECURITY_REVIEW #3
+### P3
 
-`copyFile` (`cmd/inner/sandbox_claude.go`) usa `os.ReadFile` che dereferenzia i
-symlink: un link piantato in `~/.claude/` (es. → `~/.ssh/id_rsa`) fa copiare il
-*contenuto* del target dentro la sandbox, aggirando l'hiding dei path sensibili.
-Fix: `Lstat` su ogni entry; i symlink si saltano (o si ricreano con
-`Readlink`+`Symlink` senza dereferenziare).
+**ISS-22 · Filtro seccomp opzionale** · `security` · M
+Default conservativo (`ptrace`, `process_vm_readv`, `keyctl`/`add_key`/
+`request_key`, `bpf`, `mount`, `open_by_handle_at`, `ioctl(TIOCSTI/TIOCLINUX)`)
+con opt-out da profilo. Ostacolo: `systemd-run` (resource limits) chiude gli fd
+extra, quindi `--seccomp <fd>` richiede un wrapper. Landlock è già in tree, ma
+usato solo per i socket astratti.
 
-*Stato:* primo giro in `e6b3816` (rifiuto/salto dei symlink). Secondo giro
-(`cmd/inner/sandbox_copy.go`): apertura con `O_NOFOLLOW|O_NONBLOCK` + solo file
-regolari (una FIFO bloccava inner per sempre, verificato), symlink *ricreati*
-invece che scartati (si risolvono nella vista del sandbox, dove i path nascosti
-restano nascosti; tornano a funzionare i link relativi/legittimi), sorgente
-`safe-rw` symlinkata risolta (prima: directory vuota silenziosa), niente bit
-setuid sulla copia, `settings.json` symlinkato seguito solo se il target non è
-un path nascosto, messaggio d'errore azionabile per credenziali symlinkate.
-Verificato con bwrap reale (sezione C).
+**ISS-37 · Profili remoti: residui del gate** · `security` · S
+`--dry-run` senza consenso esegue comunque la preparazione lato host; i nomi
+env "segreti" restano una denylist euristica. Il D-Bus astratto con
+`network = full` è chiuso da Landlock su Linux 6.12+, aperto su kernel più
+vecchi o con `allow = ["abstract-sockets"]`.
 
-### ISS-03 · Estendere la denylist dei path sensibili + test di regressione — **FATTO**
-`security` · **P0** · Size S · Fonte: SECURITY_REVIEW #1 (mitigazione a breve termine)
+**ISS-38 · Il profilo fuso eredita il `name` della base** · `bug` · S
+Se il figlio non dichiara `name`, quello ricavato dal file non conta come
+"definito" e `mergeProfiles` tiene il nome della base: un run del figlio è
+riportato con il nome della base (`RunConfig.Name`). `profile explain` lo
+aggira già. Emerso da ISS-17.
 
-Quick win in attesa di ISS-04: aggiungere alla tabella `sensitive` di
-`internal/isolator/bwrap.go` i path noti mancanti (`~/.config/gh`,
-`~/.terraform.d`, `~/.m2/settings.xml`, `~/.config/helm`,
-`~/.local/share/keyrings`, profili browser) con relative chiavi `allow` e check
-di `inner verify`. Aggiungere un test che fallisca quando un path noto non è
-coperto, per evitare che la lista marcisca in silenzio.
+**ISS-23 · `inner profile search/add` su indice firmato** · `feature` · M
+Indice firmato (cosign/minisign) di `contrib/profiles`; `add` verifica la firma
+e copia in `~/.config/inner/profiles/`.
 
-*Stato:* primo giro in `21030e8`. Secondo giro:
-- **socket runtime** — il buco più grave: `/run/user/$UID` era visibile e né il
-  bind ro né `--unshare-net` bloccano `connect(2)`. Da un sandbox `host-ro` con
-  `network = false` si raggiungeva il session bus (verificato con bwrap reale:
-  il vecchio binario lascia eseguire un'azione sull'host tramite un servizio
-  sul bus). Nuove chiavi `session-bus`, `systemd-user`, `ssh-agent`,
-  `gpg-agent` (+ `keyring/control` sotto `keyrings`); `inner verify` giudica i
-  socket con `connect(2)`, non con la dimensione. La capability claude passa il
-  bus tramite `xdg-dbus-proxy` filtrato su `org.freedesktop.secrets` (fallback
-  al bus completo con warning se il proxy manca, o con `allow = ["session-bus"]`);
-- **regressione Maven** — `~/.m2/settings.xml` su `/dev/null` faceva fallire
-  Maven ("Non-readable settings", verificato con bwrap reale): ora è un
-  `<settings/>` vuoto (`config.HidePlaceholder`).
-Da firmare su macchina reale con `.sdlc/e2e-security` (sezioni A e D).
+**ISS-24 · Tool policy incatenate via shim rientranti** · `feature` · L
+`[noop.sandbox] git = "git-only"`: lo shim rilancia il comando in una sandbox
+figlia più stretta (nested userns). v1: solo restrizione per comando.
 
-### ISS-34 · Copertura denylist: path rilocati e tool mancanti
-`security` · **P2** · Size M · Fonte: analisi ISS-03 (secondo giro)
+**ISS-25 · Sessioni detached (`inner ps/attach/stop`)** · `feature` · L
+v0: integrazione tmux/abduco documentata o `ps`/`stop` su pidfile per run ID;
+supervisor PTY solo se c'è domanda.
 
-La tabella usa solo path fissi sotto `$HOME`. Scoperti ma **non** coperti, per
-prudenza (ogni nuova voce può rompere un workflow `host-ro`):
-- path spostati da env: `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, `GNUPGHOME`,
-  `KUBECONFIG`, `DOCKER_CONFIG`, `CARGO_HOME`, `GH_CONFIG_DIR`,
-  `CLOUDSDK_CONFIG`, `AWS_SHARED_CREDENTIALS_FILE`, `PASSWORD_STORE_DIR`,
-  `GRADLE_USER_HOME`; `SSH_AUTH_SOCK` fuori da `/tmp` e `/run/user`;
-- browser flatpak/snap (`~/.var/app/…`, `~/snap/…`), Thunderbird;
-- `~/.config/git/credentials`, `~/.config/containers/auth.json`,
-  `$XDG_RUNTIME_DIR/containers/auth.json`, `~/.vault-token`, rclone, `~/.s3cfg`,
-  chiavi sops/age, pulumi, history di python/psql/mysql/fish;
-- credenziali degli agenti stessi (`~/.claude/.credentials.json`,
-  `~/.gemini/oauth_creds.json`, `~/.local/share/opencode/auth.json`) leggibili
-  dai profili shell: nasconderle richiede un'integrazione con le capability
-  (che rimontano proprio quelle directory), altrimenti si rompono.
-Il canary test protegge solo ciò che è già in lista. `home = "isolated"` resta
-la risposta vera.
+**ISS-26 · Cache della runtime detection** · `performance` · S
+Cache in `~/.cache/inner/` di path/versione bwrap e display server,
+invalidata per mtime.
 
-### ISS-35 · `inner verify`: check `docker-socket` basato su `Stat` — **FATTO**
-`bug` · **P3** · Size S · Fonte: analisi ISS-03 (secondo giro)
+**ISS-27 · Cache HTTP (ETag) per i profili remoti** · `performance` · S
+`If-None-Match` invece del download a ogni run.
 
-`checkDockerSocket` fallisce se `/var/run/docker.sock` esiste, ma quando è
-nascosto è un bind di `/dev/null` (esiste): su un host con Docker il check
-probabilmente fallisce sempre. Allinearlo al controllo per-socket del pass
-generico (fallire solo se è un socket). Non corretto in questo giro per non
-allargare il perimetro; da verificare su un host con Docker.
+**ISS-28 · `inner verify` in parallelo** · `performance` · S
+Check in parallelo mantenendo l'ordine dell'output (il dial timeout da solo
+costa fino a 2 s).
 
-*Stato:* `checkDockerSocket` usa `resourceExposed` come il pass generico:
-fallisce solo se il path è un socket e `connect(2)` riesce; il bind di
-`/dev/null` passa. Test: assente, nascosto (`/dev/null`), socket in ascolto.
+**ISS-29 · Packaging + `inner init` interattivo** · `ux` · M
+AUR, deb/rpm dalla pipeline di release; `init` guidato: agente → profilo →
+`doctor`.
 
-### ISS-36 · Symlink rotti su path della denylist bloccano ogni run — **FATTO**
-`bug` · **P3** · Size S · Fonte: analisi ISS-03
-
-Un symlink rotto su uno qualsiasi dei path nascosti (es. `~/.mozilla` dopo la
-migrazione a flatpak, un dotfile manager a metà) fa fallire `Build` per tutte
-le run (fail-closed voluto: `EvalSymlinks` fallisce). Con la lista cresciuta la
-probabilità aumenta. Opzione: per `ENOENT` del target saltare l'hide (non c'è
-contenuto da nascondere) con un warning; altri errori restano fatali.
-
-*Stato:* `Build` segue la catena di link; se il target non esiste salta l'hide
-con un warning su stderr. Resta fatale se il target mancante cade in un mount
-`rw` (sorgente o destinazione, anche via parent symlinkato): il sandbox
-potrebbe crearlo e l'host lo leggerebbe tramite il link (es. `~/.ssh` →
-workdir). Altri errori di risoluzione restano fatali.
-
-### ISS-37 · Profili remoti: residui del gate
-`security` · **P3** · Size S · Fonte: analisi ISS-01 (secondo giro)
-
-- `--dry-run` su un profilo remoto senza consenso esegue comunque la
-  preparazione lato host (copie temporanee delle capability), sul profilo già
-  hardened;
-- con un indirizzo D-Bus astratto (`unix:abstract=…`) e `network = full`, il
-  bus host resta raggiungibile dal namespace di rete condiviso anche col proxy;
-- l'euristica dei nomi env "segreti" resta una denylist.
-
-*Stato parziale:* il secondo punto è chiuso su Linux 6.12+ (Landlock ABI 6):
-con `network = full` l'entrypoint parte via `inner __scope`, che rifiuta i
-socket astratti dell'host. Resta aperto su kernel più vecchi, con
-`allow = ["abstract-sockets"]`, con un session bus astratto non filtrato e con
-`clipboard = true` su X11 (`inner doctor`/`inner verify` lo segnalano).
+**ISS-30 · Login OAuth sandboxed** · `feature` · L · dipende da ISS-06
+Token di login degli agenti nel keyring invece che in `~/.claude` copiato in
+blocco. Da rivalutare dopo ISS-06.
 
 ---
 
-## P1 — Alto impatto
+## Chiuse
 
-### ISS-04 · Modalità home isolata (filesystem allowlist) — **FATTO**
-`security` `feature` · **P1** · Size L · Fonti: SECURITY_REVIEW #1 (fix proprio), NONO_COMPARISON S1 · **Enabler** (rende marginale ISS-03)
-
-Oggi tutto ciò che non è nella denylist è leggibile (cookie browser, `.env`,
-interi `$HOME`). Invertire il modello per i profili agente: `[sandbox] home =
-"isolated"` monta `--tmpfs $HOME` e rende visibili solo workdir, mount
-espliciti e directory delle capability; i path di sistema restano ro-bind.
-Comportamento attuale preservato come `home = "host-ro"` (default per una
-release, poi flip per i profili agente).
-
-*Acceptance:* e2e — con `home = "isolated"` un `cat ~/.config/gh/hosts.yml`
-piantato fallisce; toolchain di sistema (`/usr`, `/etc`) ancora funzionanti.
-
-*Stato:* implementato. `[sandbox] home = "host-ro" | "isolated"` +
-`[sandbox] home_allow` (allowlist ro dei path necessari); profili agente
-built-in (`claude-*`, `gemini-*`, `cursor-*`) passati a `isolated`, profili
-`shell` lasciati su `host-ro` con opt-in documentato; profili utente esistenti
-non toccati (`inner init` non sovrascrive). `inner verify` ha il check
-`home-isolated` (HIGH) che legge `/proc/self/mountinfo` dall'interno del
-sandbox. **Acceptance e2e ancora da firmare su macchina reale**: bubblewrap non
-è disponibile nell'ambiente in cui la modifica è stata sviluppata, quindi la
-copertura è a livello di argv bwrap e di unit test (come ISS-07).
-
-### ISS-05 · Proxy di rete supervisionato con allowlist di domini — **FATTO**
-`security` `feature` · **P1** · Size L · Fonte: NONO_COMPARISON S2 · **Enabler** per ISS-06, ISS-18 (eventi rete), ISS-21 (`--allow-domain`)
-
-Chiusa: `[sandbox] network_mode = "allowlist"` (chiavi piatte `network_allow` /
-`network_deny`, non la tabella annidata dello sketch). Rispetto alla proposta:
-liste a livelli con default per capability e provenienza nel `--dry-run`,
-always-deny esteso a loopback/LAN/CGNAT (il proxy gira nel netns dell'host),
-scoping delle porte. Niente session token — socket unix `0700`, non porta TCP:
-motivazione in `NONO_COMPARISON.md` §S2 e `network.md`.
-
-Follow-up dalla prima sessione TUI reale (`manual-tests/`): la lista egress
-della capability `claude` è stata riverificata sulla tabella "Network access
-requirements" del vendor (mancavano `downloads.claude.ai`,
-`raw.githubusercontent.com` e l'intake telemetria; rimosse `statsig.anthropic.com`,
-`sentry.io`, `console.anthropic.com`, uscite dalla tabella), e i log dei rifiuti
-non rompono più la TUI: `netproxy.DenyLog` deduplica le ripetizioni e, quando
-l'entrypoint è una TUI sul nostro stesso terminale, rimanda tutto a fine
-sessione. Dettagli in `network.md`.
-
-Aggiunti anche i **gruppi**: `network_allow = ["@npm", "@maven", "@github"]`
-espande a load time (anche in `network_deny`), con provenienza `group:<nome>` in
-`--dry-run` e nel prompt di consenso dei profili remoti — che ora mostra le
-destinazioni effettive invece del solo `network: allowlist`. Un `@nome`
-sconosciuto è errore, non espansione vuota. Un gruppo = un ecosistema: niente
-bundle tematici, la composizione la fa il profilo. Motivazioni in `network.md`.
-
-La rete oggi è on/off e i profili agente richiedono `network = true` → rete
-aperta verso ovunque. Nuovo modo `[sandbox.network] mode = "allowlist"`:
-sandbox con `--unshare-net` + socket verso un proxy CONNECT nel processo
-`inner` padre, che applica allowlist di domini, nega sempre gli endpoint
-metadata cloud (`169.254.169.254`, link-local), risolve il DNS lato proxy
-validando gli IP prima della connessione (anti DNS-rebinding), e richiede un
-token di sessione per-run. Esporta `HTTP_PROXY`/`HTTPS_PROXY`
-(+`NODE_USE_ENV_PROXY=1`).
-
-*Acceptance:* con allowlist `["api.anthropic.com"]`, curl verso il dominio
-permesso passa, verso altri domini e verso 169.254.169.254 riceve rifiuto;
-`inner verify` riflette la policy.
-
-### ISS-06 · Credential injection via proxy (i segreti non entrano in sandbox)
-`security` `feature` · **P1** · Size L · Fonte: NONO_COMPARISON S3 · Dipende da: ISS-05
-
-Sostituire l'esposizione raw (`allow = ["git-credentials"]`) con iniezione:
-il proxy in modalità reverse inietta il token (da keyring/env/file host) negli
-header verso l'upstream configurato, opzionalmente ristretto a glob
-metodo+path (`POST:/repos/*/issues`); richieste fuori policy → 403 + evento di
-audit. Anche senza endpoint-filtering in v1, "token mai su filesystem/env della
-sandbox" è un salto di categoria.
-
-*Acceptance:* l'agente completa una chiamata API autenticata senza che il token
-sia leggibile dentro la sandbox (grep su env e filesystem); endpoint fuori
-policy → 403.
-
-### ISS-07 · Sign-off manuale PID-namespace/TUI su terminali reali — **FATTO**
-`task` `qa` · **P1** · Size S (manuale) · Fonte: SECURITY_REVIEW #9
-
-Chiusa il 2026-08-25: checklist eseguita a mano su terminale reale con binario
-`inner` buildato localmente, esito riportato OK su tutti i passi. Vale come
-baseline per il re-run richiesto da `network.md` quando il relay di rete
-aggiungerà un hop di processo tra bwrap e la TUI.
-
-Il codice `--unshare-pid` per i run interattivi è già merged e testato in
-unit/dry-run; manca la verifica umana non automatizzabile: TUI reali (claude,
-gemini, cursor) con render, Ctrl-C, resize; bash con paste multilinea e
-history; conferma isolamento (`ls /proc | grep -c '^[0-9]'` piccolo). Passi
-esatti e criteri già scritti in SECURITY_REVIEW #9. Rollback documentato:
-`pid_namespace = false` nel profilo.
-
-*Acceptance:* checklist del punto #9 completata su almeno una macchina reale;
-esito annotato e voce chiusa in SECURITY_REVIEW.
-
-### ISS-08 · Run-ID visibile + output `--json`
-`ux` `feature` · **P1** · Size M · Fonti: NONO_COMPARISON U1, U2 · **Enabler** per ISS-18, ISS-19
-
-Stampare il run ID (già generato in `internal/executor/runid.go`) a inizio/fine
-run e accettarlo come argomento ovunque (`inner log <run-id>`, futuro
-`inner rollback <run-id>`). Aggiungere `--json` a `verify`, `doctor`,
-`profile list`, `log` e `run --dry-run` (le strutture dati esistono già:
-`Report`, `RunConfig`). Prerequisito per automazione/CI e per indirizzare
-audit e rollback.
-
-*Acceptance:* ogni comando elencato emette JSON valido e stabile con `--json`;
-il run ID stampato è riutilizzabile con `inner log`.
+| ID | Titolo | Cosa è stato fatto · residui |
+|---|---|---|
+| ISS-01 | Profili remoti: consenso + `--sha256` | Hardening (via `inherit_all`, segreti env, chiavi host-privilege, mount che rilocano path nascosti, log/workdir/workspaces), consenso bloccante non coperto da `--yes`, pinning. Un test impone una policy remota per ogni nuovo campo. |
+| ISS-02 | Copie che seguono i symlink | `O_NOFOLLOW`, solo file regolari, symlink ricreati e non dereferenziati, niente setuid. |
+| ISS-03 | Denylist estesa | Nuovi path + socket runtime (`session-bus`, `systemd-user`, `ssh-agent`, `gpg-agent`); bus filtrato con `xdg-dbus-proxy` per claude; `<settings/>` vuoto per Maven. Canary test. |
+| ISS-04 | Home isolata | `home = "isolated"` + `home_allow`; default per i profili agente; check `home-isolated` in verify. |
+| ISS-05 | Proxy di rete con allowlist | `network_mode = "allowlist"`, liste a livelli con provenienza, gruppi `@npm`/`@github`…, always-deny di loopback/LAN/metadata, scoping delle porte. Dettagli in `network.md`. |
+| ISS-07 | Sign-off TUI/PID namespace | Checklist manuale ok il 2026-08-25. |
+| ISS-09 | `-m` rifiuta `safe-rw` | `-m` accetta `ro`/`rw`/`safe-rw`; `tmpfs` rifiutato con rimando a `[mounts]`. |
+| ISS-10 | Rollback parziale dei workspace | Directory registrate prima di `MkdirAll`. |
+| ISS-11 | Scadenza token nondeterministica | Sceglie la scadenza più vicina. |
+| ISS-12 | `checkUsrReadonly` fail-open | Legge il flag `ro` da `/proc/self/mountinfo`. |
+| ISS-13 | Comandi bloccati invocabili per path | Shim montato anche sopra il binario reale (PATH + bin standard, symlink risolti). Esclusi con warning: binari condivisi con nomi non bloccati (busybox, alternatives) e `/bin/sh`. Residuo: una copia del binario altrove gira ancora. |
+| ISS-17 | `inner profile explain` | Catena `extends` e layer di ogni valore, con le stesse regole del merge. |
+| ISS-18 | Triage dei fallimenti bwrap | Con exit 1/126/127 un probe ricostruisce la sandbox e mappa l'errore (userns col sysctl colpevole, mount, pty, entrypoint) a `error:` + `hint:`. `doctor` nomina `max_user_namespaces` e AppArmor. Residui: non usato da `verify`; fallimenti di `systemd-run` non classificati. |
+| ISS-19 | `\r` riscritto come `\n` | CR grezzo tra virgolette, come git. |
+| ISS-20 | Alias splittati sugli spazi | Tokenizer con quote ed escape. |
+| ISS-21 | Pattern di `checkEnvSecrets` | Pattern ampliati, dichiarato euristico. |
+| ISS-31 | `.git` scrivibile = escape | `git_dir = "protected"` (default): config, hooks, commondir… in sola lettura, commit ok. Residuo: un repo annidato registrato come gitlink esegue il suo `core.fsmonitor` sull'host; possibile avviso a fine run. |
+| ISS-32 | Check TIOCSTI in `doctor` | Avviso se `legacy_tiocsti` non è 0. |
+| ISS-33 | Maschere su `/proc` e `/sys` | Come runc, solo se i path esistono. |
+| ISS-35 | Check `docker-socket` basato su `Stat` | Fallisce solo se il socket accetta `connect(2)`. |
+| ISS-36 | Symlink rotti nella denylist | Hide saltato con warning; fatale solo se il target cade in un mount `rw`. |
 
 ---
 
-## P2 — Bug reali a raggio limitato
-
-### ISS-09 · `parseMount` CLI rifiuta `safe-rw`/`tmpfs` — **FATTO**
-`bug` · **P2** · Size S · Fonte: SECURITY_REVIEW #4
-
-I profili accettano 4 modi di mount, il flag `-m SRC:DEST[:MODE]` solo
-`ro`/`rw`. Estendere il parser a `safe-rw` (e decidere/documentare `tmpfs`,
-che non ha sorgente host). Messaggio d'errore con l'elenco completo dei modi.
-
-*Acceptance:* table test su tutti i modi validi + uno invalido.
-
-*Stato:* `-m` accetta `ro`/`rw`/`safe-rw`; `tmpfs` è rifiutato con un messaggio
-che rimanda alla tabella `[mounts]` del profilo (non ha sorgente host). Table
-test in `cmd/inner/cmd_run_test.go`.
-
-### ISS-10 · Rollback incompleto su fallimento parziale di `MkdirAll` nei workspace — **FATTO**
-`bug` · **P2** · Size S · Fonte: SECURITY_REVIEW #5
-
-In `internal/workspace/manager.go` le directory da creare sono aggiunte alla
-lista di rollback solo *dopo* il successo di `MkdirAll`: un fallimento a metà
-catena lascia directory orfane. Registrare `dirsToCreate(dest)` in `created`
-*prima* della chiamata.
-
-*Acceptance:* test con mkdir che fallisce a metà catena → nessuna directory
-residua.
-
-*Stato:* `dirsToCreate(dest)` entra in `created` prima di `MkdirAll`. Test:
-`TestPrepareRollbackCleansIntermediateDirs`.
-
-### ISS-11 · `extractExpiresAt` itera una map → decisione token nondeterministica — **FATTO**
-`bug` · **P2** · Size S · Fonte: SECURITY_REVIEW #6
-
-Con più oggetti annidati che portano un campo di scadenza, il valore restituito
-varia tra run (ordine di iterazione map randomizzato) → prompt di unlock
-"a volte sì a volte no". Scegliere deterministicamente (chiavi note in ordine
-di priorità, o la scadenza più vicina).
-
-*Acceptance:* unit test con due `expiresAt` annidati → stesso valore su molte
-esecuzioni.
-
-*Stato:* raccoglie tutti i candidati e sceglie la scadenza più vicina. Test:
-`TestExtractExpiresAt_multipleNestedObjects_deterministic`.
-
-### ISS-12 · `checkUsrReadonly` fail-open (deduce read-only da una write fallita) — **FATTO**
-`bug` `security` · **P2** · Size S · Fonte: SECURITY_REVIEW #8
-
-Un check di sicurezza che può solo "passare in silenzio" dà falsa assicurazione
-(e il relativo test fallisce quando la suite gira da root). Leggere il flag
-`ro` del mount da `/proc/mounts` o vincolare il check al contesto in-sandbox;
-sistemare il test (skip con uid 0 o `UsrDir` iniettata realmente read-only).
-
-*Acceptance:* il check riporta correttamente lo stato in-sandbox e la suite
-passa anche da root.
-
-*Stato:* il check legge il flag `ro` del mount che copre `/usr` da
-`/proc/self/mountinfo`; fallisce (non passa) se il file non è leggibile o
-nessun mount lo copre.
-
-### ISS-13 · Deny anche sul path canonico per i comandi bloccati — **FATTO**
-`security` · **P2** · Size S · Fonte: NONO_COMPARISON S6
-
-Gli shim `[noop] block` vincono solo via PATH: `/bin/rm` resta invocabile.
-Bindare lo shim anche sopra ogni path reale risolto del comando bloccato
-(seguendo catene tipo `/bin → /usr/bin`). Documentare il gap residuo (copia
-del binario altrove).
-
-*Acceptance:* con `block = ["rm"]`, sia `rm` sia `/usr/bin/rm` falliscono con
-il messaggio dello shim.
-
-*Stato:* `Build` monta lo shim di ogni comando `block` sopra il binario reale,
-in ogni directory del `PATH` della sandbox più `/usr/local/sbin`,
-`/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`, risolvendo i symlink
-(bwrap rifiuta di montare su un symlink). Esclusi, con warning: un binario
-raggiungibile anche con un nome non bloccato (busybox, coreutils multi-call,
-alternatives; se tutti gli altri nomi sono bloccati, come `yum`+`dnf` →
-`dnf-3`, viene coperto) e `/bin/sh`, interprete degli shim. Verificato con bwrap
-0.9: `rm`, `/usr/bin/rm` e `/bin/rm` danno il messaggio dello shim. Gap
-residui documentati in `profiles.md`: copia del binario altrove, voci di `PATH`
-che esistono solo come destinazione di un mount.
-
-### ISS-14 · Audit log strutturato per run (NDJSON + redaction)
-`feature` `security` · **P2** · Size M · Fonte: NONO_COMPARISON S4 · Dipende da: ISS-08
-
-Registrare per ogni run un record NDJSON append-only: profilo risolto
-post-merge, mount, chiavi `allow`, modalità rete, entrypoint, report di verify,
-exit code, durata — con redaction best-effort dei segreti in argv/env. Doppio
-uso: audit e metadati di riproducibilità. Hash chain sugli eventi come step 2
-(economico); firma solo se emergerà un caso d'uso compliance. Con ISS-05 attivo,
-loggare anche le richieste del proxy (`inner log show <run-id> --network`).
-
-*Acceptance:* `inner log show <run-id> --json` restituisce il record completo;
-un token passato in `-e` compare redatto.
-
-### ISS-15 · Snapshot del workspace e rollback
-`feature` · **P2** · Size L · Fonti: NONO_COMPARISON F1 + P3 (reflink) · Dipende da: ISS-08
-
-Snapshot content-addressable dei soli mount workspace (unica superficie
-scrivibile) prima/dopo il run: `--snapshot` o `[output] snapshot = true`,
-store in `~/.local/state/inner/snapshots/<run-id>/`, reflink `FICLONE` su
-btrfs/XFS con fallback a dedup per hash, esclusioni gitignore-aware, cap di
-storage. Comandi: `inner rollback <run-id> [--diff|--restore]`. v0 economica
-per repo git: registrare lo stato dirty pre-run e mostrare `git diff` post-run.
-
-*Acceptance:* run che modifica/crea/cancella file → `--diff` li mostra,
-`--restore` riporta il workspace allo stato pre-run.
-
-### ISS-16 · Flag di policy one-off su `inner run`
-`ux` · **P2** · Size S · Fonte: NONO_COMPARISON U3 · `--allow-domain` dipende da ISS-05
-
-Permettere esperimenti senza editare TOML: `--allow <key>` (chiavi di
-`ValidAllowKeys`), `--block <cmd>` (shim al volo), e — con ISS-05 —
-`--allow-domain <dom>`. Stessa semantica dei campi profilo, priorità CLI.
-
-*Acceptance:* `inner run --block rm …` blocca `rm` senza profilo dedicato;
-`--dry-run` riflette i flag.
-
-### ISS-17 · `inner profile explain <name>`: policy effettiva della catena `extends` — **FATTO**
-`ux` · **P2** · Size M · Fonte: NONO_COMPARISON U4
-
-Vista orientata al profilo (non al run come `--dry-run`) del merge finale:
-mount/env/allow/noop risolti, con indicazione del layer di provenienza di ogni
-valore. Riusa il plumbing `Explain` delle capability. Rende banale il debug di
-`extends`.
-
-*Acceptance:* per un profilo con 2 livelli di `extends`, l'output attribuisce
-correttamente ogni valore al layer che lo definisce.
-
-*Stato:* `inner profile explain [NAME|PATH]` stampa la catena (base per prima)
-e ogni valore del profilo fuso con il layer che lo imposta, seguendo le regole
-di `mergeProfiles`: scalari → ultimo layer che li definisce, elementi di lista →
-primo layer che li aggiunge, chiavi di mappa → ultimo layer che le imposta,
-`[default]` per i valori built-in. Seguono le sezioni rete e capability di
-`profile show --explain`. Il loader espone la catena (`loadProfileChain`) e
-`config.ExplainProfile` calcola la provenienza; un test fallisce se
-`mergeProfiles` acquisisce un campo che la provenienza non attribuisce.
-Effetto collaterale notato: il profilo fuso eredita il `name` della base quando
-il figlio non lo dichiara (il nome ricavato dal file non conta come "definito"),
-quindi anche `RunConfig.Name` di un run riporta la base; `explain` usa il nome
-del layer richiesto.
-
-### ISS-18 · Triage amichevole dei fallimenti bwrap — **FATTO**
-`ux` · **P2** · Size S · Fonte: NONO_COMPARISON U5
-
-Mappare i fallimenti comuni (mount dest mancante, userns disabilitati,
-quirk ptmx) a messaggi one-line azionabili che puntano a `inner doctor`,
-invece del solo exit code di bwrap.
-
-*Acceptance:* i tre casi citati producono messaggi specifici riconoscibili.
-
-*Stato:* con exit code 1, 126 o 127 `inner run` ricostruisce la stessa sandbox
-con un probe come entrypoint (`command -v` dell'entrypoint richiesto) e ne
-cattura lo stderr: la run reale non si può filtrare perché il terminale passa
-alla sandbox così com'è. Se fallisce anche il probe, `isolator.DiagnoseBwrapError`
-mappa l'errore di bwrap a una riga `error: sandbox did not start: …` + `hint:`:
-user namespace (con il sysctl colpevole: `unprivileged_userns_clone`,
-`max_user_namespaces`, `apparmor_restrict_unprivileged_userns`), sorgente di
-mount mancante, destinazione non creabile sotto la root read-only, devpts/ptmx,
-entrypoint non trovato (`execvp` o probe con 127). Probe riuscito = exit code
-dell'entrypoint stesso, nessun messaggio. `inner doctor` ora nomina anche
-`max_user_namespaces = 0` (errore) e la restrizione AppArmor (warning).
-Non coperto: `inner verify` (non usa ancora la diagnosi) e i fallimenti di
-`systemd-run` quando ci sono i resource limits (il probe gira senza wrapper).
-I messaggi user-namespace sono testati su stringhe note di bwrap, non riprodotti
-su macchina reale.
-
----
-
-## P3 — Migliorie e polish
-
-### ISS-19 · `quoteGitConfigValue` riscrive `\r` come `\n` — **FATTO**
-`bug` · **P3** · Size XS · Fonte: SECURITY_REVIEW #7
-
-Case `'\r'` copia-incollato dal case `'\n'` in `internal/git/sanitizer.go`:
-emettere `\r`. Test di round-trip.
-
-*Stato:* emette il byte CR grezzo dentro le virgolette, come fa git stesso
-(`\r` a due caratteri non è un escape valido per il parser di git).
-
-### ISS-20 · `expandAliases` splitta sugli spazi ignorando le quote — **FATTO**
-`bug` · **P3** · Size S · Fonte: SECURITY_REVIEW #10
-
-`strings.Fields` rompe alias con argomenti quotati multi-parola. Usare un
-tokenizer shell-like (shlex). Test su alias con argomento quotato.
-
-*Stato:* `splitArgs` in `cmd/inner/root.go` gestisce quote singole/doppie ed
-escape.
-
-### ISS-21 · Ampliare i pattern di `checkEnvSecrets` e dichiararlo euristico — **FATTO**
-`security` · **P3** · Size XS · Fonte: SECURITY_REVIEW #11
-
-Aggiungere `API_KEY`, `ACCESS_KEY`, `_KEY`, `PASSWD`, `AUTH` ai pattern;
-ammorbidire il wording del check (euristica, non garanzia).
-
-*Stato:* pattern ampliati; il dettaglio del check dice "heuristic, may include
-false positives".
-
-### ISS-22 · Filtro seccomp opzionale (defense-in-depth)
-`security` · **P3** · Size M · Fonte: NONO_COMPARISON S7
-
-bwrap accetta `--seccomp <fd>`: filtro conservativo di default (deny `ptrace`,
-`process_vm_readv`, `keyctl`, `bpf`, `mount`, `open_by_handle_at`, …) con
-opt-out da profilo. Valutare in parallelo Landlock via `go-landlock` (compone
-con bwrap). *Nota:* Landlock è in tree (`internal/landlock`), per ora usato
-solo per lo scope dei socket astratti (vedi ISS-37); il filtro seccomp resta da
-fare.
-
-Dal confronto con drop, due regole con valore concreto: `ioctl(TIOCSTI)` e
-`ioctl(TIOCLINUX)` → `EPERM` (su kernel < 6.2, o con
-`dev.tty.legacy_tiocsti = 1`, il sandbox può digitare comandi nel terminale
-dell'host, che inner non isola con un pty proprio) e `keyctl`/`add_key`/
-`request_key` (il keyring utente del kernel resta raggiungibile anche con
-`/proc/keys` mascherato). Nodo tecnico: `wrapWithLimits` passa per
-`systemd-run`, che chiude gli fd extra, quindi il programma BPF non arriva a
-`--seccomp <fd>` senza un wrapper. Test possibile anche su kernel già
-protetti: il filtro dà `EPERM`, il kernel `EIO`.
-
-### ISS-32 · Check TIOCSTI in `inner doctor` — **FATTO**
-`security` · **P2** · Size S · Fonte: confronto con drop (pty proprio + `setsid`)
-
-`inner doctor` legge `/proc/sys/dev/tty/legacy_tiocsti`: `0` ok, `1` o sysctl
-assente (kernel < 6.2) → avviso con il comando per chiuderlo. La mitigazione
-lato inner resta ISS-22.
-
-### ISS-33 · Mascherare `/proc` e `/sys` come runc — **FATTO**
-`security` · **P3** · Size S · Fonte: confronto con drop (`alwaysBlocked`)
-
-Tmpfs vuoto o `/dev/null` su `/proc/{acpi,asound,scsi,kcore,keys,latency_stats,
-timer_list,timer_stats,sched_debug}`, `/sys/firmware`,
-`/sys/devices/virtual/powercap`, solo se esistono. Valore basso (il sandbox
-non è root, gran parte è già illeggibile); `keyctl` resta per ISS-22.
-
-### ISS-23 · `inner profile search/add` su indice firmato
-`feature` · **P3** · Size M · Fonte: NONO_COMPARISON F4 · Dipende da: ISS-01
-
-Indice firmato (cosign/minisign) su `contrib/profiles`; `inner profile add
-<name>` copia in `~/.config/inner/profiles/` verificando la firma;
-`inner profile search` sull'indice. Via di crescita community senza registry
-completo.
-
-### ISS-24 · Tool policy incatenate via shim rientranti
-`feature` `security` · **P3** · Size L · Fonte: NONO_COMPARISON F3
-
-Terzo modo di shim: `[noop.sandbox] git = "git-only"` → lo shim re-invoca
-`inner run -p git-only -- git "$@"` in una sandbox figlia più stretta.
-Richiede nested userns (macchineria `nested-user-ns` già esistente). Scope v1:
-narrowing per-comando, niente policy caller-based.
-
-### ISS-25 · Sessioni detached (`inner ps/attach/stop`)
-`feature` · **P3** · Size L · Fonte: NONO_COMPARISON F2
-
-Workflow "N agenti in parallelo": v0 pragmatica = integrazione documentata
-tmux/abduco o `inner ps`/`inner stop` su pidfile per run-ID; supervisor PTY
-completo solo se la domanda si concretizza.
-
-### ISS-26 · Cache della runtime detection
-`performance` · **P3** · Size S · Fonte: NONO_COMPARISON P1
-
-`runtime.Detect()` esegue/statta a ogni invocazione: cache in
-`~/.cache/inner/` (path/versione bwrap, display server) invalidata per mtime.
-
-### ISS-27 · Cache HTTP (ETag) per i profili remoti
-`performance` · **P3** · Size S · Fonte: NONO_COMPARISON P2 · Affine a ISS-01
-
-`If-None-Match` invece del re-download a ogni run; riduce anche la superficie
-TOCTOU una volta attivo il pinning.
-
-### ISS-28 · Check di `inner verify` in parallelo
-`performance` · **P3** · Size S · Fonte: NONO_COMPARISON P4
-
-`Checker.Run` è sequenziale e il solo dial timeout può costare 2 s:
-parallelizzare con WaitGroup mantenendo l'ordine di output.
-
-### ISS-29 · Onboarding: packaging + `inner init` interattivo
-`ux` · **P3** · Size M · Fonte: NONO_COMPARISON U6
-
-Pubblicazione su package repo (AUR, deb/rpm dalla pipeline release esistente);
-`inner init` interattivo: scegli agente → genera profilo → esegue `doctor`.
-
-### ISS-30 · Login OAuth sandboxed (osservazione)
-`feature` · **P3** · Size L · Fonte: NONO_COMPARISON F5 · Dipende da: ISS-06
-
-Lo stato di login di `claude` vive in `~/.claude`, oggi copiato in blocco
-dalla capability. Da rivalutare quando esiste ISS-06: token nel keyring invece
-che in file leggibili dall'agente.
-
----
-
-## Riepilogo per priorità
-
-| Priorità | Issue |
-|---|---|
-| **P0** | — (ISS-01, ISS-02, ISS-03 chiuse; firma e2e con `.sdlc/e2e-security`) |
-| **P1** | ~~ISS-04~~ · ~~ISS-05~~ · ISS-06 credential injection · ~~ISS-07~~ · ISS-08 run-ID + `--json` |
-| **P2** | ~~ISS-09~~ · ~~ISS-10~~ · ~~ISS-11~~ · ~~ISS-12~~ · ~~ISS-13~~ · ISS-14 audit log · ISS-15 snapshot/rollback · ISS-16 flag one-off · ~~ISS-17~~ · ~~ISS-18~~ |
-| **P2** (nuove) | ISS-34 copertura denylist |
-| **P3** | ~~ISS-19~~ · ~~ISS-20~~ · ~~ISS-21~~ · ISS-22…ISS-30 · ISS-37 residui gate remoto (parziale) |
-
-### Grafo delle dipendenze (enabler)
+## Dipendenze
 
 ```
-ISS-01 ──► ISS-23, ISS-27
-ISS-05 ──► ISS-06 ──► ISS-30
-      └──► ISS-16 (--allow-domain), ISS-14 (eventi rete)
+ISS-05 (fatta) ──► ISS-06 ──► ISS-30
+               └─► ISS-16 (--allow-domain), ISS-14 (eventi rete)
 ISS-08 ──► ISS-14, ISS-15
-ISS-04 ──► rende marginale ISS-03 (che resta il quick win immediato)
+ISS-01 (fatta) ──► ISS-23, ISS-27
 ```
