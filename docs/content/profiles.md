@@ -29,10 +29,13 @@ the environment and which credentials stay visible, so one URL would otherwise m
 
 1. **hardens it** — `inherit_all` is ignored, `[env] inherit` entries whose name looks
    like a secret (`*TOKEN*`, `*SECRET*`, `*KEY*`, …) are dropped, `[sandbox] allow`
-   keys that un-hide credentials or hand over a container socket are removed, and
-   `pid_namespace = false` is ignored;
-2. **asks** — it prints what the profile still requests (command, network, home mode,
-   capabilities, writable mounts) and waits for a `y/N` answer. `--yes` does *not*
+   keys that un-hide credentials or hand over a container socket are removed,
+   `pid_namespace = false`, `git_dir = "rw"` and `clipboard = true` are ignored,
+   mounts that move a hidden path elsewhere and published ports on a non-loopback
+   address are dropped, and `$VAR` references resolve without your environment
+   (the full list is in [`inner run` from a URL](commands.md#profiles-downloaded-from-a-url));
+2. **asks** — it prints what the profile still requests (command, network, published
+   ports, home mode, capabilities, every mount) and waits for a `y/N` answer. `--yes` does *not*
    answer this prompt; `--allow-remote` accepts it without prompting, which is also
    what a non-interactive run must pass;
 3. **can pin the content** — `--sha256 <digest>` refuses to run if the URL serves
@@ -93,11 +96,14 @@ Additional profiles are available in the [`contrib/profiles/`](https://github.co
 | Name | Description | Requires |
 |------|-------------|----------|
 | `shell-containers` | Interactive bash shell with Podman rootless support | Podman |
-| `shell-with-claude` | Interactive bash shell with Claude Code available | — |
+| `shell-with-claude` | Interactive bash shell with Claude Code available | Claude Code |
 | `claude-containers` | Claude Code agent with Podman rootless support | Podman |
 | `java-maven` | Interactive shell with Java + Maven + Podman | `shell-containers` |
-| `gradle-java` | Interactive shell with Java + Gradle + Podman | `shell-containers` |
+| `java-gradle` | Interactive shell with Java + Gradle + Podman | `shell-containers` |
 | `java-21` | Interactive shell pinned to a specific JDK via `path_prepend` (no container runtime) | `shell` |
+| `node-22` | Interactive shell pinned to a specific Node.js via `path_prepend` | `shell` |
+| `rust` | Interactive shell for Rust projects (cargo registry and rustup toolchain mounted) | Rust toolchain |
+| `rust-claude` | Claude Code agent for Rust projects | `claude-interactive` (built-in) |
 | `opencode` | Interactive OpenCode agent, network enabled | OpenCode |
 | `openclaw` | OpenClaw gateway: dedicated state dir, allowlist network, Control UI published on `127.0.0.1:18789` | OpenClaw (Node 22+) |
 
@@ -125,10 +131,11 @@ inner profile install $BASE/claude-containers.toml
 # Java toolchains depend on shell-containers — install that first
 inner profile install $BASE/shell-containers.toml
 inner profile install $BASE/java-maven.toml
-inner profile install $BASE/gradle-java.toml
+inner profile install $BASE/java-gradle.toml
 
-# java-21 extends the built-in "shell" profile — no other dependency
+# java-21 and node-22 extend the built-in "shell" profile — no other dependency
 inner profile install $BASE/java-21.toml
+inner profile install $BASE/node-22.toml
 
 # OpenClaw gateway — needs its state directory first
 mkdir -p ~/.local/share/inner/openclaw
@@ -194,7 +201,7 @@ extends = "~/my-base.toml"  # explicit file path (~ and absolute paths supported
 | Type | Behaviour |
 |------|-----------|
 | Scalar (`bool`, `string`, `int`) | Child wins only when the key is explicitly present in the child file. A missing key keeps the base value, including `false` booleans. |
-| Slice (`allow`, `capabilities`, `env.inherit`, `noop.block`, `git.strip_sections`) | Union: base items first, then any new items from the child. Duplicates are removed. |
+| Slice (`allow`, `capabilities`, `home_allow`, `network_allow`, `network_deny`, `publish`, `env.inherit`, `noop.block`, `git.strip_sections`) | Union: base items first, then any new items from the child. Duplicates are removed. |
 | Slice (`env.path_prepend`) | Union, but in **reverse** order from the other slices: child items first, then any new items from the base. This makes the child (the more specific profile) win PATH resolution. Duplicates are removed. |
 | Map (`mounts`, `env.set`, `noop.rewrite`, `git.overrides`) | Merge: all base entries kept; child entries added or override matching keys. |
 | `verify.custom.checks` | Append: base checks first, child checks after. |
@@ -237,7 +244,7 @@ Inheritance chains are supported — `A extends B extends C` produces the result
 
 ### `extends` resolution
 
-If the value contains `/`, starts with `~`, or is an absolute path, it is treated as a file path (with `~` expansion). Otherwise it is looked up by name in `~/.config/inner/profiles/`.
+If the value contains `/`, starts with `~`, or is an absolute path, it is treated as a file path (with `~` expansion). Otherwise it is looked up by name in `~/.config/inner/profiles/` only — a local profile in `.config/inner/profiles/` is not considered, which is what lets a local profile extend the global one of the same name. To extend another local profile, give its path.
 
 ---
 
@@ -552,14 +559,21 @@ network_allow = ["github.com"]     # added to what the claude capability brings
 network:     allowlist
   allow: api.anthropic.com [capability:claude]
   allow: claude.ai [capability:claude]
+  allow: claude.com [capability:claude]
   allow: platform.claude.com [capability:claude]
   allow: downloads.claude.ai [capability:claude]
+  allow: raw.githubusercontent.com [capability:claude]
+  allow: mcp-proxy.anthropic.com [capability:claude]
+  allow: *.frame.claudeusercontent.com [capability:claude]
+  allow: code.claude.com [capability:claude]
   allow: http-intake.logs.us5.datadoghq.com [capability:claude]
+  allow: browser-intake-us5-datadoghq.com [capability:claude]
   allow: github.com [profile]
 ```
 
 The `claude` capability covers what a session does on its own: model traffic,
-sign-in and token refresh, update checks, the changelog, and its telemetry. Two
+sign-in and token refresh, update checks, the changelog, claude.ai MCP
+connectors, artifact reads, documentation lookups and its telemetry. Two
 destinations from the vendor's own list are deliberately **not** included,
 because one capability keyword should not hand the sandbox a general-purpose
 host — list them yourself if the profile needs them:
@@ -891,7 +905,7 @@ The two socket keys are distinct because they point to different paths: `docker-
 > set = { "DOCKER_HOST" = "unix:///run/user/${UID}/podman/podman.sock" }
 > ```
 >
-> `inner` expands `${UID}` to the current user ID at runtime. The built-in `claude-containers` profile already includes this setup.
+> `inner` expands `${UID}` to the current user ID at runtime. The `claude-containers` and `shell-containers` contrib profiles already include this setup.
 
 ```toml
 [sandbox]
@@ -1063,10 +1077,13 @@ Mount host paths into the sandbox. Keys are host paths, values are mount descrip
 
 ```toml
 [mounts]
-"~/projects/myapp" = { dest = "/workspace", mode = "rw" }
-"~/shared/data"    = { dest = "/data",      mode = "ro" }
-"/tmp/build"       = { dest = "/build",     mode = "rw" }
+"~/projects/myapp" = { dest = "~/projects/myapp",               mode = "rw" }
+"~/shared/data"    = { dest = "${workspaces_path}/data",        mode = "ro" }
+"/run/user/$UID"   = { dest = "/run/user/$UID",                 mode = "tmpfs" }
 ```
+
+A destination must exist on the host unless it is created for you — see
+[`dest` path requirements](#dest-path-requirements).
 
 | Key in value | Type | Description |
 |------|------|-------------|
@@ -1083,7 +1100,7 @@ When `mode = "safe-rw"`, `inner` copies the source directory to a temporary dire
 
 ```toml
 [mounts]
-"~/projects/myapp" = { dest = "/workspace", mode = "safe-rw" }
+"~/projects/myapp" = { dest = "~/projects/myapp", mode = "safe-rw" }
 ```
 
 Use this when you want an agent to have full write access to a directory without risking changes to the host copy. It is the generic equivalent of what the built-in `claude` capability does automatically for `~/.claude`.
@@ -1107,7 +1124,7 @@ On any machine, `${workdir}` expands to the cwd at the time `inner run` is calle
 The token can also appear as part of a longer path:
 
 ```toml
-"${workdir}/src" = { dest = "/workspace/src", mode = "rw" }
+"${workdir}/src" = { dest = "${workspaces_path}/src", mode = "rw" }
 ```
 
 > **Note:** `${workdir}` is only meaningful in mount **source** (key) paths. It is not expanded in `dest` fields or elsewhere — use `${workspaces_path}` for dest-side indirection.
@@ -1120,8 +1137,9 @@ The token can also appear as part of a longer path:
 |-------------|-----------------|
 | Path that already exists on the host (e.g. `~/projects`) | No action needed — bwrap binds over it directly |
 | Path that does not yet exist on the host | Must be pre-created; use the `${workspaces_path}` token (see below) |
+| Path under `$HOME` with `home = "isolated"` | No action needed — the home is a tmpfs, and bwrap creates the mount point inside it (unless the path lies under a `home_allow` entry, which is a read-only bind of the host directory) |
 
-`inner profile validate` (and `inner run`) checks that every `dest` exists on the host before launching `bwrap`. A missing dest produces a clear error:
+`inner profile validate` (and `inner run`) checks that every other `dest` exists on the host before launching `bwrap`. A missing dest produces a clear error:
 
 ```
 profile [error] mount dest "/nonexistent/path" does not exist on host (expanded: "/nonexistent/path")
@@ -1263,7 +1281,7 @@ Defines what runs inside the sandbox.
 |-----|------|---------|-------------|
 | `cmd` | string | `$SHELL` | Binary to execute |
 | `args` | list | `[]` | Arguments passed to `cmd` |
-| `interactive` | bool | `true` | Whether to allocate a PTY |
+| `interactive` | bool | `false` | Connect the sandbox to the terminal (stdin, raw mode for TUIs). `false` runs it non-interactively, with its output optionally logged |
 | `tui` | bool | `false` | Mark as a TUI app that probes terminal capabilities at startup (see below) |
 | `cursor_fix` | string | `""` | Cursor-repair strategy after a TUI app exits (see below) |
 | `workdir` | string | `""` | Default working directory inside the sandbox. Supports `~` and `${workspaces_path}`. Overridable with `--workdir`/`-w` at runtime; falls back to the caller's cwd if unset. |
@@ -1313,7 +1331,7 @@ When a TUI application (e.g. claude) is interrupted with CTRL+C it may leave the
 | `"newlines"` | Prints `\r\n\r\n\r\n` after inner's child process exits. Suitable when the entrypoint **is** the TUI app but `tui = true` is not used (rare). |
 | `"shell"` | For bash/zsh entrypoints that **run** TUI children interactively. Does two things: injects a `PROMPT_COMMAND` into the sandbox so bash moves the cursor and clears stale TUI content before each prompt; and prints `\r\n` after the shell itself exits. |
 
-**Use `cursor_fix = "shell"` when the entrypoint is a shell (bash/zsh) and the user will launch TUI apps inside it.** This is the value used by the built-in `shell-with-claude` profile.
+**Use `cursor_fix = "shell"` when the entrypoint is a shell (bash/zsh) and the user will launch TUI apps inside it.** This is the value used by the `shell-with-claude` contrib profile.
 
 ```toml
 [entrypoint]
@@ -1335,8 +1353,8 @@ Controls logging and runtime behavior.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `summary` | bool | `false` | Print execution summary after the run |
-| `log` | string | `~/.config/inner/logs/` | Directory for run logs |
+| `summary` | bool | `false` | Accepted for compatibility, no effect: every run now gets a record, see [`inner log`](commands.md#inner-log) |
+| `log` | string | `""` (the config's `log_dir`, if set) | Directory where the output of a non-interactive run is logged. With neither this nor `log_dir` set, the output is not logged (the run record still is) |
 | `timeout_seconds` | int | `0` | Kill sandbox after N seconds (`0` = no limit) |
 
 ---
@@ -1396,7 +1414,7 @@ checks = [
 |-------|--------|-------------|
 | `name` | string | Human-readable check identifier |
 | `cmd` | string | Shell command run inside the sandbox; exit 0 = pass |
-| `severity` | `critical` \| `high` \| `medium` \| `info` | How failures are reported |
+| `severity` | `critical` \| `high` \| `medium` | How failures are reported; any other value, `info` included, counts as `medium` |
 
 Custom checks run one after the other, in the order listed, concurrently with
 the built-in checks. The report order is fixed: built-in checks first, custom
@@ -1749,7 +1767,7 @@ Or edit directly:
 default_profile = "claude-interactive"
 ```
 
-The precedence is: **`-p` flag > `default_profile` in config.toml > `"default"`** (hard fallback).
+The precedence is: **`-p` flag > `default_profile` in the project config (`.config/inner.toml` and the other [project files](commands.md#inner-config)) > `default_profile` in `~/.config/inner/config.toml` > `"default"`** (hard fallback). `inner verify` and `inner profile show` without a profile follow the same chain.
 
 ---
 
@@ -1762,8 +1780,8 @@ inner profile list
 # List with scope, path, and shadowed profiles
 inner profile list --wide
 
-# Show profile content
-inner profile show default
+# Show profile content (no argument: the current default profile)
+inner profile show shell
 
 # Create a new profile (opens $EDITOR)
 inner profile new my-profile
@@ -1806,7 +1824,7 @@ downloaded bytes plus every validation warning the profile produces.
 
 Installing is an explicit act of trust: an installed profile is a **local** profile, so
 `inner run -p <name>` runs it without the consent gate and without the hardening that
-`inner run <url>` applies. Read what the install printed — and `inner profile show
+`inner run -p <url>` applies. Read what the install printed — and `inner profile show
 <name>` — before running it.
 
 ---
@@ -1822,10 +1840,10 @@ description    = "Isolated Python environment, no network"
 network = false
 
 [mounts]
-"~/projects/myapp" = { dest = "/workspace", mode = "rw" }
+"~/projects/myapp" = { dest = "~/projects/myapp", mode = "rw" }
 
 [env]
-inherit  = ["TERM", "LANG", "HOME"]
+inherit  = ["TERM", "LANG", "HOME", "PATH"]
 set      = { "PYTHONDONTWRITEBYTECODE" = "1" }
 
 [git]
@@ -1835,7 +1853,8 @@ overrides      = { "push.default" = "nothing" }
 [entrypoint]
 cmd         = "bash"
 interactive = true
+workdir     = "~/projects/myapp"
 
 [noop]
-block = ["pip", "pip3", "pip install"]
+block = ["pip", "pip3"]
 ```

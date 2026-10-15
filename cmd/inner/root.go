@@ -17,7 +17,7 @@ func buildRootCmd(app *App) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "inner",
 		Short:         "Run agentic tools in isolated, reproducible environments",
-		Long:          `inner launches agentic tools (Claude Code, Aider, interactive shell) in isolated sandboxes backed by bubblewrap on Linux.`,
+		Long:          `inner launches agentic tools (Claude Code, Gemini CLI, Cursor Agent, OpenCode, interactive shells) in isolated sandboxes backed by bubblewrap on Linux.`,
 		Version:       version.Version,
 		SilenceUsage:  true, // don't dump usage on every operational error
 		SilenceErrors: true, // we print the error ourselves in execute()

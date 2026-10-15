@@ -71,7 +71,7 @@ directories without hardcoding absolute paths:
 workspaces_path = "~/Projects/workspaces"
 
 [aliases]
-myproject = "run -p myproject-profile"
+myproject = "run -p myproject-profile -w ${workspaces_path}/myproject"
 ```
 
 The token is expanded when the alias is looked up, before the command is parsed. If
@@ -80,5 +80,5 @@ at runtime if bwrap receives it as a path).
 
 ## Limitations
 
-- Alias values are split on whitespace using `strings.Fields`. Quoted arguments with spaces (e.g. `--arg "hello world"`) are not supported in the alias definition; pass them directly on the command line after the alias name.
+- Alias values are split like a simple shell command line: single and double quotes group words (`--arg "fix the bug"` is one argument) and a backslash escapes the next character outside single quotes. Variables, globs and command substitution are not interpreted.
 - Aliases cannot invoke external commands (no `!`-prefix like git). They must expand to an `inner` subcommand.

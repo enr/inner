@@ -1232,7 +1232,7 @@ to the entrypoint command.`,
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "With --dry-run, print the resolved sandbox as JSON")
 
-	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", "Profile to use (default: \"default\")")
+	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", "Profile to use (default: the configured default_profile)")
 	cmd.Flags().StringVarP(&flags.workdir, "workdir", "w", "", "Mount PATH read-write in the sandbox (at the same path)")
 	cmd.Flags().BoolVar(&flags.networkOn, "network", false, "Enable network access")
 	cmd.Flags().BoolVar(&flags.networkOff, "no-network", false, "Disable network access")

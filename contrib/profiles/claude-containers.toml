@@ -1,6 +1,6 @@
 schema_version = "1"
 name        = "claude-containers"
-description = "Agent con supporto container via podman rootless"
+description = "Claude Code agent with Podman rootless container support"
 extends     = "claude-interactive"
 
 [sandbox]

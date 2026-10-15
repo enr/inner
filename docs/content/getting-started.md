@@ -59,15 +59,18 @@ On the first invocation `inner` initializes `~/.config/inner/` and installs the 
 ├── profiles/          # sandbox profiles (TOML)
 │   ├── shell.toml
 │   ├── shell-oneshot.toml
-│   ├── shell-with-claude.toml
-│   ├── shell-containers.toml
 │   ├── claude-interactive.toml
 │   ├── claude-one-shot.toml
-│   ├── claude-containers.toml
 │   ├── gemini-interactive.toml
-│   └── gemini-one-shot.toml
-└── logs/              # run logs
+│   ├── gemini-one-shot.toml
+│   └── cursor-interactive.toml
+├── directives/
+└── logs/              # run records and output logs
 ```
+
+More specific profiles (Podman, language toolchains, OpenCode, OpenClaw) are
+available as [contrib profiles](/inner/profiles/#contrib-profiles), installed on
+demand.
 
 ## Environment Check
 
@@ -80,21 +83,29 @@ inner doctor
 Example output:
 
 ```
-[ok] bwrap found: /usr/bin/bwrap (version 0.9.0)
-[ok] user namespaces: supported
-[ok] terminal injection (TIOCSTI): blocked by the kernel (dev.tty.legacy_tiocsti = 0)
-[ok] profiles dir: /home/alice/.config/inner/profiles
-[ok] logs dir: /home/alice/.config/inner/logs
-[ok] ANTHROPIC_API_KEY: set
-[ok] claude binary: /usr/local/bin/claude
-[ok] display server: wayland (WAYLAND_DISPLAY=wayland-1)
+[ok]  bwrap: v0.9.0 (/usr/bin/bwrap)
+[ok]  user namespaces: enabled
+[ok]  terminal injection (TIOCSTI): blocked by the kernel (dev.tty.legacy_tiocsti = 0)
+[ok]  abstract unix sockets: host sockets blocked for network = full sandboxes (Landlock ABI 6)
+[ok]  profiles: 7 profile(s) in /home/alice/.config/inner/profiles
+[ok]  logs dir: /home/alice/.config/inner/logs
+[ok]  claude auth: OAuth credentials present (~/.claude/.credentials.json)
+[ok]  claude: /home/alice/.local/bin/claude
+[??]  GEMINI_API_KEY: not set (required for Gemini agents)
+[??]  gemini: not found in PATH (required for Gemini agent profiles)
+[ok]  display: wayland (wayland-1)
+
+2 warning(s) — no errors
 ```
 
-Fix any `[FAIL]` items before proceeding. The most common issue is a missing `ANTHROPIC_API_KEY` — set it in your shell profile:
+`[!!]` is an error and must be fixed before running anything; `[??]` is a
+warning, often about a tool you do not use.
 
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
+Agent CLIs authenticate with their own login. For Claude Code, run `claude`
+once on the host and sign in: the `claude` capability copies the credentials
+into each sandbox. The built-in agent profiles do not forward
+`ANTHROPIC_API_KEY`; to use an API key instead, add it to `[env] inherit` in
+your profile.
 
 ## Quick Start
 

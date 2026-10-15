@@ -20,7 +20,9 @@ import (
 // the checks from within the sandboxed environment.
 func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest, asJSON bool) error {
 	if profileName == "" {
-		profileName = "default"
+		// The profile a bare `inner run` would use, so `inner verify` certifies
+		// that one and not a "default" profile nobody installed.
+		profileName = a.loader.DefaultProfileName()
 	}
 
 	rc, err := a.loader.Build(profileName)
@@ -313,7 +315,7 @@ directly into your profile.`,
 		},
 	}
 
-	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", `Profile to use (default: "default")`)
+	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", "Profile to verify (default: the configured default_profile)")
 	cmd.Flags().BoolVar(&flags.suggest, "suggest", false, "Show TOML snippets for failed checks")
 	cmd.Flags().BoolVar(&flags.json, "json", false, "Print the report as JSON")
 	cmd.Flags().BoolVar(&flags.inside, "inside", false, "Run checks directly (internal flag, set automatically inside the sandbox)")

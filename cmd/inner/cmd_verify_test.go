@@ -3,10 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/enr/inner/internal/config"
+	"github.com/enr/inner/internal/isolator"
 )
 
 func TestLookupBoolEnv(t *testing.T) {
@@ -166,5 +170,20 @@ func TestRunVerifyInside_json(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("custom check missing: %+v", report.Checks)
+	}
+}
+
+// Without -p, verify certifies the profile a bare `inner run` would use — the
+// configured default_profile — not a profile literally named "default".
+func TestRunVerifyOutside_usesTheConfiguredDefaultProfile(t *testing.T) {
+	a, dir := newTestApp(t)
+	writeTestFile(t, filepath.Join(dir, "config.toml"), `default_profile = "mine"`+"\n")
+	writeTestFile(t, filepath.Join(dir, "profiles", "mine.toml"), "schema_version = \"1\"\n[entrypoint]\ncmd = \"true\"\n")
+	stop := errors.New("isolator reached")
+	a.isolatorFn = func() (isolator.Isolator, error) { return nil, stop }
+
+	err := a.runVerifyOutside(io.Discard, "", false, false)
+	if !errors.Is(err, stop) {
+		t.Fatalf("err = %v, want the run to reach the isolator with profile \"mine\"", err)
 	}
 }

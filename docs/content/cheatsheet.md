@@ -45,6 +45,7 @@ weight: 7
 | Inject environment var | `inner run -e KEY=VAL` |
 | Override entrypoint | `inner run --entrypoint /bin/zsh` |
 | Disable network | `inner run --no-network` |
+| Reach a server in the sandbox from the host | `inner run --publish 8080` |
 
 ## Agents & One-Shots
 
@@ -54,12 +55,13 @@ weight: 7
 | Claude One-Shot | `inner run -p claude-one-shot --arg "refactor this"` |
 | Gemini Interactive | `inner run -p gemini-interactive -w .` |
 | Pass prompt from file | `inner run -p claude-one-shot --args-file prompt.md` |
-| Pass args via `--` | `inner run -p claude -- --model claude-3-5-sonnet` |
+| Pass args via `--` | `inner run -p claude-interactive -- --model opus` |
 
 ## Security Verification
 
 | Task | Command |
 |------|---------|
+| Verify the default profile | `inner verify` |
 | Verify profile security | `inner verify -p <name>` |
 | Show TOML fix suggestions | `inner verify -p <name> --suggest` |
 

@@ -12,8 +12,9 @@ A **claude-one-shot** run starts Claude Code in non-interactive mode, executes a
 
 The `claude-one-shot` built-in profile configures:
 - `--dangerously-skip-permissions` so Claude does not pause to ask for approval
-- `interactive = false` so no PTY is allocated
-- Network disabled (override with `--network` if needed)
+- `interactive = false`, so the run is not attached to the terminal and its output can be logged
+- Network enabled (`network = true`); use `--no-network` to cut it, or derive a profile with `network_mode = "allowlist"`
+- `home = "isolated"`: the agent starts on an empty home and sees only what the profile allowlists
 
 ### Basic claude-one-shot
 
@@ -23,9 +24,9 @@ inner run -p claude-one-shot -w ~/projects/myapp --arg "add type annotations to 
 
 **What happens:**
 1. `inner` builds a sandbox using the `claude-one-shot` profile
-2. `~/projects/myapp` is mounted read-write at `/workspace`
+2. `~/projects/myapp` is mounted read-write at the same path, and is the working directory
 3. Claude Code starts, receives the prompt, performs the task
-4. The process exits when Claude is done; you get back a shell
+4. The process exits when Claude is done; you get back a shell, and `inner log <run-id>` shows the run
 
 ### One-shot with a timeout
 
@@ -38,40 +39,63 @@ inner run -p claude-one-shot -w ~/projects/myapp --timeout 300 \
 
 The sandbox is killed after 5 minutes if still running.
 
-### One-shot with network access
+### One-shot without network access
 
-Some tasks need to fetch dependencies or call APIs:
+`claude-one-shot` has the network on; for a task that must not reach anything
+but the model, derive a profile on the allowlist model — the `claude`
+capability brings the destinations Claude Code itself needs:
+
+```toml
+# ~/.config/inner/profiles/claude-offline.toml
+extends = "claude-one-shot"
+name    = "claude-offline"
+
+[sandbox]
+network_mode = "allowlist"
+```
 
 ```bash
-inner run -p claude-one-shot --network -w ~/projects/myapp \
+inner run -p claude-offline -w ~/projects/myapp \
   --arg "update all npm dependencies to their latest minor version"
 ```
+
+Here the agent can talk to the model but not to the npm registry: add
+`network_allow = ["@npm"]` to let it install packages.
 
 ### One-shot in CI
 
 ```bash
-# Set in environment: ANTHROPIC_API_KEY
 inner run -p claude-one-shot -w "$(pwd)" --timeout 600 \
-  --arg "review the diff in /workspace and write a summary to /workspace/review.md"
+  --arg "review the uncommitted diff and write a summary to review.md"
 ```
+
+The `claude` capability copies the host's Claude Code credentials into the
+sandbox, so the CI user must be logged in (`~/.claude/.credentials.json`). The
+built-in profiles do not forward `ANTHROPIC_API_KEY`: to authenticate with a key
+instead, derive a profile with `[env] inherit` extended by
+`"ANTHROPIC_API_KEY"`.
 
 ### Extra arguments via `--`
 
 Pass arbitrary arguments to Claude Code directly:
 
 ```bash
-inner run -p claude-one-shot -w ~/myapp -- --model claude-opus-4-5 --print "explain the architecture"
+inner run -p claude-one-shot -w ~/myapp -- --model opus --print "explain the architecture"
 ```
 
 ---
 
 ## Running a Docker Image (Podman Rootless)
 
-`inner` does not natively run Docker images, but the `claude-containers` profile grants Claude Code access to a **Podman rootless** socket so the agent can build and run containers inside the sandbox.
+`inner` does not natively run Docker images, but the `claude-containers` [contrib profile](profiles.md#contrib-profiles) grants Claude Code access to a **Podman rootless** socket so the agent can build and run containers inside the sandbox. Install it first:
+
+```bash
+inner profile install https://raw.githubusercontent.com/enr/inner/main/contrib/profiles/claude-containers.toml
+```
 
 The `claude-containers` profile sets:
 - `allow = ["nested-user-ns", "podman-socket"]` — grants nested namespaces and the Podman socket
-- `rewrite = { "docker" = "podman" }` — transparently rewrites `docker` CLI calls to `podman`
+- `rewrite = { "docker" = "podman", "docker-compose" = "podman-compose" }` — transparently rewrites `docker` CLI calls to `podman`
 
 ### Prerequisite: Podman socket running
 
@@ -116,7 +140,8 @@ inner run -p claude-containers -w ~/projects/myapp \
 inner verify -p claude-containers
 ```
 
-The verifier checks that the socket is accessible and the Podman API responds.
+The `podman-socket` check shows as `[--]` (explicitly allowed by the profile)
+instead of failing; every other check runs as usual.
 
 ---
 
@@ -129,9 +154,9 @@ inner run -p claude-interactive -w ~/projects/myapp
 ```
 
 The agent has:
-- Full read-write access to `/workspace` (your project)
+- Read-write access to `~/projects/myapp` (your project), with `.git/config` and hooks kept read-only
 - Network access enabled
-- Git credentials and SSH keys stripped
+- An empty home: no SSH keys, cloud credentials or git credential helpers
 
 End the session normally (`/exit` inside Claude, or `Ctrl-D`).
 
@@ -341,7 +366,7 @@ When a project depends on a library and you want the agent to see both source tr
         myapp-workspace.toml    ← profile that mounts both trees
 ```
 
-The `.config/inner.toml` file sits at the root of your projects folder and is picked up automatically by `inner` as a [local config](/inner/configuration) during the root-to-cwd traversal.
+The `.config/inner.toml` file sits at the root of your projects folder and is picked up automatically by `inner` as a [project config](commands.md#inner-config) during the root-to-cwd traversal.
 
 ### Local config: `~/Projects/.config/inner.toml`
 
@@ -367,7 +392,7 @@ the full profile run command.
 schema_version = "1"
 name           = "myapp-workspace"
 description    = "Interactive session with myapp (rw) and mylib sources (ro)"
-extends        = "shell-with-claude"
+extends        = "shell-with-claude"   # contrib profile: install it first
 
 [mounts]
 "~/Projects/myapp" = { dest = "${workspaces_path}/myapp", mode = "rw" }
@@ -404,12 +429,6 @@ One-shot task referencing both trees:
 ```bash
 inner run -p myapp-workspace \
   --arg "update myapp to use the new Config API introduced in mylib v2"
-```
-
-Override workdir at runtime (e.g. to start in the library tree):
-
-```bash
-inner run -p myapp-workspace -w ~/Projects/workspaces/mylib
 ```
 
 With an explicit extra mount added at runtime:
