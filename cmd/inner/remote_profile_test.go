@@ -560,7 +560,8 @@ var remoteFieldPolicy = map[string]string{
 	"sandbox.home":           "shown",
 	"sandbox.home_allow":     "shown", // bound at their own path: the hide rules still apply
 	"sandbox.git_dir":        "hardened",
-	"sandbox.cgroup_manager": "inert", // only read with nested-user-ns, which is hardened
+	"sandbox.publish":        "hardened", // non-loopback dropped, loopback listed
+	"sandbox.cgroup_manager": "inert",    // only read with nested-user-ns, which is hardened
 	"sandbox.limits.memory":  "inert", "sandbox.limits.cpu": "inert", "sandbox.limits.pids": "inert",
 
 	"mounts.dest": "hardened", "mounts.mode": "shown", // relocated secrets dropped, the rest listed

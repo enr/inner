@@ -161,6 +161,18 @@ func hardenRemoteProfile(rc *config.RunConfig) []string {
 		applied = append(applied, `[sandbox] git_dir = "rw" ignored — git hooks and config stay read-only`)
 	}
 
+	// A published port on a non-loopback address hands the sandbox to the LAN.
+	// Loopback ones stay: they are listed in the consent prompt.
+	var keptPublish []config.PortPublish
+	for _, p := range rc.Publish {
+		if !p.Loopback() {
+			applied = append(applied, fmt.Sprintf("[sandbox] publish %s dropped — a remote profile does not get to open a port to other machines", p))
+			continue
+		}
+		keptPublish = append(keptPublish, p)
+	}
+	rc.Publish = keptPublish
+
 	var keptMounts []config.Mount
 	for _, m := range rc.Mounts {
 		if hidden := relocatedSensitivePath(m); hidden != "" {
@@ -297,6 +309,12 @@ func remoteProfileRequests(rc *config.RunConfig) []string {
 		out = append(out, "git_dir: rw — the sandbox can plant git hooks your next git command runs on the host")
 	case gitguard.ModeRO:
 		out = append(out, "git_dir: ro — repositories are read-only")
+	}
+
+	if rc.EffectiveNetworkMode() != config.NetworkFull {
+		for _, p := range rc.Publish {
+			out = append(out, fmt.Sprintf("publish: %s — a server in the sandbox can be reached from the host", p))
+		}
 	}
 
 	if rc.HomeIsolated() {

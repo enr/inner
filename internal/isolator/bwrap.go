@@ -872,6 +872,19 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		args = append(args, "--setenv", "NODE_USE_ENV_PROXY", "1")
 	}
 
+	// ── Published ports ──────────────────────────────────────────────────────
+	// The host-side listeners of [sandbox] publish connect to unix sockets the
+	// in-sandbox relay creates in this directory: a pathname socket is reached
+	// through the filesystem, so it crosses the network-namespace boundary the
+	// same way the proxy socket does, in the other direction. Read-write so the
+	// relay can create them. Never under "full", where the namespace is shared
+	// and the ports need no forwarding.
+	if cfg.PublishSocketDir != "" && cfg.EffectiveNetworkMode() != config.NetworkFull {
+		args = append(args, "--dir", filepath.Dir(netproxy.SandboxPublishDir))
+		args = append(args, "--dir", netproxy.SandboxPublishDir)
+		args = append(args, "--bind", cfg.PublishSocketDir, netproxy.SandboxPublishDir)
+	}
+
 	// ── Entrypoint ───────────────────────────────────────────────────────────
 	args = append(args, "--")
 

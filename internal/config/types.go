@@ -391,6 +391,17 @@ type SandboxConfig struct {
 	// lets "*.internal.example.com" carve a hole out of "*.example.com", which
 	// no list subtraction could express.
 	NetworkDeny []string `toml:"network_deny"`
+	// Publish lists host ports forwarded INTO the sandbox, so a server running
+	// in there (a dev server, an agent's web UI) can be reached from the host
+	// while the sandbox keeps its private network namespace. Entries are
+	// "[HOST_IP:]PORT[:SANDBOX_PORT]" (see ParsePublish); the host side binds
+	// 127.0.0.1 unless the entry names another address.
+	//
+	// Ingress only: it opens no destination for the sandbox. Meaningful with
+	// network_mode "off" and "allowlist"; under "full" the sandbox already
+	// shares the host network and the entries are ignored with a warning.
+	// Inherited via extends (union, no duplicates).
+	Publish []string `toml:"publish"`
 	// CgroupManager selects the cgroup manager used by rootless container
 	// runtimes (podman) started INSIDE the sandbox. Only meaningful when
 	// "nested-user-ns" is in Allow. Valid values are listed in

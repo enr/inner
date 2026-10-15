@@ -51,23 +51,6 @@ torna allo stato pre-run.
 campi profilo, priorità alla CLI.
 *Acceptance:* `inner run --block rm` blocca `rm`; `--dry-run` riflette i flag.
 
-**ISS-39 · Publish di porte host → sandbox** · `feature` `ux` · M
-Con `network_mode = "off"`/`"allowlist"` il sandbox ha un netns privato: un
-server che ascolta dentro (gateway OpenClaw su `:18789`, dev server, UI web di
-un agente) non è raggiungibile dall'host; l'unica via oggi è `"full"`, che
-perde l'allowlist. `[sandbox] publish = ["127.0.0.1:18789"]` (e
-`--publish` su `inner run`): listener TCP sull'host → socket unix
-bind-montato → relay dentro il sandbox verso il loopback del netns (stesso
-schema di `__net-relay`, direzione inversa; il relay va avviato anche con
-`"off"`). Solo ingresso, nessuna nuova uscita; bind dell'host solo su
-loopback salvo opt-in esplicito; porta host occupata → errore prima di
-avviare; `--dry-run` e consenso dei profili remoti mostrano le porte; con
-`"full"` warning (inutile, il netns è già condiviso).
-*Acceptance:* `inner run --publish 127.0.0.1:8000 -- python3 -m http.server
-8000` in `allowlist` risponde a `curl 127.0.0.1:8000` dall'host; dal sandbox
-le destinazioni fuori lista restano rifiutate; nessun listener su interfacce
-non loopback.
-
 ### P3
 
 **ISS-22 · Filtro seccomp opzionale** · `security` · M

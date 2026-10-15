@@ -85,6 +85,9 @@ func mergeProfiles(base, overlay *Profile, meta toml.MetaData) *Profile {
 	if meta.IsDefined("sandbox", "network_deny") {
 		result.Sandbox.NetworkDeny = mergeUnique(base.Sandbox.NetworkDeny, overlay.Sandbox.NetworkDeny)
 	}
+	if meta.IsDefined("sandbox", "publish") {
+		result.Sandbox.Publish = mergeUnique(base.Sandbox.Publish, overlay.Sandbox.Publish)
+	}
 	if meta.IsDefined("sandbox", "cgroup_manager") {
 		result.Sandbox.CgroupManager = overlay.Sandbox.CgroupManager
 	}

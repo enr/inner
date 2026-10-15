@@ -1564,3 +1564,32 @@ func TestDanglingTarget_realFilesystem(t *testing.T) {
 		t.Error("a symlink loop must not be reported as dangling")
 	}
 }
+
+// [sandbox] publish: the host directory holding the relay's sockets is bound
+// read-write, so the relay can create them from inside. Not under "full",
+// where the namespace is shared and nothing is forwarded.
+func TestBuild_publishBindsTheSocketDirectory(t *testing.T) {
+	iso := testIsolator(runtime.RuntimeInfo{})
+	for _, mode := range []string{config.NetworkOff, config.NetworkAllowlist} {
+		args := cmdArgs(t, iso, config.RunConfig{
+			NetworkMode:      mode,
+			PublishSocketDir: "/tmp/inner-pub-abc",
+			Entrypoint:       config.Entrypoint{Cmd: "sh"},
+		})
+		if !hasPair(args, "--bind", "/tmp/inner-pub-abc") {
+			t.Errorf("%s: publish directory was not bound read-write: %v", mode, args)
+		}
+		if !hasPair(args, "--dir", netproxy.SandboxPublishDir) {
+			t.Errorf("%s: mount point %s was not created: %v", mode, netproxy.SandboxPublishDir, args)
+		}
+	}
+
+	args := cmdArgs(t, iso, config.RunConfig{
+		NetworkMode:      config.NetworkFull,
+		PublishSocketDir: "/tmp/inner-pub-abc",
+		Entrypoint:       config.Entrypoint{Cmd: "sh"},
+	})
+	if hasPair(args, "--bind", "/tmp/inner-pub-abc") {
+		t.Errorf("full: publish directory must not be bound: %v", args)
+	}
+}

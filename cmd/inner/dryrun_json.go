@@ -19,6 +19,7 @@ type dryRunJSON struct {
 	Home         string           `json:"home"`
 	HomeAllow    []string         `json:"home_allow"`
 	Network      dryRunNetwork    `json:"network"`
+	Publish      []dryRunPublish  `json:"publish"`
 	GitDir       string           `json:"git_dir"`
 	PidNamespace bool             `json:"pid_namespace"`
 	Clipboard    bool             `json:"clipboard"`
@@ -45,6 +46,12 @@ type dryRunNetwork struct {
 	Mode  string            `json:"mode"` // "off", "full" or "allowlist"
 	Allow []dryRunAllowRule `json:"allow"`
 	Deny  []string          `json:"deny"`
+}
+
+type dryRunPublish struct {
+	Host    string `json:"host"`    // host address the run listens on
+	Sandbox string `json:"sandbox"` // loopback address inside the sandbox
+	Ignored bool   `json:"ignored"` // true under network "full": nothing to forward
 }
 
 type dryRunAllowRule struct {
@@ -113,6 +120,7 @@ func newDryRunJSON(profilePath, globalConfigPath, localConfigPath string, rc *co
 		Home:         home,
 		HomeAllow:    []string{},
 		Network:      dryRunNetwork{Mode: rc.EffectiveNetworkMode(), Allow: []dryRunAllowRule{}, Deny: orEmpty(rc.NetworkDeny)},
+		Publish:      []dryRunPublish{},
 		GitDir:       rc.EffectiveGitDirMode(),
 		PidNamespace: rc.PidNamespace,
 		Clipboard:    rc.Clipboard,
@@ -143,6 +151,9 @@ func newDryRunJSON(profilePath, globalConfigPath, localConfigPath string, rc *co
 		for _, entry := range rc.NetworkAllow {
 			out.Network.Allow = append(out.Network.Allow, dryRunAllowRule{Entry: entry, Origin: rc.NetworkAllowOrigin[entry]})
 		}
+	}
+	for _, p := range rc.Publish {
+		out.Publish = append(out.Publish, dryRunPublish{Host: p.HostAddr(), Sandbox: p.SandboxAddr(), Ignored: out.Network.Mode == config.NetworkFull})
 	}
 	for _, m := range rc.Mounts {
 		out.Mounts = append(out.Mounts, dryRunMount{Src: m.Src, Dest: m.Dest, Mode: m.Mode})

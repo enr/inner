@@ -257,6 +257,7 @@ Controls top-level sandbox behavior.
 | `network_mode` | string | from `network` | `"off"`, `"full"` or `"allowlist"`. See [network — allowlist mode](#network-allowlist-mode). |
 | `network_allow` | list | `[]` | Destinations reachable in allowlist mode, or `"@group"` references. Unioned with what the profile's capabilities contribute. |
 | `network_deny` | list | `[]` | Destinations subtracted from that union. The only way to narrow it. |
+| `publish` | list | `[]` | Host ports forwarded into the sandbox, `[HOST_IP:]PORT[:SANDBOX_PORT]`. See [`publish`](#publish-host-ports). |
 | `clipboard` | bool | `false` | Forward clipboard (requires display server) |
 | `pid_namespace` | bool | `true` | Give the sandbox a private PID namespace (`--unshare-pid`). See below. |
 | `home` | string | `"host-ro"` | Filesystem model applied to `$HOME`: `"host-ro"` (readable, minus the hidden credential list) or `"isolated"` (empty tmpfs, allowlist). See [`home`](#home-filesystem-model). |
@@ -641,6 +642,51 @@ is free. Redirect stderr (`inner run … 2>blocked.log`) and they are written as
 they happen instead, since there is then nothing to corrupt. An interactive
 shell entrypoint also gets them live: you are at a prompt, where the immediate
 answer is the useful one.
+
+### `publish` — reach a server in the sandbox from the host {#publish-host-ports}
+
+With `network_mode = "off"` or `"allowlist"` the sandbox has its own network
+namespace: a server listening on `127.0.0.1:8000` inside is a different
+`127.0.0.1` from the host's, and the host cannot connect to it. `publish`
+forwards host ports into the sandbox without giving up that namespace:
+
+```toml
+[sandbox]
+network_mode = "allowlist"
+publish      = ["18789"]          # 127.0.0.1:18789 on the host -> :18789 inside
+```
+
+| Entry | Host side | Sandbox side |
+|-------|-----------|--------------|
+| `"8080"` | `127.0.0.1:8080` | `127.0.0.1:8080` |
+| `"8080:3000"` | `127.0.0.1:8080` | `127.0.0.1:3000` |
+| `"127.0.0.1:8080"` | `127.0.0.1:8080` | `127.0.0.1:8080` |
+| `"0.0.0.0:8080:3000"` | every interface, port 8080 | `127.0.0.1:3000` |
+| `"[::1]:8080"` | `[::1]:8080` | `127.0.0.1:8080` |
+
+`--publish` on `inner run` adds entries with the same syntax, and the entries
+are unioned along `extends`.
+
+**How it works.** `inner` listens on the host port before the sandbox starts —
+a port that is already taken stops the run with an error naming it. Each
+connection goes to a unix socket in a directory bind-mounted into the sandbox,
+where the relay that wraps the entrypoint connects it to `127.0.0.1:PORT`
+inside. A pathname unix socket is reached through the filesystem, so it crosses
+the namespace boundary; nothing else does. The server inside must listen on
+`127.0.0.1` (or `0.0.0.0`). A connection made before it is up is closed, the
+same answer as a port nobody listens on.
+
+**What it does not change.** It is ingress only: the sandbox gets no new
+destination, and under `"allowlist"` the proxy still refuses everything not in
+the list. The host side binds loopback unless the entry names another address;
+a non-loopback address is a warning (other machines can then reach the
+sandbox), and a profile downloaded from a URL cannot set one at all. The consent
+prompt and `--dry-run` list every published port.
+
+**Under `"full"`** the sandbox shares the host network, so its ports are
+already reachable: the entries are ignored, with a warning. `inner verify`
+does not open the host ports either, so it does not fail while a run of the
+same profile holds them.
 
 ### `git_dir` — repository protection {#git-dir-repository-protection}
 

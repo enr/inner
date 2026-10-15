@@ -598,6 +598,14 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string, expand func(s
 	// list without executing anything.
 	networkAllow, networkAllowOrigin := ResolveNetworkAllow(p.Sandbox, p.Capabilities)
 
+	// Refused here for the same reason as an unknown mode: a malformed entry
+	// would otherwise surface as a listener error after the sandbox is half
+	// prepared, or not at all.
+	publish, err := ParsePublishList(p.Sandbox.Publish)
+	if err != nil {
+		return nil, fmt.Errorf("[sandbox] publish: %w", err)
+	}
+
 	cfg := &RunConfig{
 		Name:         p.Name,
 		NetworkMode:  networkMode,
@@ -608,6 +616,7 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string, expand func(s
 		// nothing is the most dangerous shape this file can produce.
 		NetworkDeny:        ExpandNetworkGroups(p.Sandbox.NetworkDeny),
 		NetworkAllowOrigin: networkAllowOrigin,
+		Publish:            publish,
 		// PID namespace isolation defaults to ON: a nil (unset) value means
 		// true; only an explicit pid_namespace = false in the profile
 		// disables it. See SandboxConfig.PidNamespace for the rationale.

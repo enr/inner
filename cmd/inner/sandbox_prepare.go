@@ -50,11 +50,18 @@ type sandboxOptions struct {
 	// dir, mount that read-write). Off for verify: it only affects what the
 	// sandbox may write to, and verify never writes.
 	SafeMounts bool
+
+	// Publish opens the host listeners of [sandbox] publish. Off for verify:
+	// the checks never connect to the host, and listening would make verify
+	// fail whenever a run of the same profile already holds the ports. The
+	// relay still wraps the entrypoint under "allowlist", so verify keeps
+	// certifying the sandbox shape a run gets.
+	Publish bool
 }
 
 // runSandboxOptions is what `inner run` asks for: everything.
 func runSandboxOptions() sandboxOptions {
-	return sandboxOptions{GitConfig: true, Capabilities: true, SafeMounts: true}
+	return sandboxOptions{GitConfig: true, Capabilities: true, SafeMounts: true, Publish: true}
 }
 
 // verifySandboxOptions is what `inner verify` asks for. Every field it leaves
@@ -152,6 +159,17 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 		return fail("%w", err)
 	}
 	cleanups = append(cleanups, cleanupGit)
+
+	// Published ports. Before the proxy step, which wraps the entrypoint in the
+	// relay that serves them from inside.
+	if opts.Publish {
+		cleanupPublish, err := applyPublish(rc)
+		if err != nil {
+			cleanup()
+			return nil, err
+		}
+		cleanups = append(cleanups, cleanupPublish)
+	}
 
 	// Last: the network proxy rewrites the entrypoint, so nothing after it may
 	// inspect rc.Entrypoint expecting the profile's own command. Shared by both

@@ -33,6 +33,7 @@ inner run [flags] [-- extra-args]
 | `--interactive` | `-i` | bool | profile default | Force interactive mode (connect stdin/stdout directly to the sandbox) |
 | `--no-interactive` | | bool | — | Force non-interactive mode |
 | `--mount` | `-m` | string | — | Additional mount in `SRC:DEST[:MODE]` format (mode: `ro`\|`rw`\|`safe-rw`, default `ro`). `tmpfs` has no host source and cannot be expressed this way — declare it in the profile's `[mounts]` table instead. Repeatable. |
+| `--publish` | | string | — | Forward a host port into the sandbox: `[HOST_IP:]PORT[:SANDBOX_PORT]`, host side `127.0.0.1` by default. Added to the profile's `[sandbox] publish`; ignored under `network_mode = "full"`. Repeatable. |
 | `--env` | `-e` | string | — | Set an environment variable as `KEY=VAL`. `~`, `$VAR` and `${VAR}` in VAL are expanded against the host environment (same rules as profile `[env] set` values). Repeatable. |
 | `--entrypoint` | | string | — | Override the entrypoint command (resets profile args, like `docker --entrypoint`). |
 | `--arg` | `-a` | string | — | Append an argument to the entrypoint command. Repeatable. |
