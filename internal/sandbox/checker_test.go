@@ -711,17 +711,30 @@ func TestRun_orderIsStable(t *testing.T) {
 	}
 }
 
-// A slow network probe and a slow custom check overlap instead of adding up.
+// The network probe and the custom checks run at the same time. Proved by
+// order of events rather than by wall-clock time, which depends on how slow
+// the other built-in checks are on the machine running the test: the probe
+// waits for a file that only the custom check creates. Run sequentially, the
+// probe (a built-in) would finish before any custom check started and never
+// see the file.
 func TestRun_checksOverlap(t *testing.T) {
 	ch, _ := newChecker(t)
-	ch.Custom = []config.CustomCheck{{Name: "slow", Cmd: "sleep 0.5"}}
+	marker := filepath.Join(t.TempDir(), "custom-started")
+	ch.Custom = []config.CustomCheck{{Name: "marker", Cmd: "touch " + marker}}
+	var overlapped bool
 	ch.dialFn = func(string, string, time.Duration) (net.Conn, error) {
-		time.Sleep(500 * time.Millisecond)
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				overlapped = true
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 		return blockedDialFn("", "", 0)
 	}
-	start := time.Now()
 	ch.Run()
-	if elapsed := time.Since(start); elapsed >= 900*time.Millisecond {
-		t.Errorf("Run took %v: the network probe and the custom check ran in sequence", elapsed)
+	if !overlapped {
+		t.Error("the custom check did not start while the network probe was running: the checks ran in sequence")
 	}
 }
