@@ -1,9 +1,11 @@
 package profile
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/enr/inner/internal/config"
@@ -91,5 +93,61 @@ func TestContribProfile_java21_validatesCleanly(t *testing.T) {
 	r := Validate(p, "")
 	if r.HasErrors() {
 		t.Errorf("contrib/profiles/java-21.toml has validation errors with its mounts present: %v", r.Issues)
+	}
+}
+
+// TestContribProfile_openclaw_validatesCleanly guards contrib/profiles/openclaw.toml:
+// with its state directory present it must validate without errors, keep the
+// network on the allowlist, publish the gateway port on loopback only and not
+// fall back to the caller's cwd as a read-write workdir.
+func TestContribProfile_openclaw_validatesCleanly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	state := filepath.Join(home, ".local", "share", "inner", "openclaw")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	configDir := t.TempDir()
+	copyFile(t, filepath.Join("..", "..", "contrib", "profiles", "openclaw.toml"), filepath.Join(configDir, "profiles", "openclaw.toml"))
+
+	l := config.NewLoader(configDir)
+	p, err := l.LoadProfile("openclaw")
+	if err != nil {
+		t.Fatalf("LoadProfile(openclaw): %v", err)
+	}
+	// /run/user/$UID belongs to the login session, not to this profile: a CI
+	// container may have none, and the validator then reports the tmpfs
+	// destination as missing. That one is machine state, not a profile error.
+	runtimeDir := fmt.Sprintf("/run/user/%d", os.Getuid())
+	_, runtimeErr := os.Stat(runtimeDir)
+	for _, issue := range Validate(p, "").Issues {
+		if issue.Level != LevelError {
+			continue
+		}
+		if runtimeErr != nil && strings.Contains(issue.Message, runtimeDir) {
+			continue
+		}
+		t.Errorf("contrib/profiles/openclaw.toml has a validation error with its state dir present: %v", issue)
+	}
+
+	rc, err := l.Build("openclaw")
+	if err != nil {
+		t.Fatalf("Build(openclaw): %v", err)
+	}
+	if rc.EffectiveNetworkMode() != config.NetworkAllowlist {
+		t.Errorf("network mode = %q, want allowlist", rc.EffectiveNetworkMode())
+	}
+	if len(rc.Publish) != 1 || rc.Publish[0].HostAddr() != "127.0.0.1:18789" || !rc.Publish[0].Loopback() {
+		t.Errorf("publish = %+v, want only 127.0.0.1:18789", rc.Publish)
+	}
+	if !rc.HomeIsolated() {
+		t.Error("home must be isolated")
+	}
+	if rc.Workdir != state {
+		t.Errorf("workdir = %q, want the state directory %q", rc.Workdir, state)
+	}
+	if rc.Timeout != 0 || rc.Entrypoint.Interactive {
+		t.Errorf("gateway must be non-interactive with no timeout, got timeout=%d interactive=%v", rc.Timeout, rc.Entrypoint.Interactive)
 	}
 }

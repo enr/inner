@@ -99,12 +99,16 @@ Additional profiles are available in the [`contrib/profiles/`](https://github.co
 | `gradle-java` | Interactive shell with Java + Gradle + Podman | `shell-containers` |
 | `java-21` | Interactive shell pinned to a specific JDK via `path_prepend` (no container runtime) | `shell` |
 | `opencode` | Interactive OpenCode agent, network enabled | OpenCode |
+| `openclaw` | OpenClaw gateway: dedicated state dir, allowlist network, Control UI published on `127.0.0.1:18789` | OpenClaw (Node 22+) |
 
 Contrib profiles that `extends` an agent profile (`claude-containers`,
 `rust-claude`, `shell-with-claude`) inherit its
 [`home = "isolated"`](#home-filesystem-model) and its allowlist, and add the
 mounts their own toolchain needs (`~/.cargo`, `~/.local/share/containers`, …).
-The `opencode` contrib profile declares the same model directly. The shell and
+The `opencode` and `openclaw` contrib profiles declare the same model directly.
+`openclaw` keeps the gateway's state in `~/.local/share/inner/openclaw`
+(create it first), never in the host's own `~/.openclaw`; the comments at the
+top of the file cover onboarding and what the sandbox does not protect. The shell and
 toolchain profiles (`shell-containers`, `java-*`, `rust`) stay on `host-ro`, like
 the built-in `shell` they extend.
 
@@ -125,6 +129,10 @@ inner profile install $BASE/gradle-java.toml
 
 # java-21 extends the built-in "shell" profile — no other dependency
 inner profile install $BASE/java-21.toml
+
+# OpenClaw gateway — needs its state directory first
+mkdir -p ~/.local/share/inner/openclaw
+inner profile install $BASE/openclaw.toml
 ```
 
 Or use a profile directly without installing it:
