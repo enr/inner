@@ -1344,6 +1344,10 @@ checks = [
 | `cmd` | string | Shell command run inside the sandbox; exit 0 = pass |
 | `severity` | `critical` \| `high` \| `medium` \| `info` | How failures are reported |
 
+Custom checks run one after the other, in the order listed, concurrently with
+the built-in checks. The report order is fixed: built-in checks first, custom
+checks last.
+
 ---
 
 ## Capabilities {#capabilities}

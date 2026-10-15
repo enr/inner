@@ -670,3 +670,58 @@ func TestCheck_abstractSockets_passInPrivateNetns(t *testing.T) {
 		t.Errorf("expected pass, got %q", r.Detail)
 	}
 }
+
+// ── Concurrency ───────────────────────────────────────────────────────────────
+
+// The checks run concurrently, but the report order must not depend on which
+// one finishes first: built-ins in their fixed order, then the sensitive
+// resources, then custom checks in profile order.
+func TestRun_orderIsStable(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.Custom = []config.CustomCheck{
+		{Name: "slow", Cmd: "sleep 0.2"},
+		{Name: "fast", Cmd: "true"},
+	}
+	// The network probe is the slowest built-in: it must still keep its slot.
+	ch.dialFn = func(string, string, time.Duration) (net.Conn, error) {
+		time.Sleep(100 * time.Millisecond)
+		return blockedDialFn("", "", 0)
+	}
+	wantPrefix := []string{
+		"no-root", "usr-readonly", "git-credentials", "ssh-keys", "gpg-keys",
+		"env-secrets", "docker-socket", "netrc", "home-isolated", "shims-active",
+		"network-policy", "abstract-sockets",
+	}
+	for range 5 {
+		results := ch.Run().Results
+		for i, id := range wantPrefix {
+			if results[i].ID != id {
+				t.Fatalf("results[%d].ID = %q, want %q", i, results[i].ID, id)
+			}
+		}
+		n := len(results)
+		if results[n-2].ID != "custom:slow" || results[n-1].ID != "custom:fast" {
+			t.Fatalf("custom checks out of order: %q, %q", results[n-2].ID, results[n-1].ID)
+		}
+		for _, r := range results[len(wantPrefix) : n-2] {
+			if strings.HasPrefix(r.ID, "custom:") {
+				t.Fatalf("custom check %q among the sensitive-resource results", r.ID)
+			}
+		}
+	}
+}
+
+// A slow network probe and a slow custom check overlap instead of adding up.
+func TestRun_checksOverlap(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.Custom = []config.CustomCheck{{Name: "slow", Cmd: "sleep 0.5"}}
+	ch.dialFn = func(string, string, time.Duration) (net.Conn, error) {
+		time.Sleep(500 * time.Millisecond)
+		return blockedDialFn("", "", 0)
+	}
+	start := time.Now()
+	ch.Run()
+	if elapsed := time.Since(start); elapsed >= 900*time.Millisecond {
+		t.Errorf("Run took %v: the network probe and the custom check ran in sequence", elapsed)
+	}
+}

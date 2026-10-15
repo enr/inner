@@ -102,10 +102,6 @@ invalidata per mtime.
 **ISS-27 · Cache HTTP (ETag) per i profili remoti** · `performance` · S
 `If-None-Match` invece del download a ogni run.
 
-**ISS-28 · `inner verify` in parallelo** · `performance` · S
-Check in parallelo mantenendo l'ordine dell'output (il dial timeout da solo
-costa fino a 2 s).
-
 **ISS-29 · Packaging + `inner init` interattivo** · `ux` · M
 AUR, deb/rpm dalla pipeline di release; `init` guidato: agente → profilo →
 `doctor`.

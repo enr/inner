@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/enr/inner/internal/config"
@@ -243,25 +244,48 @@ func (c *Checker) isAllowed(checkID string) bool {
 }
 
 // Run executes all built-in and custom checks and returns a Report.
+//
+// The checks run concurrently — the network probe alone can spend its whole
+// dial timeout — but every result lands in a fixed slot, so the report order
+// does not depend on which check finishes first. Built-in checks only read.
+// Custom checks are arbitrary commands from the profile, which may share
+// files or expect an order, so they run one after the other in a single
+// goroutine, alongside the built-ins.
 func (c *Checker) Run() Report {
-	results := []CheckResult{
-		c.checkNoRoot(),
-		c.checkUsrReadonly(),
-		c.checkGitCredentials(),
-		c.checkSSHKeys(),
-		c.checkGPGKeys(),
-		c.checkEnvSecrets(),
-		c.checkDockerSocket(),
-		c.checkNetrc(),
-		c.checkHomeIsolated(),
-		c.checkShimsActive(),
-		c.checkNetworkPolicy(),
-		c.checkAbstractSockets(),
+	builtins := []func() CheckResult{
+		c.checkNoRoot,
+		c.checkUsrReadonly,
+		c.checkGitCredentials,
+		c.checkSSHKeys,
+		c.checkGPGKeys,
+		c.checkEnvSecrets,
+		c.checkDockerSocket,
+		c.checkNetrc,
+		c.checkHomeIsolated,
+		c.checkShimsActive,
+		c.checkNetworkPolicy,
+		c.checkAbstractSockets,
 	}
-	results = append(results, c.checkSensitiveResources()...)
-	for _, cc := range c.Custom {
-		results = append(results, c.runCustomCheck(cc))
+	builtinResults := make([]CheckResult, len(builtins))
+	var sensitive []CheckResult
+	custom := make([]CheckResult, len(c.Custom))
+
+	var wg sync.WaitGroup
+	for i, check := range builtins {
+		wg.Go(func() { builtinResults[i] = check() })
 	}
+	wg.Go(func() { sensitive = c.checkSensitiveResources() })
+	wg.Go(func() {
+		for i, cc := range c.Custom {
+			custom[i] = c.runCustomCheck(cc)
+		}
+	})
+	wg.Wait()
+
+	results := make([]CheckResult, 0, len(builtinResults)+len(sensitive)+len(custom))
+	results = append(results, builtinResults...)
+	results = append(results, sensitive...)
+	results = append(results, custom...)
 
 	// Declassify results for explicitly allowed keys.
 	for i := range results {
