@@ -803,11 +803,23 @@ func (l *Loader) loadProfilePath(absPath string, visited map[string]bool) (*Prof
 	if err != nil {
 		return nil, err
 	}
+	return mergeChain(chain), nil
+}
+
+// mergeChain folds an extends chain (base first) into one profile. The result
+// is named after the last layer: its name may have been back-filled from the
+// file name, which TOML metadata does not report as defined, so mergeProfiles
+// alone would keep the base's name and a run of the child would be reported
+// under the base.
+func mergeChain(chain []profileLayer) *Profile {
 	merged := chain[0].profile
 	for _, layer := range chain[1:] {
 		merged = mergeProfiles(merged, layer.profile, layer.meta)
 	}
-	return merged, nil
+	if len(chain) > 1 {
+		merged.Name = chain[len(chain)-1].profile.Name
+	}
+	return merged
 }
 
 // loadProfileChain decodes the profile at absPath and every profile it extends,

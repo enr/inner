@@ -38,9 +38,8 @@ type ExplainedValue struct {
 // of its extends chain, with every value attributed to the layer that
 // contributed it.
 type ProfileExplanation struct {
-	// Name is the name of the requested profile (the last layer). The merged
-	// Profile.Name can differ: a name back-filled from the file name is not
-	// "defined" in the file, so mergeProfiles keeps the base's.
+	// Name is the name of the requested profile (the last layer), the same as
+	// Profile.Name.
 	Name    string
 	Profile *Profile       // the merged profile, exactly what LoadProfileAuto returns
 	Layers  []ProfileLayer // base first, the requested profile last
@@ -72,10 +71,7 @@ func (l *Loader) ExplainProfile(nameOrPath string) (*ProfileExplanation, error) 
 	if err != nil {
 		return nil, fmt.Errorf("reading profile %q: %w", nameOrPath, err)
 	}
-	merged := chain[0].profile
-	for _, layer := range chain[1:] {
-		merged = mergeProfiles(merged, layer.profile, layer.meta)
-	}
+	merged := mergeChain(chain)
 
 	layers := layerLabels(chain)
 	o := newOrigins()

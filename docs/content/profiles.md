@@ -190,6 +190,7 @@ extends = "~/my-base.toml"  # explicit file path (~ and absolute paths supported
 | Slice (`env.path_prepend`) | Union, but in **reverse** order from the other slices: child items first, then any new items from the base. This makes the child (the more specific profile) win PATH resolution. Duplicates are removed. |
 | Map (`mounts`, `env.set`, `noop.rewrite`, `git.overrides`) | Merge: all base entries kept; child entries added or override matching keys. |
 | `verify.custom.checks` | Append: base checks first, child checks after. |
+| `name` | Never inherited: the merged profile takes the child's `name`, or the child's file name when it declares none. |
 
 ### Example
 

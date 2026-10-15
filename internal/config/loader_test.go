@@ -941,6 +941,51 @@ description = "child"
 	}
 }
 
+func TestLoadProfile_extends_childNameFromFile(t *testing.T) {
+	// A child without a name field is named after its file, not after the base
+	// (whose name the merge would otherwise keep, since a back-filled name is
+	// not "defined" in the TOML).
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "base.toml"), `
+name = "base-declared"
+[entrypoint]
+cmd = "bash"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "middle.toml"), `
+extends = "base"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "child.toml"), `
+extends = "middle"
+`)
+	writeFile(t, filepath.Join(dir, "profiles", "named.toml"), `
+extends = "base"
+name    = "explicit"
+`)
+	l := NewLoader(dir)
+	for profile, want := range map[string]string{
+		"base":   "base-declared",
+		"middle": "middle",
+		"child":  "child",
+		"named":  "explicit",
+	} {
+		p, err := l.LoadProfile(profile)
+		if err != nil {
+			t.Fatalf("LoadProfile(%s): %v", profile, err)
+		}
+		if p.Name != want {
+			t.Errorf("LoadProfile(%s).Name = %q, want %q", profile, p.Name, want)
+		}
+	}
+
+	rc, err := l.Build("child")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if rc.Name != "child" {
+		t.Errorf("RunConfig.Name = %q, want child", rc.Name)
+	}
+}
+
 func TestBuild_extends_runConfig(t *testing.T) {
 	// End-to-end: Build() on an extending profile should produce the correct RunConfig.
 	dir := t.TempDir()

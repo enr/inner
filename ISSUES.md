@@ -83,12 +83,6 @@ env "segreti" restano una denylist euristica. Il D-Bus astratto con
 `network = full` è chiuso da Landlock su Linux 6.12+, aperto su kernel più
 vecchi o con `allow = ["abstract-sockets"]`.
 
-**ISS-38 · Il profilo fuso eredita il `name` della base** · `bug` · S
-Se il figlio non dichiara `name`, quello ricavato dal file non conta come
-"definito" e `mergeProfiles` tiene il nome della base: un run del figlio è
-riportato con il nome della base (`RunConfig.Name`). `profile explain` lo
-aggira già.
-
 **ISS-23 · `inner profile search/add` su indice firmato** · `feature` · M
 Indice firmato (cosign/minisign) di `contrib/profiles`; `add` verifica la firma
 e copia in `~/.config/inner/profiles/`.
