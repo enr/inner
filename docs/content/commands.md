@@ -33,6 +33,7 @@ inner run [flags] [-- extra-args]
 | `--interactive` | `-i` | bool | profile default | Force interactive mode (connect stdin/stdout directly to the sandbox) |
 | `--no-interactive` | | bool | — | Force non-interactive mode |
 | `--mount` | `-m` | string | — | Additional mount in `SRC:DEST[:MODE]` format (mode: `ro`\|`rw`\|`safe-rw`, default `ro`). `tmpfs` has no host source and cannot be expressed this way — declare it in the profile's `[mounts]` table instead. Repeatable. |
+| `--publish` | | string | — | Forward a host port into the sandbox: `[HOST_IP:]PORT[:SANDBOX_PORT]`, host side `127.0.0.1` by default. Added to the profile's `[sandbox] publish`; ignored under `network_mode = "full"`. Repeatable. |
 | `--env` | `-e` | string | — | Set an environment variable as `KEY=VAL`. `~`, `$VAR` and `${VAR}` in VAL are expanded against the host environment (same rules as profile `[env] set` values). Repeatable. |
 | `--entrypoint` | | string | — | Override the entrypoint command (resets profile args, like `docker --entrypoint`). |
 | `--arg` | `-a` | string | — | Append an argument to the entrypoint command. Repeatable. |
@@ -42,6 +43,7 @@ inner run [flags] [-- extra-args]
 | `--limit-cpu` | | string | resolved (see profiles) | Override the CPU cap (`"200%"` or `"2.0"` cores). |
 | `--limit-pids` | | int | resolved (see profiles) | Override the max process count (`0` = no override, keep the resolved value). |
 | `--dry-run` | | bool | false | Print the resolved config and `bwrap` command without executing |
+| `--json` | | bool | false | With `--dry-run`, print the resolved sandbox as JSON (see [JSON output](#json-output)); refused without `--dry-run` |
 | `--yes` | `-y` | bool | false | Skip the routine confirmation prompts (keyring unlock, implicit workdir). Deliberately does **not** consent to a profile downloaded from a URL |
 | `--allow-remote` | | bool | false | Consent to running a profile downloaded from a URL, without the interactive prompt. Required when there is no terminal on stdin |
 | `--trust-remote` | | bool | false | Run a downloaded profile **unhardened** (implies `--allow-remote`) |
@@ -89,7 +91,10 @@ inner run -m ~/shared/libs:/libs:ro
 inner run -e DEBUG=true -e LOG_LEVEL=info
 
 # Add extra arguments to the entrypoint via --
-inner run -p default -- ls -la /workspace
+inner run -p shell-oneshot -- "ls -la ~/projects"
+
+# Reach a dev server running in the sandbox from the host browser
+inner run -p shell -w ~/projects/myapp --publish 5173
 
 # Send a prompt to an agent profile
 inner run -p claude-one-shot -w ~/myproject --arg "write unit tests for all public functions"
@@ -123,7 +128,7 @@ A profile fetched over HTTPS configures the whole sandbox, so it is treated as u
 input: `inner` strips the settings that would hand it host privileges (`inherit_all`,
 secret-looking `[env] inherit` names, credential and socket `allow` keys,
 `pid_namespace = false`, `git_dir = "rw"`, mounts that move a hidden path elsewhere,
-`clipboard`), ignores the host-side paths it could choose (`[output] log`,
+`clipboard`, a published port on a non-loopback address), ignores the host-side paths it could choose (`[output] log`,
 `workspaces_path`, `[entrypoint] workdir` — pass `-w`), resolves `$VAR` in its values
 without your environment (only `$HOME`, `$USER`, `$UID`), prints what it still asks
 for, and requires an explicit yes. See
@@ -168,18 +173,20 @@ what the run can actually reach and why:
 network:     allowlist
   allow: api.anthropic.com [capability:claude]
   allow: claude.ai [capability:claude]
-  allow: platform.claude.com [capability:claude]
-  allow: downloads.claude.ai [capability:claude]
-  allow: http-intake.logs.us5.datadoghq.com [capability:claude]
+  …                                   (the rest of the claude capability's list)
   allow: github.com [group:github]
   allow: api.github.com [group:github]
+  …
   allow: internal.example.com [profile]
   deny:  http-intake.logs.us5.datadoghq.com
+  publish: 127.0.0.1:5173 -> sandbox 127.0.0.1:5173
 ```
 
 A `"@group"` entry in `network_allow` is shown expanded, one line per
 destination, with the group named as its origin — the dry-run answers "what can
-this run reach", so a name standing in for four hosts would defeat it.
+this run reach", so a name standing in for four hosts would defeat it. Published
+ports ([`publish`](profiles.md#publish-host-ports)) follow the network lines,
+in every mode.
 
 See [network — allowlist mode](profiles.md#network-allowlist-mode).
 
@@ -230,12 +237,15 @@ inner profile list
 Output:
 
 ```
-  NAME                DESCRIPTION
-* shell               Bash shell, no network
-  claude-interactive  Claude Code interactive, network enabled
-  claude-one-shot     Claude Code non-interactive, dangerously-skip-permissions
-  claude-containers   Claude Code with Podman rootless containers
-  my-project          Project-specific profile  [local]
+   NAME                DESCRIPTION
+   claude-interactive  Interactive Claude Code agent (network enabled)
+   claude-one-shot     Non-interactive Claude Code agent (dangerously-skip-permissions)
+   cursor-interactive  Interactive Cursor Agent (network enabled)
+   gemini-interactive  Interactive Gemini CLI agent (network enabled)
+   gemini-one-shot     Non-interactive Gemini CLI agent (--yolo)
+   shell-oneshot       Run a single shell command in sandbox (no network)
+*  shell               Interactive bash shell in sandbox (no network)
+   my-project          Project-specific profile  [local]
 ```
 
 - `*` marks the profile that will be used when `-p` is not specified (the effective default, accounting for any local `default_profile` override).
@@ -245,14 +255,15 @@ Output:
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--wide` | `-w` | Show SCOPE and PATH columns; also display shadowed global profiles (marked `[shadowed]`) |
+| `--json` | | Print the profiles as a JSON array, shadowed ones included |
 
 Wide output example (when a local `shell` profile shadows the global one):
 
 ```
-  NAME   SCOPE   DESCRIPTION                   PATH
-  shell  global  Bash shell, no network  [shadowed]  ~/.config/inner/profiles/shell.toml
-* shell  local   Project shell variant  [local]      ~/projects/myapp/.config/inner/profiles/shell.toml
-  claude-interactive  global  Claude Code interactive    ~/.config/inner/profiles/claude-interactive.toml
+   NAME                SCOPE   DESCRIPTION                                                   PATH
+   claude-interactive  global  Interactive Claude Code agent (network enabled)               ~/.config/inner/profiles/claude-interactive.toml
+   shell               global  Interactive bash shell in sandbox (no network)  [shadowed]    ~/.config/inner/profiles/shell.toml
+*  shell               local   Project shell variant  [local]                                ~/projects/myapp/.config/inner/profiles/shell.toml
 ```
 
 ### `inner profile show`
@@ -421,7 +432,7 @@ inner profile install https://example.com/my-profile.toml --force
 
 The TOML is validated before being written to disk; the sha256 of the download and every
 validation warning are printed. An installed profile is a local profile: `inner run -p
-<name>` skips the consent gate and the hardening applied to `inner run <url>`, so review
+<name>` skips the consent gate and the hardening applied to `inner run -p <url>`, so review
 what the install reported before running it. Use `inner run -p URL` to try a remote
 profile without installing it first.
 
@@ -457,8 +468,9 @@ was actually built rather than what the file says.
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--profile` | `-p` | string | `default` | Profile to verify |
+| `--profile` | `-p` | string | configured default (as for `inner run`) | Profile to verify |
 | `--suggest` | | bool | false | Print TOML snippets for failed checks |
+| `--json` | | bool | false | Print the report as JSON (see [JSON output](#json-output)) |
 
 ### What it checks
 
@@ -472,8 +484,10 @@ was actually built rather than what the file says.
 | no obviously-named secrets in env vars | MEDIUM | Heuristic, not a guarantee: flags env var names containing `PASSWORD`, `PASSWD`, `SECRET`, `TOKEN`, `CREDENTIAL`, `PRIVATE_KEY`, `API_KEY`, `ACCESS_KEY`, `_KEY` or `AUTH`. A name match doesn't prove a secret is present, and a differently-named variable can still hold one |
 | docker socket not accessible | MEDIUM | no Docker socket (system, rootless, Docker Desktop) may accept connections |
 | `~/.netrc` not accessible | MEDIUM | `~/.netrc` must be absent or empty |
-| shims active in PATH | MEDIUM | Shim directory must be first in `PATH` |
-| network restricted | MEDIUM | TCP connection to 8.8.8.8:53 must fail |
+| home directory isolated (tmpfs) | HIGH | With `home = "isolated"`, `$HOME` must be the empty tmpfs the profile asked for; passes under `host-ro` |
+| shims active in PATH | MEDIUM | Shim directory must be first in `PATH` (only when the profile declares `[noop]` entries) |
+| network restricted | MEDIUM | TCP connection to 8.8.8.8:53 must fail; skipped under `network_mode = "full"`, where an open network is the declared intent |
+| `<key>` not accessible | HIGH or MEDIUM | One check per other key of the [hidden resource list](profiles.md#allow--sensitive-resource-opt-in) (`aws-credentials`, `session-bus`, …): HIGH for credentials and host-privilege keys, MEDIUM otherwise |
 | host abstract unix sockets not reachable | HIGH | Under `network_mode = "full"`, no abstract socket listed in `/proc/net/unix` may accept a connection (needs Linux 6.12+, see `inner doctor`); passes in the other modes, which have a private network namespace |
 
 Custom checks can be added to a profile under `[verify.custom]` — see [Profiles](/inner/profiles/).
@@ -501,6 +515,10 @@ inner verify -p claude-interactive --suggest
 
 Exit code is `1` if any check fails and is not overridden by `[sandbox].allow`.
 
+`inner verify` builds the same sandbox as `inner run` with two exceptions: the
+capability handlers do not run (they can prompt for a keyring unlock), and the
+host ports of [`publish`](profiles.md#publish-host-ports) are not opened.
+
 ---
 
 ## `inner log`
@@ -518,8 +536,9 @@ For every run, interactive ones included, inner writes a record
 (`<run-id>.json`: profile, command, workdir, home and network mode, start, end,
 exit code, path of the output log) to the logs directory: `log_dir` from the
 config, or `~/.config/inner/logs/`. The output itself is logged only for
-non-interactive runs with `[output] log` set. Records are `0600` and store the
-entrypoint arguments as given, prompts included.
+non-interactive runs, and only when a log directory is set explicitly —
+`[output] log` in the profile, or `log_dir` in the config. Records are `0600`
+and store the entrypoint arguments as given, prompts included.
 
 ```bash
 inner log <run-id>              # same as: inner log show <run-id>
@@ -574,7 +593,7 @@ stdout only (warnings go to stderr):
 
 | Command | Output |
 |---|---|
-| `inner run --dry-run --json` | the resolved sandbox: profile, entrypoint (as requested, before inner's own wrappers), home, network with the origin of each allow entry, mounts, env, noop, allow, capabilities, limits, full command line |
+| `inner run --dry-run --json` | the resolved sandbox: profile, entrypoint (as requested, before inner's own wrappers), home, network with the origin of each allow entry, published ports, mounts, env, noop, allow, capabilities, limits, full command line |
 | `inner verify --json` | `{profile, conformant, checks: [{id, name, passed, severity, detail, suggest, allow_override}]}`; exit code as without `--json` |
 | `inner doctor --json` | `{checks: [{status, check, message}], errors, warnings}` |
 | `inner profile list --json` | `[{name, description, path, scope, default, shadowed, experimental}]`, shadowed profiles included |
@@ -606,15 +625,13 @@ Example output on a fresh install:
 dir: /home/alice/.config/inner
 created dirs: /home/alice/.config/inner/profiles, /home/alice/.config/inner/logs, /home/alice/.config/inner/directives
 config: created
-profile claude-containers: installed
 profile claude-interactive: installed
 profile claude-one-shot: installed
+profile cursor-interactive: installed
 profile gemini-interactive: installed
 profile gemini-one-shot: installed
-profile shell: installed
-profile shell-containers: installed
 profile shell-oneshot: installed
-profile shell-with-claude: installed
+profile shell: installed
 ```
 
 Example output when everything already exists:
@@ -622,15 +639,13 @@ Example output when everything already exists:
 ```
 dir: /home/alice/.config/inner
 config: already exists (skipped)
-profile claude-containers: already exists (skipped)
 profile claude-interactive: already exists (skipped)
 profile claude-one-shot: already exists (skipped)
+profile cursor-interactive: already exists (skipped)
 profile gemini-interactive: already exists (skipped)
 profile gemini-one-shot: already exists (skipped)
-profile shell: already exists (skipped)
-profile shell-containers: already exists (skipped)
 profile shell-oneshot: already exists (skipped)
-profile shell-with-claude: already exists (skipped)
+profile shell: already exists (skipped)
 ```
 
 To reset to defaults (for example, to pick up updated built-in profiles after an upgrade)
@@ -681,8 +696,8 @@ customize, see [`inner config edit --local`](#inner-config) and the [profiles gu
 Restore all built-in profiles to the versions embedded in the binary:
 
 ```bash
-inner reset          # asks for confirmation
-inner reset --force  # skips confirmation (useful in scripts)
+inner reset             # asks for confirmation
+inner reset --force     # skips confirmation (useful in scripts); short form -f
 ```
 
 The command overwrites every file in `~/.config/inner/profiles/` whose name matches a
@@ -695,15 +710,13 @@ without losing your own customizations.
 Example output:
 
 ```
-profile claude-containers: reset
 profile claude-interactive: reset
 profile claude-one-shot: reset
+profile cursor-interactive: reset
 profile gemini-interactive: reset
 profile gemini-one-shot: reset
-profile shell: reset
-profile shell-containers: reset
 profile shell-oneshot: reset
-profile shell-with-claude: reset
+profile shell: reset
 
 reset complete.
 ```
@@ -807,8 +820,8 @@ inner config edit --local   # opens .config/inner.toml in the current directory
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `default_profile` | `"default"` | Profile used when `-p` is not specified |
-| `log_dir` | `~/.config/inner/logs/` | Directory where run logs are written |
+| `default_profile` | `"default"` (the starter `config.toml` sets `"shell"`) | Profile used when `-p` is not specified |
+| `log_dir` | `~/.config/inner/logs/` | Directory for run records. When set explicitly it is also where the output of non-interactive runs is logged, unless the profile sets `[output] log` |
 | `workspaces_path` | — | Host directory where workspace mount-point directories are pre-created. Required when a profile mount uses `${workspaces_path}` in its `dest` field. Local config overrides global. |
 | `[default_limits]` | auto-detected | Fallback resource limits (`memory`, `cpu`, `pids`) applied to every run unless a profile or `--limit-*` flag overrides them. Project config overrides user config, field by field. See [`[sandbox.limits]`](profiles.md#sandbox-limits-resource-limits). |
 
@@ -841,7 +854,9 @@ Check that the host environment satisfies all requirements:
 inner doctor
 ```
 
-Checks performed:
+Each line starts with `[ok]`, `[??]` (warning) or `[!!]` (error), and a summary
+line counts errors and warnings. The exit code is `0` either way: in a script,
+read `errors` from `inner doctor --json`. Checks performed:
 
 - `bwrap` binary found and version reported
 - Unprivileged user namespaces supported, naming the setting that blocks them: `kernel.unprivileged_userns_clone = 0` (Debian) or `user.max_user_namespaces = 0` are errors; `kernel.apparmor_restrict_unprivileged_userns = 1` (Ubuntu 23.10+) is a warning, since it only blocks a bwrap without an AppArmor profile that allows user namespaces
@@ -854,7 +869,7 @@ Checks performed:
 - Host abstract unix sockets blocked. A `network_mode = "full"` sandbox shares the host network namespace, where the X server listens on an abstract socket (`@/tmp/.X11-unix/X0`) that no mount can hide: through it a sandboxed process can type into any window of your session. On Linux 6.12+ (Landlock ABI 6) `inner` blocks the host's abstract sockets; on older kernels this line is a warning, and `network_mode = "allowlist"` or `"off"` is the way to keep an untrusted agent away from them.
 - `~/.config/inner/profiles/` directory exists and each profile is validated (unknown `allow` keys, missing mounts, etc.)
 - `~/.config/inner/logs/` directory exists
-- `ANTHROPIC_API_KEY` environment variable set
+- Claude Code credentials: OAuth credentials in `~/.claude/.credentials.json`, or else `ANTHROPIC_API_KEY` set
 - `claude` binary found on `$PATH`
 - `GEMINI_API_KEY` environment variable set
 - `gemini` binary found on `$PATH`
@@ -914,7 +929,7 @@ inner completion powershell | Out-String | Invoke-Expression
 
 ## `inner version`
 
-Print version, build time, and git commit:
+Print version, git commit and build time (`inner --version` prints the same line):
 
 ```bash
 inner version
@@ -923,5 +938,5 @@ inner version
 Example output:
 
 ```
-inner v0.1.3 (built 2025-11-01T12:00:00Z, commit abc1234)
+inner 0.13.0 (git: a5d820c1f0…, built: 2026-10-10T12:00:00Z)
 ```

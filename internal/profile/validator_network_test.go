@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/enr/inner/internal/config"
@@ -224,5 +225,32 @@ func TestValidate_network_aGroupIsNotAnEmptyList(t *testing.T) {
 	}
 	if issuesContain(r, LevelWarning, "can reach nothing") {
 		t.Errorf("a profile allowing @github was told its list is empty: %v", r.Issues)
+	}
+}
+
+func TestValidate_publish(t *testing.T) {
+	cases := []struct {
+		name    string
+		sandbox config.SandboxConfig
+		level   Level
+		want    string
+	}{
+		{"malformed", config.SandboxConfig{Publish: []string{"localhost:80"}}, LevelError, "publish"},
+		{"ignored under full", config.SandboxConfig{NetworkMode: config.NetworkFull, Publish: []string{"8080"}}, LevelWarning, "ignored"},
+		{"non-loopback", config.SandboxConfig{Publish: []string{"0.0.0.0:8080"}}, LevelWarning, "other machines"},
+	}
+	for _, c := range cases {
+		p := &config.Profile{Sandbox: c.sandbox, Entrypoint: config.EntrypointConfig{Interactive: true}}
+		if r := Validate(p, ""); !issuesContain(r, c.level, c.want) {
+			t.Errorf("%s: want a %s containing %q, got %v", c.name, c.level, c.want, r.Issues)
+		}
+	}
+
+	p := &config.Profile{Sandbox: config.SandboxConfig{Publish: []string{"8080"}}, Entrypoint: config.EntrypointConfig{Interactive: true}}
+	r := Validate(p, "")
+	for _, issue := range r.Issues {
+		if strings.Contains(issue.Message, "publish") {
+			t.Errorf("a loopback publish under network off is fine, got %v", issue)
+		}
 	}
 }

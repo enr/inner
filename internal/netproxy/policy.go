@@ -370,7 +370,20 @@ const (
 	// directory can be created without touching the read-only root, and the
 	// host's temp-directory layout is not leaked into the sandbox.
 	SandboxSocketPath = "/tmp/inner/net-proxy.sock"
+
+	// SandboxPublishDir is where the host directory holding the [sandbox]
+	// publish sockets is bind-mounted inside the sandbox. The relay listens on
+	// one socket per entry in there; the host side connects to the same files
+	// through the host path. Read-write, unlike the proxy socket: the sockets
+	// are created from inside.
+	SandboxPublishDir = "/tmp/inner/publish"
 )
+
+// PublishSocketName is the file name of the socket for the i-th publish entry,
+// the same on both sides of the bind mount.
+func PublishSocketName(i int) string {
+	return fmt.Sprintf("p%d.sock", i)
+}
 
 // ProxyURL is the value for HTTP_PROXY/HTTPS_PROXY inside the sandbox.
 func ProxyURL() string {

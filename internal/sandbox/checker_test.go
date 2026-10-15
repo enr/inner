@@ -670,3 +670,71 @@ func TestCheck_abstractSockets_passInPrivateNetns(t *testing.T) {
 		t.Errorf("expected pass, got %q", r.Detail)
 	}
 }
+
+// ── Concurrency ───────────────────────────────────────────────────────────────
+
+// The checks run concurrently, but the report order must not depend on which
+// one finishes first: built-ins in their fixed order, then the sensitive
+// resources, then custom checks in profile order.
+func TestRun_orderIsStable(t *testing.T) {
+	ch, _ := newChecker(t)
+	ch.Custom = []config.CustomCheck{
+		{Name: "slow", Cmd: "sleep 0.2"},
+		{Name: "fast", Cmd: "true"},
+	}
+	// The network probe is the slowest built-in: it must still keep its slot.
+	ch.dialFn = func(string, string, time.Duration) (net.Conn, error) {
+		time.Sleep(100 * time.Millisecond)
+		return blockedDialFn("", "", 0)
+	}
+	wantPrefix := []string{
+		"no-root", "usr-readonly", "git-credentials", "ssh-keys", "gpg-keys",
+		"env-secrets", "docker-socket", "netrc", "home-isolated", "shims-active",
+		"network-policy", "abstract-sockets",
+	}
+	for range 5 {
+		results := ch.Run().Results
+		for i, id := range wantPrefix {
+			if results[i].ID != id {
+				t.Fatalf("results[%d].ID = %q, want %q", i, results[i].ID, id)
+			}
+		}
+		n := len(results)
+		if results[n-2].ID != "custom:slow" || results[n-1].ID != "custom:fast" {
+			t.Fatalf("custom checks out of order: %q, %q", results[n-2].ID, results[n-1].ID)
+		}
+		for _, r := range results[len(wantPrefix) : n-2] {
+			if strings.HasPrefix(r.ID, "custom:") {
+				t.Fatalf("custom check %q among the sensitive-resource results", r.ID)
+			}
+		}
+	}
+}
+
+// The network probe and the custom checks run at the same time. Proved by
+// order of events rather than by wall-clock time, which depends on how slow
+// the other built-in checks are on the machine running the test: the probe
+// waits for a file that only the custom check creates. Run sequentially, the
+// probe (a built-in) would finish before any custom check started and never
+// see the file.
+func TestRun_checksOverlap(t *testing.T) {
+	ch, _ := newChecker(t)
+	marker := filepath.Join(t.TempDir(), "custom-started")
+	ch.Custom = []config.CustomCheck{{Name: "marker", Cmd: "touch " + marker}}
+	var overlapped bool
+	ch.dialFn = func(string, string, time.Duration) (net.Conn, error) {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				overlapped = true
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return blockedDialFn("", "", 0)
+	}
+	ch.Run()
+	if !overlapped {
+		t.Error("the custom check did not start while the network probe was running: the checks ran in sequence")
+	}
+}

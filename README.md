@@ -1,6 +1,6 @@
 # inner
 
-`inner` is a Linux CLI tool that runs agentic tools — Claude Code, Aider, interactive shells — in isolated, reproducible sandbox environments backed by [bubblewrap (bwrap)](https://github.com/containers/bubblewrap).
+`inner` is a Linux CLI tool that runs agentic tools — Claude Code, Gemini CLI, Cursor Agent, OpenCode, interactive shells — in isolated, reproducible sandbox environments backed by [bubblewrap (bwrap)](https://github.com/containers/bubblewrap).
 
 ## Why inner?
 
@@ -10,6 +10,7 @@ Agentic tools have broad filesystem access and execute arbitrary commands. `inne
 - **Filesystem separation** — the sandbox sees only what you explicitly mount
 - **Repository protection** — `.git/config`, hooks and the other files that make git run programs on the host are read-only inside the sandbox, while commits still work
 - **Environment sanitization** — environment is cleared by default; git credentials are stripped when `[git]` is configured in the profile
+- **Network control** — no network, full network, or an allowlist of destinations enforced by a host-side proxy; ports can be published to the host without opening the sandbox's network
 - **Security verification** — detect if sensitive host resources leak into the sandbox
 - **Reproducibility** — configuration-driven profiles define exactly what each run can access
 
@@ -18,7 +19,7 @@ Agentic tools have broad filesystem access and execute arbitrary commands. `inne
 - Linux (kernel namespaces required)
 - `bwrap` (bubblewrap) installed
 - Unprivileged user namespaces enabled (`/proc/sys/kernel/unprivileged_userns_clone` = 1)
-- Go 1.24+ (to build from source)
+- Go 1.26+ (to build from source)
 
 ## Installation
 

@@ -5,7 +5,7 @@ description: Isolated sandbox environments to run agents and scripts
 
 
 
-`inner` is a Linux CLI tool that runs scripts and agentic tools — Claude Code, Gemini, interactive shells — in isolated, reproducible sandbox environments backed by [bubblewrap (bwrap)](https://github.com/containers/bubblewrap).
+`inner` is a Linux CLI tool that runs scripts and agentic tools — Claude Code, Gemini CLI, Cursor Agent, OpenCode, interactive shells — in isolated, reproducible sandbox environments backed by [bubblewrap (bwrap)](https://github.com/containers/bubblewrap).
 
 <div class="download-banner">
   <strong>Latest release:</strong>
@@ -19,7 +19,8 @@ Agentic tools have broad filesystem access and execute arbitrary commands. `inne
 - **Process isolation** via Linux kernel namespaces
 - **Filesystem separation** — the sandbox sees only what you explicitly mount
 - **Repository protection** — git hooks and `.git/config` stay read-only in the sandbox, so an agent cannot plant code your next `git` command runs; commits still work
-- **Environment sanitization** — sensitive variables and git credentials are stripped
+- **Environment sanitization** — the host environment is cleared by default, and git credential helpers are stripped from the injected gitconfig
+- **Network control** — no network, full network, or an allowlist of destinations enforced by a host-side proxy; ports can be published to the host without opening the sandbox's network
 - **Security verification** — detect if sensitive host resources leak into the sandbox
 - **Reproducibility** — configuration-driven profiles define exactly what each run can access
 
@@ -49,7 +50,7 @@ inner run -p claude-one-shot --arg "refactor the auth module"
 - Linux (kernel namespaces required)
 - `bwrap` (bubblewrap) installed
 - Unprivileged user namespaces enabled (`/proc/sys/kernel/unprivileged_userns_clone` = 1)
-- Go 1.24+ (to build from source)
+- Go 1.26+ (to build from source)
 
 ## License
 

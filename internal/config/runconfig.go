@@ -36,7 +36,15 @@ type RunConfig struct {
 	// Set by cmd/inner when NetworkMode is NetworkAllowlist; the isolator
 	// bind-mounts it into the sandbox. Empty means no proxy is running.
 	NetProxySocketPath string
-	Clipboard          bool
+	// Publish lists the host ports forwarded into the sandbox, parsed from
+	// [sandbox] publish and --publish. Ignored under NetworkFull.
+	Publish []PortPublish
+	// PublishSocketDir is the HOST directory holding the unix sockets the
+	// in-sandbox relay listens on, one per Publish entry. Set by cmd/inner when
+	// the ports are actually published; the isolator bind-mounts it at
+	// netproxy.SandboxPublishDir. Empty means nothing is published.
+	PublishSocketDir string
+	Clipboard        bool
 	// PidNamespace requests a private PID namespace for the sandbox
 	// (bwrap --unshare-pid). True by default; resolved by toRunConfig from
 	// SandboxConfig.PidNamespace (nil = unset = true).

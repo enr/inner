@@ -1,0 +1,100 @@
+schema_version = "1"
+name        = "openclaw"
+description = "OpenClaw gateway: dedicated state, allowlist network, Control UI published on 127.0.0.1:18789"
+
+# OpenClaw is a long-running gateway, not a one-shot agent: it keeps its state
+# (config, channel credentials, memory, skills, sessions) in ~/.openclaw and
+# serves a Control UI on port 18789. This profile gives it:
+#
+#   - a DEDICATED state directory, never the host's own ~/.openclaw — the agent
+#     can read and rewrite everything in it, tokens included;
+#   - an empty home (allowlist model): no ~/.ssh, cloud credentials, browser
+#     profiles or other agents' tokens;
+#   - egress limited to the destinations below, through the host proxy;
+#   - the gateway port published on host loopback only, so the Control UI opens
+#     from the host browser without giving the sandbox the host network.
+#
+# Before the first run:
+#
+#   mkdir -p ~/.local/share/inner/openclaw
+#   inner run -p openclaw --entrypoint openclaw -i -a onboard
+#
+# Onboard INSIDE the sandbox, so the API key and channel tokens are written to
+# the dedicated directory. Skip the daemon install step: the sandbox cannot
+# reach systemd --user (its runtime sockets are hidden), and it should not —
+# keep the gateway running with `inner run -p openclaw` (tmux, or a systemd user
+# unit that runs that command).
+#
+# What the sandbox does NOT protect: the tokens OpenClaw holds are readable by
+# it, and a prompt injection can send them to any allowed destination (a chat
+# API is a perfectly good exfiltration channel). Use dedicated, spend-capped
+# API keys and a dedicated bot/account, not your personal number.
+
+[sandbox]
+network_mode  = "allowlist"
+network_allow = [
+  "api.anthropic.com",         # model provider — swap for the one you use:
+  # "api.openai.com",
+  # "openrouter.ai",
+
+  # Channels: add only the ones you configure.
+  # "api.telegram.org",                      # Telegram
+  # "discord.com", "gateway.discord.gg",     # Discord
+  # "slack.com", "*.slack.com",              # Slack (Socket Mode uses wss-*.slack.com)
+  # "web.whatsapp.com", "*.whatsapp.net",    # WhatsApp
+  # "@npm",                                  # installing skills or updating from inside
+]
+
+# Control UI / WebChat on the host: http://127.0.0.1:18789
+publish = ["18789"]
+
+clipboard = false
+
+home       = "isolated"
+# Read-only toolchain paths: openclaw is installed with npm and needs Node 22+.
+# Missing entries are skipped.
+home_allow = [
+  "~/.npm-global",
+  "~/.nvm",
+  "~/.volta",
+  "~/.fnm",
+  "~/.bun",
+  "~/.local/bin",
+]
+
+[sandbox.limits]
+memory = "2G"
+cpu    = "100%"
+pids   = 512
+
+[mounts]
+# The gateway's whole state, persistent across runs. Must exist on the host.
+"~/.local/share/inner/openclaw" = { dest = "~/.openclaw", mode = "rw" }
+# Hide host runtime sockets (D-Bus, systemd, pipewire, …): Node would find and
+# connect to them, and the onboarding daemon step would reach systemd --user.
+"/run/user/$UID" = { dest = "/run/user/$UID", mode = "tmpfs" }
+
+[env]
+clearenv = true
+inherit  = ["HOME", "USER", "TERM", "LANG", "PATH"]
+
+[entrypoint]
+cmd         = "openclaw"
+args        = ["gateway", "--port", "18789"]
+interactive = false
+# A daemon has no business with the directory `inner run` was started from:
+# without this the caller's cwd would be mounted read-write. The state
+# directory is the gateway's only writable place anyway.
+workdir     = "~/.local/share/inner/openclaw"
+
+[output]
+summary         = false
+log             = "~/.config/inner/logs/"
+timeout_seconds = 0   # long-running gateway: no timeout
+
+[noop]
+block = ["apt-get", "apt", "yum", "dnf", "brew", "pacman", "yay", "sudo"]
+
+[git]
+strip_sections = ["credential", "core.hooksPath"]
+overrides      = { "push.default" = "nothing" }

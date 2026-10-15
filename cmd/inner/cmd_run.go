@@ -42,6 +42,7 @@ type runCLIFlags struct {
 	interactive   bool
 	noInteractive bool
 	mounts        []string // each: "src:dest[:mode]"
+	publish       []string // each: "[host_ip:]port[:sandbox_port]"
 	env           []string // each: "KEY=VAL"
 	entrypoint    string   // override entrypoint cmd (resets profile args)
 	args          []string // each appended to entrypoint args (--arg, repeatable)
@@ -204,6 +205,10 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		fmt.Fprintln(w, "aborted.")
 		return nil
 	}
+
+	// 5a-quater. Published ports added on the command line skip the profile
+	// validator too: say what it would have said.
+	guardPublish(w, rc, flags)
 
 	// 5b. For interactive sessions, print which profile is being used.
 	if rc.Entrypoint.Interactive {
@@ -566,6 +571,15 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 		rc.Workdir = expanded
 	}
 
+	// Published ports (--publish), added to the profile's.
+	if len(flags.publish) > 0 {
+		publish, err := config.AppendPublish(rc.Publish, flags.publish)
+		if err != nil {
+			return fmt.Errorf("--publish: %w", err)
+		}
+		rc.Publish = publish
+	}
+
 	// Additional mounts (-m SRC:DEST[:MODE]).
 	for _, m := range flags.mounts {
 		mount, err := parseMount(m)
@@ -754,6 +768,28 @@ func guardWorkdir(w io.Writer, rc *config.RunConfig, implicit, dryRun bool) (pro
 	return strings.ToLower(strings.TrimSpace(answer)) == "y", nil
 }
 
+// guardPublish warns about published ports whose effect differs from what the
+// command line suggests. The profile's own entries are reported by the
+// validator; this covers what only the flags can cause.
+func guardPublish(w io.Writer, rc *config.RunConfig, flags runCLIFlags) {
+	warn := func(msg string) {
+		fmt.Fprintf(w, "%s: %s\n", colorizeW(w, ansiBoldYellow, "warning"), msg)
+	}
+	if rc.EffectiveNetworkMode() == config.NetworkFull && len(rc.Publish) > 0 && (len(flags.publish) > 0 || flags.networkOn) {
+		warn(`publish ignored: with network_mode = "full" the sandbox shares the host network, so its ports are already reachable from the host`)
+		return
+	}
+	cli, err := config.ParsePublishList(flags.publish)
+	if err != nil {
+		return // applyOverrides already refused it
+	}
+	for _, p := range cli {
+		if !p.Loopback() {
+			warn(fmt.Sprintf("--publish %s: the host side listens on %s, so other machines can connect to the sandbox", p, p.HostIP))
+		}
+	}
+}
+
 // parseMount parses "src:dest[:mode]" into a Mount.
 // parseMount parses "src:dest[:mode]" into a Mount. mode is one of "ro" (the
 // default), "rw" or "safe-rw" — the same modes a profile's [mounts] table
@@ -837,6 +873,13 @@ func printDryRun(w io.Writer, profilePath, globalConfigPath, localConfigPath str
 		for _, entry := range rc.NetworkDeny {
 			fmt.Fprintf(w, "  deny:  %s\n", entry)
 		}
+	}
+	for _, p := range rc.Publish {
+		if rc.EffectiveNetworkMode() == config.NetworkFull {
+			fmt.Fprintf(w, "  publish: %s (ignored: the host network is shared)\n", p)
+			continue
+		}
+		fmt.Fprintf(w, "  publish: %s\n", p)
 	}
 	fmt.Fprintf(w, "git-dir:     %s\n", rc.EffectiveGitDirMode())
 	fmt.Fprintf(w, "pid-ns:      %v\n", rc.PidNamespace)
@@ -1189,13 +1232,14 @@ to the entrypoint command.`,
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "With --dry-run, print the resolved sandbox as JSON")
 
-	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", "Profile to use (default: \"default\")")
+	cmd.Flags().StringVarP(&flags.profile, "profile", "p", "", "Profile to use (default: the configured default_profile)")
 	cmd.Flags().StringVarP(&flags.workdir, "workdir", "w", "", "Mount PATH read-write in the sandbox (at the same path)")
 	cmd.Flags().BoolVar(&flags.networkOn, "network", false, "Enable network access")
 	cmd.Flags().BoolVar(&flags.networkOff, "no-network", false, "Disable network access")
 	cmd.Flags().BoolVarP(&flags.interactive, "interactive", "i", false, "Force interactive mode")
 	cmd.Flags().BoolVar(&flags.noInteractive, "no-interactive", false, "Force non-interactive mode")
 	cmd.Flags().StringArrayVarP(&flags.mounts, "mount", "m", nil, "Additional mount: SRC:DEST[:MODE] (mode: ro, rw or safe-rw; default ro)")
+	cmd.Flags().StringArrayVar(&flags.publish, "publish", nil, "Forward a host port into the sandbox: [HOST_IP:]PORT[:SANDBOX_PORT] (repeatable; host side defaults to 127.0.0.1)")
 	cmd.Flags().StringArrayVarP(&flags.env, "env", "e", nil, "Set env variable: KEY=VAL (~, $VAR and ${VAR} are expanded against the host environment)")
 	cmd.Flags().StringVar(&flags.entrypoint, "entrypoint", "", "Override entrypoint command (resets profile args, like docker --entrypoint)")
 	cmd.Flags().StringArrayVarP(&flags.args, "arg", "a", nil, "Append argument to entrypoint (repeatable)")

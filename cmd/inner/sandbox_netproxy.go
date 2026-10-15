@@ -15,7 +15,9 @@ import (
 // applyNetworkProxy starts the host-side allowlist proxy for this run and
 // rewrites the entrypoint to go through the in-sandbox relay.
 //
-// A no-op for every mode but "allowlist".
+// The relay is also what serves [sandbox] publish from inside, so the
+// entrypoint is wrapped when applyPublish ran too, whatever the mode; the
+// proxy itself only starts under "allowlist".
 //
 // It runs for `inner verify` as well as `inner run`, unlike the capability
 // handlers. The reason those are excluded does not apply here: the proxy has no
@@ -30,7 +32,8 @@ import (
 // the rewrite wraps whatever is there. Both callers now satisfy that.
 func applyNetworkProxy(rc *config.RunConfig) (func(), error) {
 	noop := func() {}
-	if rc.EffectiveNetworkMode() != config.NetworkAllowlist {
+	proxyOn := rc.EffectiveNetworkMode() == config.NetworkAllowlist
+	if !proxyOn && rc.PublishSocketDir == "" {
 		return noop, nil
 	}
 
@@ -43,6 +46,11 @@ func applyNetworkProxy(rc *config.RunConfig) (func(), error) {
 	// about to make the entrypoint. Idempotent, so it does not matter whether
 	// verify already added it.
 	appendHomeAllowIfHidden(rc, innerBin)
+
+	if !proxyOn {
+		rewriteEntrypointThroughRelay(rc, innerBin)
+		return noop, nil
+	}
 
 	// The socket lives in its own 0700 directory rather than a shared one: the
 	// set of processes that can reach the proxy is then exactly the set that
@@ -123,12 +131,16 @@ func rewriteEntrypointThroughRelay(rc *config.RunConfig, innerBin string) {
 		}
 	}
 
-	args := []string{
-		"__net-relay",
-		"--listen", netproxy.RelayListenAddr,
-		"--unix", netproxy.SandboxSocketPath,
-		"--", cmd,
+	args := []string{"__net-relay"}
+	if rc.NetProxySocketPath != "" {
+		args = append(args, "--listen", netproxy.RelayListenAddr, "--unix", netproxy.SandboxSocketPath)
+	} else {
+		// Publish only: no proxy to forward to, and nothing must listen on the
+		// proxy port.
+		args = append(args, "--listen", "")
 	}
+	args = append(args, relayPublishArgs(rc)...)
+	args = append(args, "--", cmd)
 	rc.Entrypoint.Args = append(args, rc.Entrypoint.Args...)
 	rc.Entrypoint.Cmd = innerBin
 }

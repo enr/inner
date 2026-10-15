@@ -37,7 +37,7 @@ CLI overrides (`applyOverrides` in `cmd_run.go`) are applied on top of the loade
 ## The trust boundary: profiles downloaded from a URL
 
 A local profile is trusted: the user wrote it, or installed it deliberately. A
-profile fetched by `inner run <https://…>` is not — and it controls **every**
+profile fetched by `inner run -p <https://…>` is not — and it controls **every**
 input of layer 1: the entrypoint that executes, the network, whether the host
 environment is forwarded (`inherit_all`), which credentials stay visible
 (`[sandbox] allow`), the mounts. Without a boundary, one URL means "run this
@@ -84,6 +84,7 @@ returns one line per change, which the gate prints:
 | a `[mounts]` entry whose source covers or lies inside a hidden path and whose destination is elsewhere (`"~/.ssh" = { dest = "/tmp/k" }`, `"/" = { dest = "/tmp/root" }`) | mount dropped | the hide rules act on the host path; relocating it escapes them. The source is resolved through symlinks first |
 | `[sandbox] pid_namespace = false` | ignored | host `/proc/<pid>/environ` is readable, defeating `--clearenv` (see [process isolation](#process-isolation---unshare-pid)) |
 | `[sandbox] git_dir = "rw"` | set to `"protected"` | the sandbox could plant hooks or a `core.fsmonitor` that the host runs on the next git command (see [git repository protection](#git-repository-protection)) |
+| `[sandbox] publish` entry on a non-loopback host address | entry dropped | it would open the sandbox to other machines; loopback entries are kept and listed in the prompt |
 
 The remaining allow keys (`env-secrets`, `shims-active`, `network-policy`) only
 downgrade an `inner verify` check and carry no host privilege, so they survive.
@@ -91,7 +92,7 @@ downgrade an `inner verify` check and carry no host privilege, so they survive.
 ### What the hardening deliberately keeps
 
 `network`, the entrypoint and its args, mounts (other than relocated secrets),
-`home_allow`, `[env] set` and capabilities are **not** stripped. They are what a profile exists to describe — forcing `network = false`
+`home_allow`, `[env] set`, loopback `publish` entries and capabilities are **not** stripped. They are what a profile exists to describe — forcing `network = false`
 would break every remote agent profile — and the hardening above already removes
 the host secrets that make an open network an exfiltration channel. They are
 reported by `remoteProfileRequests` and gated by consent instead — every mount,
@@ -202,15 +203,14 @@ The position in the argv is the whole mechanism: bwrap processes args left-to-ri
 
 An unresolvable or unsafe home (`/`, a relative path) is a hard error: silently continuing would produce a sandbox weaker than the profile claims.
 
-To make the home directory (or a subdirectory of it) writable, a profile `[mounts]` entry with `mode = "rw"` is required:
+To make a subdirectory of the home writable, a profile `[mounts]` entry with `mode = "rw"` is required:
 
 ```toml
 [mounts]
-"~" = "rw"          # make the whole home dir writable
-"~/projects" = "rw" # or a specific subtree only
+"~/projects" = { dest = "~/projects", mode = "rw" }
 ```
 
-`~` is expanded to the real home path by `config.expandPath` before it reaches `Build`. The mount is then emitted as `--bind $HOME $HOME` (a writable bind on top of the read-only root).
+`~` is expanded to the real home path by `config.ExpandPath` before it reaches `Build`. The mount is then emitted as `--bind /home/me/projects /home/me/projects` (a writable bind on top of the read-only root). A writable mount of the whole home is a persistence vector (every dotfile becomes writable): `inner` warns about it under `host-ro` and refuses it under `isolated`, where it would also cancel the isolation.
 
 Sensitive files within the home directory are hidden after profile mounts are applied (see [Sensitive resource hiding](#sensitive-resource-hiding) below). This ordering matters: a profile tmpfs that covers a sensitive path makes the hide step redundant, and `isUnderTmpfs` skips it to avoid a bind-inside-empty-tmpfs failure.
 
@@ -410,6 +410,38 @@ user, so the processes that can reach the proxy are exactly the ones that could
 run `inner` in the first place. A token would authenticate that set to itself.
 This would need revisiting if the proxy ever grew a TCP listener on the host.
 
+### Published ports: the same socket, the other way
+
+`[sandbox] publish` (and `--publish`) lets the host reach a server inside a
+private network namespace. It reuses the relay with the direction reversed:
+
+```
+host                                   │  sandbox (own netns)
+                                       │
+  client ─▶ 127.0.0.1:PORT             │
+             (host listener)           │
+               └─▶ /tmp/inner-pub-*/pN.sock ═══ /tmp/inner/publish/pN.sock
+                                       │          └─ inner __net-relay --publish
+                                       │               └─▶ 127.0.0.1:SANDBOX_PORT (the server)
+```
+
+`applyPublish` (`cmd/inner/sandbox_publish.go`) runs in `prepareSandbox` before
+the proxy step: it opens every host listener first, so a taken port aborts the
+run before anything starts, creates a `0700` directory for the sockets and
+records it on `RunConfig.PublishSocketDir`. `Build` binds that directory
+**read-write** at `/tmp/inner/publish` — the relay creates the sockets from
+inside — and `applyNetworkProxy` adds one `--publish SOCKET=ADDR` pair per entry
+to the relay. Under `"off"` there is no proxy, so the relay runs with
+`--listen ""` for the published ports alone. The relay listens on the sockets
+before it starts the entrypoint; a host connection that arrives before the
+server inside is up is simply closed. When the entrypoint exits the relay
+closes the published connections too, so an idle browser connection does not
+keep the sandbox alive.
+
+Nothing is published under `"full"`: the namespace is shared, the port is
+already reachable, and a host listener would take the port the server wants.
+`inner verify` does not open the listeners (`sandboxOptions.Publish`).
+
 ### Nested user namespaces: `--unshare-user` + caps
 
 ```go
@@ -452,7 +484,7 @@ The three ways to make podman's default work are all rejected on security ground
 | Bind `/run/user/<uid>/systemd/` | The user manager does not consult polkit for same-uid callers, so the sandbox could start arbitrary host units — a full escape |
 | A permissive polkit rule | Changes the **host** security posture to accommodate a sandbox |
 
-So `Build` instead binds a generated `containers.conf` fragment (`internal/containers`) at `/tmp/inner/containers.conf` and exports `CONTAINERS_CONF_OVERRIDE`, which podman merges on top of the user's own files. The generation happens in `applyContainersConf` (`cmd_run.go`, mirrored in `cmd_verify.go`) so `Build` stays side-effect free, matching the shim-dir and gitconfig patterns. The `--setenv` is emitted inside the `nested-user-ns` block, i.e. *before* the `[env] set` loop, so a profile that sets `CONTAINERS_CONF_OVERRIDE` itself still wins (bwrap honours the last `--setenv` for a key).
+So `Build` instead binds a generated `containers.conf` fragment (`internal/containers`) at `/tmp/inner/containers.conf` and exports `CONTAINERS_CONF_OVERRIDE`, which podman merges on top of the user's own files. The generation happens in `applyContainersConf` (`cmd_run.go`, called from `prepareSandbox`, which `inner run` and `inner verify` share) so `Build` stays side-effect free, matching the shim-dir and gitconfig patterns. The `--setenv` is emitted inside the `nested-user-ns` block, i.e. *before* the `[env] set` loop, so a profile that sets `CONTAINERS_CONF_OVERRIDE` itself still wins (bwrap honours the last `--setenv` for a key).
 
 Consequence: per-container resource limits (`--memory`, `--cpus`, `--pids-limit`) are unavailable inside the sandbox. This is consistent with `wrapWithLimits`, which already skips the `systemd-run --scope` wrapper when `nested-user-ns` is active. `[sandbox] cgroup_manager = "systemd"` opts out of the injection.
 
@@ -572,7 +604,7 @@ The allow key check (`isAllowed`) is a simple `slices.Contains` — no special-c
 
 ### Shim directory
 
-If `cfg.ShimDir` is non-empty (populated by `cmd_run.go` after `shim.Builder.Build()`), the shim directory is bind-mounted at `/tmp/inner-shims` and prepended to `PATH`. `/tmp` is used (not `/run`) because it is already a writable tmpfs at this point and `--dir` can create subdirectories there without touching the read-only root.
+If `cfg.ShimDir` is non-empty (populated by `prepareSandbox` with `shim.Builder.BuildWith()`), the shim directory is bind-mounted at `/tmp/inner-shims` and prepended to `PATH`. `/tmp` is used (not `/run`) because it is already a writable tmpfs at this point and `--dir` can create subdirectories there without touching the read-only root.
 
 ### Git config injection
 

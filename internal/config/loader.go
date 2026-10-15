@@ -598,6 +598,14 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string, expand func(s
 	// list without executing anything.
 	networkAllow, networkAllowOrigin := ResolveNetworkAllow(p.Sandbox, p.Capabilities)
 
+	// Refused here for the same reason as an unknown mode: a malformed entry
+	// would otherwise surface as a listener error after the sandbox is half
+	// prepared, or not at all.
+	publish, err := ParsePublishList(p.Sandbox.Publish)
+	if err != nil {
+		return nil, fmt.Errorf("[sandbox] publish: %w", err)
+	}
+
 	cfg := &RunConfig{
 		Name:         p.Name,
 		NetworkMode:  networkMode,
@@ -608,6 +616,7 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string, expand func(s
 		// nothing is the most dangerous shape this file can produce.
 		NetworkDeny:        ExpandNetworkGroups(p.Sandbox.NetworkDeny),
 		NetworkAllowOrigin: networkAllowOrigin,
+		Publish:            publish,
 		// PID namespace isolation defaults to ON: a nil (unset) value means
 		// true; only an explicit pid_namespace = false in the profile
 		// disables it. See SandboxConfig.PidNamespace for the rationale.
@@ -803,11 +812,23 @@ func (l *Loader) loadProfilePath(absPath string, visited map[string]bool) (*Prof
 	if err != nil {
 		return nil, err
 	}
+	return mergeChain(chain), nil
+}
+
+// mergeChain folds an extends chain (base first) into one profile. The result
+// is named after the last layer: its name may have been back-filled from the
+// file name, which TOML metadata does not report as defined, so mergeProfiles
+// alone would keep the base's name and a run of the child would be reported
+// under the base.
+func mergeChain(chain []profileLayer) *Profile {
 	merged := chain[0].profile
 	for _, layer := range chain[1:] {
 		merged = mergeProfiles(merged, layer.profile, layer.meta)
 	}
-	return merged, nil
+	if len(chain) > 1 {
+		merged.Name = chain[len(chain)-1].profile.Name
+	}
+	return merged
 }
 
 // loadProfileChain decodes the profile at absPath and every profile it extends,

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -36,9 +37,14 @@ var forwardedSignals = []os.Signal{syscall.SIGTERM, syscall.SIGHUP}
 // netRelayOptions is the parsed form of the __net-relay invocation.
 type netRelayOptions struct {
 	// ListenAddr is the loopback address to listen on inside the sandbox.
+	// Empty means no proxy: the relay only serves Publish.
 	ListenAddr string
 	// UnixPath is the bind-mounted host proxy socket to forward to.
 	UnixPath string
+	// Publish is one "SOCKET=ADDR" pair per [sandbox] publish entry: the relay
+	// listens on the unix SOCKET (in the bind-mounted publish directory) and
+	// forwards each connection to the loopback ADDR in the sandbox.
+	Publish []string
 	// Cmd and Args are the real entrypoint this relay wraps.
 	Cmd  string
 	Args []string
@@ -69,6 +75,11 @@ relay listens on a loopback TCP port (what HTTP_PROXY must point at), forwards
 each connection to the bind-mounted unix socket of the host-side proxy, then
 runs the real entrypoint as a child and exits with its status.
 
+With --publish it also listens on unix sockets in the bind-mounted publish
+directory and forwards each connection to a loopback port in the sandbox, so
+the host can reach a server running in here ([sandbox] publish). With
+--listen "" it serves only those.
+
 Not meant to be run by hand.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -86,6 +97,7 @@ Not meant to be run by hand.`,
 
 	cmd.Flags().StringVar(&opts.ListenAddr, "listen", netproxy.RelayListenAddr, "Loopback address to listen on")
 	cmd.Flags().StringVar(&opts.UnixPath, "unix", netproxy.SandboxSocketPath, "Path of the proxy unix socket")
+	cmd.Flags().StringArrayVar(&opts.Publish, "publish", nil, "SOCKET=ADDR: forward connections on a unix socket to a sandbox address (repeatable)")
 	// Everything after the command name belongs to the child, including things
 	// that look like our own flags: `-- claude --verbose` must not have
 	// --verbose parsed here.
@@ -101,29 +113,65 @@ func runNetRelay(stderr io.Writer, opts netRelayOptions) (int, error) {
 	// make its first request against a port nobody is listening on yet, and a
 	// connection refused at startup is exactly the kind of failure that gets
 	// misread as "the allow list is wrong".
-	listener, err := net.Listen("tcp", opts.ListenAddr)
-	if err != nil {
-		// Fatal, not best-effort: continuing would start the entrypoint with
-		// HTTP_PROXY pointing at nothing, and every request would fail with a
-		// message that says nothing about the real cause.
-		return 0, fmt.Errorf("network relay: cannot listen on %s: %w", opts.ListenAddr, err)
+	var listeners []net.Listener
+	closeListeners := func() {
+		for _, l := range listeners {
+			_ = l.Close()
+		}
 	}
-	defer listener.Close()
+	defer closeListeners()
 
 	var wg sync.WaitGroup
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return // listener closed: the run is over
+	// Connections from the host on published ports. Closed when the child
+	// exits: a browser keeps idle connections open for minutes, and the
+	// sandbox must not wait on them to exit.
+	var published sync.Map
+	serve := func(l net.Listener, handle func(net.Conn)) {
+		listeners = append(listeners, l)
+		go func() {
+			for {
+				conn, err := l.Accept()
+				if err != nil {
+					return // listener closed: the run is over
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					handle(conn)
+				}()
 			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				relayConn(stderr, conn, opts.UnixPath)
-			}()
+		}()
+	}
+
+	if opts.ListenAddr != "" {
+		listener, err := net.Listen("tcp", opts.ListenAddr)
+		if err != nil {
+			// Fatal, not best-effort: continuing would start the entrypoint with
+			// HTTP_PROXY pointing at nothing, and every request would fail with a
+			// message that says nothing about the real cause.
+			return 0, fmt.Errorf("network relay: cannot listen on %s: %w", opts.ListenAddr, err)
 		}
-	}()
+		serve(listener, func(conn net.Conn) { relayConn(stderr, conn, opts.UnixPath) })
+	}
+
+	// Published ports: also before the child, so the host side never meets a
+	// missing socket once the sandbox is up. A connection that arrives before
+	// the server inside is listening is simply closed (see publishConn).
+	for _, spec := range opts.Publish {
+		sock, target, ok := strings.Cut(spec, "=")
+		if !ok || sock == "" || target == "" {
+			return 0, fmt.Errorf("network relay: invalid --publish %q: expected SOCKET=ADDR", spec)
+		}
+		listener, err := net.Listen("unix", sock)
+		if err != nil {
+			return 0, fmt.Errorf("network relay: cannot listen on %s: %w", sock, err)
+		}
+		serve(listener, func(conn net.Conn) {
+			published.Store(conn, struct{}{})
+			defer published.Delete(conn)
+			publishConn(conn, target)
+		})
+	}
 
 	child := exec.Command(opts.Cmd, opts.Args...)
 	// Inherited, not piped. This is what keeps an interactive TUI working: the
@@ -160,7 +208,11 @@ func runNetRelay(stderr io.Writer, opts netRelayOptions) (int, error) {
 
 	waitErr := child.Wait()
 	close(done)
-	_ = listener.Close()
+	closeListeners()
+	published.Range(func(conn, _ any) bool {
+		_ = conn.(net.Conn).Close()
+		return true
+	})
 	wg.Wait()
 
 	return exitCodeOf(waitErr), nil
@@ -203,7 +255,28 @@ func relayConn(stderr io.Writer, client net.Conn, unixPath string) {
 		return
 	}
 	defer upstream.Close()
+	pipeConns(client, upstream)
+}
 
+// publishConn pipes one connection from the host (arriving on a publish
+// socket) to the server inside the sandbox.
+//
+// Silent when nothing listens there yet: the host client sees its connection
+// closed, the usual answer of a port with no server, and a line on the
+// sandbox's terminal would be painted into whatever TUI is running there.
+func publishConn(client net.Conn, target string) {
+	defer client.Close()
+	upstream, err := net.Dial("tcp", target)
+	if err != nil {
+		return
+	}
+	defer upstream.Close()
+	pipeConns(client, upstream)
+}
+
+// pipeConns copies both directions until each side is done, half-closing as
+// it goes.
+func pipeConns(client, upstream net.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {

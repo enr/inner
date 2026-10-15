@@ -199,6 +199,31 @@ func validateNetworkAllow(r *Result, p *config.Profile) {
 	}
 }
 
+// validatePublish checks [sandbox] publish: malformed entries are errors (the
+// loader refuses them too), and two shapes that do something other than what
+// the profile probably meant are warnings.
+func validatePublish(r *Result, p *config.Profile) {
+	publish, err := config.ParsePublishList(p.Sandbox.Publish)
+	if err != nil {
+		r.addError(fmt.Sprintf("[sandbox] publish: %v", err))
+		return
+	}
+	if len(publish) == 0 {
+		return
+	}
+	if mode := config.ResolveNetworkMode(p.Sandbox); mode == config.NetworkFull {
+		r.addWarning(`[sandbox] publish is set but network_mode = "full": the sandbox shares the host network, so its ports are already reachable and the entries are ignored`)
+		return
+	}
+	for _, pub := range publish {
+		if !pub.Loopback() {
+			r.addWarning(fmt.Sprintf(
+				"[sandbox] publish %s: the host side listens on %s, so other machines can connect to the sandbox — use 127.0.0.1 unless that is the point",
+				pub, pub.HostIP))
+		}
+	}
+}
+
 // effectiveHomeMode renders the home mode for a user-facing message, naming the
 // default explicitly so an unset key never shows up as an empty string.
 func effectiveHomeMode(mode string) string {
@@ -647,6 +672,7 @@ func Validate(p *config.Profile, workDir string) Result {
 	validateGitDir(&r, p)
 	validateNetwork(&r, p)
 	validateNetworkAllow(&r, p)
+	validatePublish(&r, p)
 	validateAllowUnderIsolatedHome(&r, p)
 
 	// 3a-ter. Report mounts that hand out write access to the host system or
