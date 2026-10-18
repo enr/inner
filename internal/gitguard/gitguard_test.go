@@ -1,6 +1,7 @@
 package gitguard
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -224,6 +225,80 @@ func TestBuild_scanBudgetWarns(t *testing.T) {
 	}
 	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "too large") {
 		t.Errorf("an exhausted budget must be reported once: %v", plan.Warnings)
+	}
+}
+
+func TestBuild_scanBudgetIsPerMount(t *testing.T) {
+	isolateHostConfig(t)
+	old := maxScanDirs
+	maxScanDirs = 3
+	t.Cleanup(func() { maxScanDirs = old })
+	huge := t.TempDir()
+	for _, d := range []string{"a", "b", "c", "d"} {
+		if err := os.MkdirAll(filepath.Join(huge, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	work := t.TempDir()
+	gitdir := fakeRepo(t, work, true)
+
+	plan := Build(ModeProtected, []Mount{{Src: huge, Dest: huge}, {Src: work, Dest: work}})
+
+	if !slices.Contains(roSrcs(plan), filepath.Join(gitdir, "config")) {
+		t.Errorf("a mount after an exhausted one must still be protected: %v", roSrcs(plan))
+	}
+	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], huge) {
+		t.Errorf("only the mount that exhausted its budget must be reported: %v", plan.Warnings)
+	}
+}
+
+func TestBuild_containerStorageIsNotSearched(t *testing.T) {
+	isolateHostConfig(t)
+	root := t.TempDir()
+	storage := filepath.Join(root, "storage")
+	write(t, filepath.Join(storage, "storage.lock"), "")
+	if err := os.MkdirAll(filepath.Join(storage, "overlay-layers"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	layer := fakeRepo(t, filepath.Join(storage, "overlay", "abc", "diff", "build"), false)
+	beside := fakeRepo(t, filepath.Join(root, "project"), true)
+
+	plan := Build(ModeProtected, []Mount{{Src: root, Dest: root}})
+
+	for _, src := range roSrcs(plan) {
+		if strings.HasPrefix(src, layer) {
+			t.Errorf("a repository in an image layer must not be protected: %s", src)
+		}
+	}
+	for _, ph := range plan.Placeholders {
+		if strings.HasPrefix(ph.Path, storage) {
+			t.Errorf("no placeholder may be written into container storage: %s", ph.Path)
+		}
+	}
+	if !slices.Contains(roSrcs(plan), filepath.Join(beside, "config")) {
+		t.Errorf("a repository beside the storage must still be protected: %v", roSrcs(plan))
+	}
+}
+
+func TestBuild_nonDirectoryMountsAreSkipped(t *testing.T) {
+	isolateHostConfig(t)
+	old := maxScanDirs
+	maxScanDirs = 0
+	t.Cleanup(func() { maxScanDirs = old })
+	dir := t.TempDir()
+	file := filepath.Join(dir, "settings.json")
+	write(t, file, "{}")
+	sock := filepath.Join(dir, "bus")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+
+	plan := Build(ModeProtected, []Mount{{Src: file, Dest: file}, {Src: sock, Dest: sock}})
+
+	if len(plan.Warnings) != 0 {
+		t.Errorf("a file or socket mount must not be searched: %v", plan.Warnings)
 	}
 }
 

@@ -187,17 +187,23 @@ func cleanMounts(in []Mount) []Mount {
 // a workdir laid out as a tree of projects (~/src/github.com/org/repo) gets
 // every repository protected, not only the ones at its root. The walk never
 // follows symbolic links and never enters a .git directory or node_modules
-// (dependency trees, where a repository the user runs git in does not live).
-// It is bounded by maxScanDepth and, across all mounts, by maxScanDirs: a
-// workdir too large to walk is reported, since the repositories past the
-// budget are left unprotected.
+// (dependency trees, where a repository the user runs git in does not live),
+// nor a container storage (see isContainerStorage).
+// It is bounded by maxScanDepth and, for each mount, by maxScanDirs: a mount
+// too large to walk is reported, since the repositories past the budget are
+// left unprotected. The budget is per mount so that a huge mount (container
+// storage, a Maven repository) cannot leave the workdir unsearched. A mount
+// that is not a directory (a file, a socket) holds no repository.
 func (p *planner) scan() {
 	type item struct {
 		dir   string
 		depth int
 	}
-	budget := maxScanDirs
 	for _, m := range p.mounts {
+		if fi, err := os.Stat(m.Src); err != nil || !fi.IsDir() {
+			continue
+		}
+		budget := maxScanDirs
 		queue := []item{{m.Src, 0}}
 		for len(queue) > 0 {
 			if budget == 0 {
@@ -208,7 +214,7 @@ func (p *planner) scan() {
 			it := queue[0]
 			queue = queue[1:]
 			p.inspect(it.dir)
-			if it.depth == maxScanDepth {
+			if it.depth == maxScanDepth || isContainerStorage(it.dir) {
 				continue
 			}
 			entries, err := os.ReadDir(it.dir)
@@ -224,6 +230,20 @@ func (p *planner) scan() {
 			}
 		}
 	}
+}
+
+// isContainerStorage reports whether dir is the root of a containers/storage
+// tree (podman, buildah): one with both a storage.lock file and an
+// overlay-layers directory. The .git directories in there belong to image
+// layers, where the user does not run git, and the tree is easily larger than
+// the scan budget; placeholders written in there would also alter the layers.
+func isContainerStorage(dir string) bool {
+	lock, err := os.Lstat(filepath.Join(dir, "storage.lock"))
+	if err != nil || !lock.Mode().IsRegular() {
+		return false
+	}
+	layers, err := os.Lstat(filepath.Join(dir, "overlay-layers"))
+	return err == nil && layers.IsDir()
 }
 
 // inspect handles a directory that may be the top of a git worktree.

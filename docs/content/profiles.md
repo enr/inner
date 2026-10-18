@@ -734,9 +734,12 @@ The protection applies to every writable mount (the workdir, `rw` entries in
 `[mounts]`, `-m SRC:DEST:rw`) and to every repository inside it up to 8
 directory levels deep, so a workdir that is a tree of projects
 (`~/src/github.com/org/repo`) is covered too. The search does not follow
-symbolic links and skips `node_modules`; a workdir with more than 20000
-directories is not searched to the end, and the run starts with a warning
-saying so (narrow the workdir, or use `git_dir = "ro"`).
+symbolic links and skips `node_modules` and container storage (a directory
+holding `storage.lock` and `overlay-layers`, as podman's
+`~/.local/share/containers/storage`: its repositories belong to image layers).
+Each mount is searched on its own budget: one with more than 20000 directories
+is not searched to the end, and the run starts with a warning naming it
+(narrow the workdir, or use `git_dir = "ro"`).
 
 **Placeholders.** A file that does not exist cannot be made read-only: the
 sandbox could simply create it. So `inner` creates a few placeholders on the
