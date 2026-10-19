@@ -227,9 +227,9 @@ keep `Build` free of side effects:
    passes every `rw` mount (after the `safe-rw` step, so the mounts are final)
    to `gitguard.Build`, which searches each mount breadth-first for `.git`
    entries (at most 8 levels and 20000 directories per mount, no symlinks, no
-   `node_modules`, no container storage; a mount that is not a directory is
-   skipped) and returns a `gitguard.Plan`, stored on
-   `RunConfig.GitGuard`. `gitguard.Materialize` then creates the placeholders
+   `node_modules`, no container storage; a mount that is not a directory, or
+   whose `[mounts]` entry sets `git_scan = false`, is skipped) and returns a
+   `gitguard.Plan`, stored on `RunConfig.GitGuard`. `gitguard.Materialize` then creates the placeholders
    the read-only binds need: a path that does not exist cannot be a mount
    point, and the sandbox could otherwise create it. Placeholders are a
    missing `hooks/` (empty dir), a missing `config` or enabled-but-missing

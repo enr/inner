@@ -743,3 +743,31 @@ func TestValidate_cgroupManager_systemd_warnsAboutScopeFailure(t *testing.T) {
 		t.Errorf("expected warning about the transient scope, got: %v", r.Issues)
 	}
 }
+
+func TestValidate_gitScanOnReadOnlyMount_warns(t *testing.T) {
+	src := t.TempDir()
+	off := false
+	p := &config.Profile{
+		Mounts: map[string]config.MountEntry{
+			src: {Dest: src, Mode: "ro", GitScan: &off},
+		},
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+	}
+	r := Validate(p, "")
+	found := false
+	for _, issue := range r.Issues {
+		if issue.Level == LevelWarning && strings.Contains(issue.Message, "git_scan") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning for git_scan on a read-only mount, got: %v", r.Issues)
+	}
+
+	p.Mounts[src] = config.MountEntry{Dest: src, Mode: "rw", GitScan: &off}
+	for _, issue := range Validate(p, "").Issues {
+		if strings.Contains(issue.Message, "git_scan") {
+			t.Errorf("git_scan on a rw mount is meaningful, got: %s", issue.Message)
+		}
+	}
+}

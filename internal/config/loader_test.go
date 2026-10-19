@@ -1980,3 +1980,23 @@ pids   = 64
 		t.Errorf("Pids = %d, want 64 (profile override)", rc.Limits.Pids)
 	}
 }
+
+func TestBuild_mountGitScan(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "scan.toml"), `
+[mounts]
+"/cache" = { dest = "/cache", mode = "rw", git_scan = false }
+"/src"   = { dest = "/src",   mode = "rw" }
+"/on"    = { dest = "/on",    mode = "rw", git_scan = true }
+`)
+	rc, err := NewLoader(dir).Build("scan")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	want := map[string]bool{"/cache": true, "/src": false, "/on": false}
+	for _, m := range rc.Mounts {
+		if m.NoGitScan != want[m.Src] {
+			t.Errorf("mount %s: NoGitScan = %v, want %v", m.Src, m.NoGitScan, want[m.Src])
+		}
+	}
+}

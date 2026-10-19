@@ -4,7 +4,9 @@ description    = "Interactive shell pinned to JDK 21 (adjust the /opt/jdk path t
 extends        = "shell"
 
 [mounts]
-"~/.m2" = { dest = "~/.m2", mode = "rw" }
+# git_scan = false: the local repository is an artifact cache, too large to
+# search for git repositories and holding none the user runs git in.
+"~/.m2" = { dest = "~/.m2", mode = "rw", git_scan = false }
 
 [env]
 path_prepend = ["/opt/jdk/jdk-21/bin"]

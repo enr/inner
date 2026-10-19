@@ -297,6 +297,9 @@ func formatValue(v reflect.Value) string {
 			if mode == "" {
 				mode = "ro"
 			}
+			if m.GitScan != nil && !*m.GitScan {
+				mode += ", git_scan = false"
+			}
 			if m.Dest == "" {
 				return mode
 			}

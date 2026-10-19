@@ -9,7 +9,9 @@ extends        = "shell-containers"
 #   [sandbox]
 #   allow = ["gradle-properties"]
 [mounts]
-"~/.gradle" = { dest = "~/.gradle", mode = "rw" }
+# git_scan = false: an artifact and build cache, too large to search for git
+# repositories and holding none the user runs git in.
+"~/.gradle" = { dest = "~/.gradle", mode = "rw", git_scan = false }
 
 [env]
 inherit = ["JAVA_HOME"]

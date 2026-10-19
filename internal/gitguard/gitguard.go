@@ -57,6 +57,10 @@ var Modes = []string{ModeProtected, ModeRO, ModeRW}
 type Mount struct {
 	Src  string
 	Dest string
+	// NoScan keeps scan out of the mount: it holds no repository the user runs
+	// git in (a Maven or Gradle cache). The mount still counts as writable, so
+	// a hooksPath or an include target that points into it is protected.
+	NoScan bool
 }
 
 // Bind is one bind mount the isolator emits: Src on the host, Dest in the
@@ -178,7 +182,7 @@ func cleanMounts(in []Mount) []Mount {
 		if m.Src == "" || m.Dest == "" {
 			continue
 		}
-		out = append(out, Mount{Src: filepath.Clean(m.Src), Dest: filepath.Clean(m.Dest)})
+		out = append(out, Mount{Src: filepath.Clean(m.Src), Dest: filepath.Clean(m.Dest), NoScan: m.NoScan})
 	}
 	return out
 }
@@ -193,13 +197,17 @@ func cleanMounts(in []Mount) []Mount {
 // too large to walk is reported, since the repositories past the budget are
 // left unprotected. The budget is per mount so that a huge mount (container
 // storage, a Maven repository) cannot leave the workdir unsearched. A mount
-// that is not a directory (a file, a socket) holds no repository.
+// that is not a directory (a file, a socket) holds no repository, and a mount
+// marked NoScan is declared to hold none.
 func (p *planner) scan() {
 	type item struct {
 		dir   string
 		depth int
 	}
 	for _, m := range p.mounts {
+		if m.NoScan {
+			continue
+		}
 		if fi, err := os.Stat(m.Src); err != nil || !fi.IsDir() {
 			continue
 		}
@@ -207,7 +215,7 @@ func (p *planner) scan() {
 		queue := []item{{m.Src, 0}}
 		for len(queue) > 0 {
 			if budget == 0 {
-				p.warn("%s is too large to search for git repositories (more than %d directories): repositories deeper than the ones already found are not protected; use a narrower workdir or git_dir = \"ro\"", m.Src, maxScanDirs)
+				p.warn("%s is too large to search for git repositories (more than %d directories): repositories deeper than the ones already found are not protected; use a narrower workdir, git_scan = false on a [mounts] entry that holds no repository you run git in, or git_dir = \"ro\"", m.Src, maxScanDirs)
 				break
 			}
 			budget--

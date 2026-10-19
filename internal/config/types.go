@@ -460,6 +460,11 @@ type CustomCheck struct {
 type MountEntry struct {
 	Dest string `toml:"dest"`
 	Mode string `toml:"mode"` // "ro", "rw", "safe-rw", or "tmpfs"; defaults to "ro"
+	// GitScan = false keeps the git protection from searching this mount for
+	// repositories (see gitguard): for a cache such as ~/.m2, which holds no
+	// repository the user runs git in and is too large to search. Unset means
+	// true.
+	GitScan *bool `toml:"git_scan"`
 }
 
 // EnvConfig describes how environment variables are handled inside the sandbox.

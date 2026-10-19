@@ -206,6 +206,9 @@ type Mount struct {
 	Src  string
 	Dest string
 	Mode string // "ro" or "rw"
+	// NoGitScan keeps the git protection from searching this mount for
+	// repositories. See MountEntry.GitScan.
+	NoGitScan bool
 }
 
 // Entrypoint describes the command to run inside the sandbox.

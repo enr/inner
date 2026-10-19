@@ -200,7 +200,7 @@ func applyGitGuard(rc *config.RunConfig) (func(), error) {
 	var writable []gitguard.Mount
 	for _, m := range rc.Mounts {
 		if m.Mode == "rw" {
-			writable = append(writable, gitguard.Mount{Src: m.Src, Dest: m.Dest})
+			writable = append(writable, gitguard.Mount{Src: m.Src, Dest: m.Dest, NoScan: m.NoGitScan})
 		}
 	}
 	rc.GitGuard = gitguard.Build(rc.EffectiveGitDirMode(), writable)

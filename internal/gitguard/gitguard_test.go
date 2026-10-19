@@ -574,3 +574,29 @@ func TestMaterialize_realGitAcceptsPlaceholders(t *testing.T) {
 		t.Errorf("git-common-dir = %q, want the repository itself", got)
 	}
 }
+
+func TestBuild_noScanMountIsNotSearched(t *testing.T) {
+	isolateHostConfig(t)
+	old := maxScanDirs
+	maxScanDirs = 1
+	t.Cleanup(func() { maxScanDirs = old })
+	cache := t.TempDir()
+	inCache := fakeRepo(t, filepath.Join(cache, "a", "b"), true)
+	hooks := filepath.Join(cache, "hooks")
+	work := t.TempDir()
+	write(t, filepath.Join(fakeRepo(t, work, true), "config"), "[core]\n\thooksPath = "+hooks+"\n")
+
+	plan := Build(ModeProtected, []Mount{{Src: cache, Dest: cache, NoScan: true}, {Src: work, Dest: work}})
+
+	if len(plan.Warnings) != 0 {
+		t.Errorf("a mount that is not searched must not exhaust its budget: %v", plan.Warnings)
+	}
+	for _, src := range roSrcs(plan) {
+		if strings.HasPrefix(src, inCache) {
+			t.Errorf("a repository in a NoScan mount must not be protected: %s", src)
+		}
+	}
+	if !slices.Contains(roSrcs(plan), hooks) {
+		t.Errorf("a hooksPath pointing into a NoScan mount is still writable and must be protected: %v", roSrcs(plan))
+	}
+}

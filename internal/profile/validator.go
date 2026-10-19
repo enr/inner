@@ -508,6 +508,9 @@ func Validate(p *config.Profile, workDir string) Result {
 
 	// 1. Verify mount source paths exist on the host (after expansion).
 	for src, entry := range p.Mounts {
+		if entry.GitScan != nil && entry.Mode != "rw" && entry.Mode != "safe-rw" {
+			r.addWarning(fmt.Sprintf("mount %q sets git_scan, which has no effect on a mount that is not \"rw\" or \"safe-rw\": the sandbox cannot write a repository there", src))
+		}
 		if entry.Mode == "tmpfs" {
 			// tmpfs mounts have no host source — skip existence check.
 			continue

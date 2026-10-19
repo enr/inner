@@ -179,6 +179,10 @@ func hardenRemoteProfile(rc *config.RunConfig) []string {
 			applied = append(applied, fmt.Sprintf("[mounts] %s -> %s dropped — it would carry %s, which the sandbox hides, to another path", m.Src, m.Dest, hidden))
 			continue
 		}
+		if m.NoGitScan {
+			m.NoGitScan = false
+			applied = append(applied, fmt.Sprintf("[mounts] %s: git_scan = false ignored — git repositories in the mount stay protected", m.Src))
+		}
 		keptMounts = append(keptMounts, m)
 	}
 	rc.Mounts = keptMounts

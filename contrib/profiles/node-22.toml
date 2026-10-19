@@ -4,7 +4,7 @@ description    = "Interactive shell pinned to Node 22 (adjust the /opt/node path
 extends        = "shell"
 
 [mounts]
-"~/.npm"        = { dest = "~/.npm",        mode = "rw" } # npm cache
+"~/.npm"        = { dest = "~/.npm",        mode = "rw", git_scan = false } # npm cache: no repository to protect
 "~/.npm-global" = { dest = "~/.npm-global", mode = "rw" } # target of `npm install -g`
 
 [env]

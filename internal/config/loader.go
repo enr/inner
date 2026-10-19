@@ -677,9 +677,10 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string, expand func(s
 			dest = expand(dest)
 		}
 		cfg.Mounts = append(cfg.Mounts, Mount{
-			Src:  expand(src),
-			Dest: dest,
-			Mode: mode,
+			Src:       expand(src),
+			Dest:      dest,
+			Mode:      mode,
+			NoGitScan: entry.GitScan != nil && !*entry.GitScan,
 		})
 	}
 

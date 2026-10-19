@@ -107,6 +107,21 @@ func TestHardenRemoteProfile_leavesBenignProfileUntouched(t *testing.T) {
 	}
 }
 
+func TestHardenRemoteProfile_restoresGitScan(t *testing.T) {
+	src := t.TempDir()
+	rc := &config.RunConfig{
+		PidNamespace: true,
+		Mounts:       []config.Mount{{Src: src, Dest: src, Mode: "rw", NoGitScan: true}},
+	}
+	applied := hardenRemoteProfile(rc)
+	if len(rc.Mounts) != 1 || rc.Mounts[0].NoGitScan {
+		t.Errorf("mounts = %+v, want the mount kept with git_scan restored", rc.Mounts)
+	}
+	if len(applied) != 1 || !strings.Contains(applied[0], "git_scan") {
+		t.Errorf("applied = %v, want one line naming git_scan", applied)
+	}
+}
+
 // ── gateRemoteProfile ─────────────────────────────────────────────────────────
 
 func gateFixture() (*config.RunConfig, remoteSource) {
@@ -565,6 +580,7 @@ var remoteFieldPolicy = map[string]string{
 	"sandbox.limits.memory":  "inert", "sandbox.limits.cpu": "inert", "sandbox.limits.pids": "inert",
 
 	"mounts.dest": "hardened", "mounts.mode": "shown", // relocated secrets dropped, the rest listed
+	"mounts.git_scan": "hardened", // false ignored: the repositories stay protected
 
 	"env.clearenv":     "inert",
 	"env.inherit_all":  "hardened",

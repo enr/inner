@@ -30,7 +30,7 @@ the environment and which credentials stay visible, so one URL would otherwise m
 1. **hardens it** — `inherit_all` is ignored, `[env] inherit` entries whose name looks
    like a secret (`*TOKEN*`, `*SECRET*`, `*KEY*`, …) are dropped, `[sandbox] allow`
    keys that un-hide credentials or hand over a container socket are removed,
-   `pid_namespace = false`, `git_dir = "rw"` and `clipboard = true` are ignored,
+   `pid_namespace = false`, `git_dir = "rw"`, `git_scan = false` and `clipboard = true` are ignored,
    mounts that move a hidden path elsewhere and published ports on a non-loopback
    address are dropped, and `$VAR` references resolve without your environment
    (the full list is in [`inner run` from a URL](commands.md#profiles-downloaded-from-a-url));
@@ -741,6 +741,17 @@ Each mount is searched on its own budget: one with more than 20000 directories
 is not searched to the end, and the run starts with a warning naming it
 (narrow the workdir, or use `git_dir = "ro"`).
 
+A `[mounts]` entry with `git_scan = false` is not searched at all: use it for
+a cache that holds no repository you run git in, such as Maven's local
+repository, which easily exceeds the budget. The mount stays writable for the
+protection's purposes, so a `core.hooksPath` or a config include that points
+into it is still made read-only.
+
+```toml
+[mounts]
+"~/.m2" = { dest = "~/.m2", mode = "rw", git_scan = false }
+```
+
 **Placeholders.** A file that does not exist cannot be made read-only: the
 sandbox could simply create it. So `inner` creates a few placeholders on the
 host before the sandbox starts:
@@ -1092,6 +1103,7 @@ A destination must exist on the host unless it is created for you — see
 |------|------|-------------|
 | `dest` | string | Destination path inside the sandbox |
 | `mode` | string | `ro` (read-only), `rw` (read-write), `safe-rw` (copy-on-run, see below), or `tmpfs` (in-memory filesystem) |
+| `git_scan` | bool | `true`: the [git protection](#git-dir-repository-protection) searches a writable mount for repositories. `false` for a cache such as `~/.m2` that holds no repository you run git in |
 
 Source paths (keys) support `~` expansion, `$VAR`/`${VAR}` environment variable substitution, and the `${workdir}` token described below.
 

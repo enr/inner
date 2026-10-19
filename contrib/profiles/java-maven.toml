@@ -10,7 +10,9 @@ extends        = "shell-containers"
 #   [sandbox]
 #   allow = ["maven-settings"]
 [mounts]
-"~/.m2" = { dest = "~/.m2", mode = "rw" }
+# git_scan = false: the local repository is an artifact cache, too large to
+# search for git repositories and holding none the user runs git in.
+"~/.m2" = { dest = "~/.m2", mode = "rw", git_scan = false }
 
 [env]
 inherit = ["JAVA_HOME"]

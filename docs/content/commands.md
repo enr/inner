@@ -127,7 +127,7 @@ inner run -p https://raw.githubusercontent.com/acme/profiles/main/claude-restric
 A profile fetched over HTTPS configures the whole sandbox, so it is treated as untrusted
 input: `inner` strips the settings that would hand it host privileges (`inherit_all`,
 secret-looking `[env] inherit` names, credential and socket `allow` keys,
-`pid_namespace = false`, `git_dir = "rw"`, mounts that move a hidden path elsewhere,
+`pid_namespace = false`, `git_dir = "rw"`, `git_scan = false`, mounts that move a hidden path elsewhere,
 `clipboard`, a published port on a non-loopback address), ignores the host-side paths it could choose (`[output] log`,
 `workspaces_path`, `[entrypoint] workdir` — pass `-w`), resolves `$VAR` in its values
 without your environment (only `$HOME`, `$USER`, `$UID`), prints what it still asks
