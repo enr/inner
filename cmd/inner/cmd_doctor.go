@@ -109,7 +109,11 @@ func (a *App) doctor(w io.Writer, asJSON bool) error {
 	}
 
 	// ── auto-init and profiles dir ───────────────────────────────────────────
-	_ = setup.Init(a.loader.Dir) // best-effort: ensure dir exists before checking
+	// best-effort: ensure dir exists before checking
+	if r, err := setup.InitVerbose(a.loader.Dir); err == nil && len(r.ProfilesInstalled) > 0 {
+		okLine(fmt.Sprintf("profiles: installed %d default profile(s): %s",
+			len(r.ProfilesInstalled), strings.Join(r.ProfilesInstalled, ", ")))
+	}
 
 	profilesDir := a.loader.ProfilesDir()
 	entries, err := os.ReadDir(profilesDir)

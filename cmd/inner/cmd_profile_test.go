@@ -120,6 +120,26 @@ func TestProfileList_noDir(t *testing.T) {
 	}
 }
 
+func TestProfileListCmd_installsDefaults(t *testing.T) {
+	app, _ := newTestApp(t)
+	// profiles dir does not exist: the command installs the defaults first
+
+	var buf bytes.Buffer
+	cmd := app.profileListCmd()
+	cmd.SetOut(&buf)
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("profile list: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "No profiles") {
+		t.Errorf("expected default profiles to be installed, got: %s", out)
+	}
+	if !strings.Contains(out, "shell") {
+		t.Errorf("expected default 'shell' profile in output, got: %s", out)
+	}
+}
+
 func TestProfileList_ignoresNonToml(t *testing.T) {
 	app, dir := newTestApp(t)
 	writeTestFile(t, filepath.Join(dir, "profiles", "real.toml"), `name = "real"`)

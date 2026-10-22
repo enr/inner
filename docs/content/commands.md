@@ -228,7 +228,8 @@ Manage sandbox profiles stored in `~/.config/inner/profiles/`.
 
 ### `inner profile list`
 
-List all available profiles:
+List all available profiles. On first use it installs the default profiles
+into `~/.config/inner/profiles/`, as `inner run` and `inner doctor` do:
 
 ```bash
 inner profile list
