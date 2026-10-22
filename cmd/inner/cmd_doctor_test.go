@@ -31,6 +31,26 @@ func TestDoctor_noError(t *testing.T) {
 	}
 }
 
+func TestDoctor_reportsInstalledProfiles(t *testing.T) {
+	app, _ := newTestApp(t)
+
+	var first bytes.Buffer
+	if err := app.doctor(&first, false); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if !strings.Contains(first.String(), "installed") {
+		t.Errorf("expected first run to report installed default profiles, got:\n%s", first.String())
+	}
+
+	var second bytes.Buffer
+	if err := app.doctor(&second, false); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if strings.Contains(second.String(), "default profile(s):") {
+		t.Errorf("expected second run to install nothing, got:\n%s", second.String())
+	}
+}
+
 func TestDoctor_json(t *testing.T) {
 	app, _ := newTestApp(t)
 	var buf bytes.Buffer

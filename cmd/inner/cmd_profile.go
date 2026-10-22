@@ -13,6 +13,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/enr/inner/internal/config"
 	"github.com/enr/inner/internal/profile"
+	"github.com/enr/inner/internal/setup"
 	"github.com/spf13/cobra"
 )
 
@@ -785,6 +786,9 @@ func (a *App) profileListCmd() *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   "List available profiles",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Like run and doctor, install the default profiles on first use so
+			// a fresh setup lists them instead of reporting a missing directory.
+			_ = setup.Init(a.loader.Dir) // best-effort: listing still works without it
 			return a.profileList(cmd.OutOrStdout(), wide, asJSON)
 		},
 	}
