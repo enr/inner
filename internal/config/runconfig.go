@@ -94,6 +94,11 @@ type RunConfig struct {
 	// mounts, computed by the host-side preparation once the mounts are final.
 	// The isolator emits its binds after every other mount.
 	GitGuard gitguard.Plan
+	// ChromeBrowser is what "chrome-browser" in Allow puts back into the
+	// sandbox, computed by the host-side preparation. The isolator emits its
+	// binds after the sensitive-resource hiding, so the extension directories
+	// survive the browser-profiles mask.
+	ChromeBrowser ChromeBrowserPlan
 	// Capabilities lists the named tool integrations active for this run.
 	// Populated from Profile.Capabilities; inherited via extends.
 	Capabilities []string

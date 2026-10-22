@@ -60,6 +60,9 @@ var ValidAllowKeys = []string{
 	// The host's abstract unix sockets under network_mode = "full" (no
 	// filesystem path: lifts the Landlock scope, see internal/landlock).
 	"abstract-sockets",
+	// The Claude in Chrome native host socket and the extension's install
+	// directory (no hide action: it adds binds, see ChromeBrowserPlan).
+	"chrome-browser",
 	// Verify-only declassification keys (no filesystem hide action).
 	"env-secrets", "shims-active", "network-policy",
 }

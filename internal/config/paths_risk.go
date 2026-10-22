@@ -89,12 +89,13 @@ var CredentialAllowKeys = []string{
 // to read: container sockets, the nested user namespace, the session bus and
 // systemd user manager (both can start processes outside the sandbox), and
 // the ssh/gpg agents (they sign with keys the sandbox cannot otherwise see),
-// and the host's abstract unix sockets (the X server types into any window).
+// the host's abstract unix sockets (the X server types into any window), and
+// the Claude in Chrome bridge (it drives the user's logged-in browser).
 // A profile downloaded from a URL never gets to choose them.
 var HostPrivilegeAllowKeys = []string{
 	"docker-socket", "podman-socket", "nested-user-ns",
 	"session-bus", "systemd-user", "ssh-agent", "gpg-agent",
-	"abstract-sockets",
+	"abstract-sockets", "chrome-browser",
 }
 
 // allowImplies lists allow keys that also enable others. Listing ssh-keys or

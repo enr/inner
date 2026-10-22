@@ -862,6 +862,7 @@ By default `inner` blocks access to sensitive host resources. To grant access, l
 | `systemd-user` | `/run/user/$UID/systemd/` (the systemd user manager's private socket — same power as above) |
 | `ssh-agent` | `/run/user/$UID/{ssh-agent.socket,openssh_agent,gcr/ssh,keyring/ssh}` (ssh-agent sockets: sign with your keys without reading them) |
 | `gpg-agent` | `/run/user/$UID/gnupg/` (gpg-agent sockets) |
+| `chrome-browser` | Claude in Chrome: `/tmp/claude-mcp-browser-bridge-$USER/` read-write (the native host sockets the browser spawns) and, read-only, only the extension's install directory `<profile>/Extensions/fcoeoabgfenejglbffodgkkbkcdhcgfn` of each Chromium-based browser profile and the CLI's native messaging manifest. The rest of the profiles stays hidden. The agent drives your logged-in browser — see [Claude in Chrome](#claude-in-chrome) |
 
 `keyrings` also covers `/run/user/$UID/keyring/control` (the gnome-keyring
 control socket). `ssh-keys` implies `ssh-agent`, and `gpg-keys` implies
@@ -926,6 +927,33 @@ The two socket keys are distinct because they point to different paths: `docker-
 network = true
 allow = ["ssh-keys", "git-credentials"]
 ```
+
+### Claude in Chrome {#claude-in-chrome}
+
+The claude CLI talks to the Claude in Chrome extension through the native host
+the browser spawns, which listens in `/tmp/claude-mcp-browser-bridge-$USER/`.
+Before dialing it, the CLI checks that the extension is installed by looking
+for its directory in a browser profile. Inside the sandbox both are hidden: `/tmp`
+is a private tmpfs and the browser profiles are masked (`browser-profiles`), so
+`/chrome` sees the browser but not the extension.
+
+```toml
+[sandbox]
+allow = ["chrome-browser"]
+```
+
+puts back exactly what the CLI needs: the bridge directory (read-write), the
+extension's install directory and the CLI's native messaging manifest
+(`NativeMessagingHosts/com.anthropic.claude_code_browser_extension.json`, both
+read-only), mounted on top of the `browser-profiles` mask. Without the manifest
+the CLI takes every run for a first install and launches the browser from
+inside the sandbox. Cookies, saved passwords and the rest of the profiles
+stay hidden. `inner` creates the bridge directory (mode `0700`) when it is
+missing, so the sandbox can start before the browser; an existing one that is
+not a `0700` directory owned by you is refused.
+
+This is a host privilege, not a file: the agent can open pages and act in your
+real browser with your sessions. A profile downloaded from a URL never gets it.
 
 ### What `inner` refuses, and what it only warns about {#safety-checks}
 

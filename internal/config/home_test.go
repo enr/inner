@@ -127,7 +127,7 @@ func TestSensitiveResources_coverKnownKeys(t *testing.T) {
 	}
 	// Every filesystem hide key must be declared exactly once: a key in
 	// ValidAllowKeys with no resource would be silently unenforceable.
-	verifyOnly := []string{"nested-user-ns", "abstract-sockets", "env-secrets", "shims-active", "network-policy"}
+	verifyOnly := []string{"nested-user-ns", "abstract-sockets", "chrome-browser", "env-secrets", "shims-active", "network-policy"}
 	for _, key := range ValidAllowKeys {
 		if slices.Contains(verifyOnly, key) {
 			continue

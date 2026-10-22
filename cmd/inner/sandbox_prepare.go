@@ -112,6 +112,13 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 	}
 	cleanups = append(cleanups, cleanupContainers)
 
+	// Claude in Chrome bridge. Shared by both commands: verify must see the
+	// binds a run gets, and the only side effect is an empty 0700 directory
+	// the native host would create anyway.
+	if err := applyChromeBrowser(rc); err != nil {
+		return fail("%w", err)
+	}
+
 	if opts.GitConfig && rc.Git != nil {
 		gitPath, err := git.Sanitize(rc.Git)
 		if err != nil {

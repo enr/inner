@@ -768,6 +768,23 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		}
 	}
 
+	// ── Claude in Chrome ─────────────────────────────────────────────────────
+	// After the hiding above, so the extension directories and the native host
+	// manifests land on top of the browser-profiles mask: they are the only
+	// part of the profiles exposed.
+	// The bridge directory goes into the sandbox /tmp read-write, since the
+	// claude CLI creates its own socket there too.
+	if isAllowed(cfg.Allow, "chrome-browser") {
+		if dir := cfg.ChromeBrowser.BridgeDir; dir != "" && b.pathExists(dir) {
+			args = append(args, "--bind", dir, dir)
+		}
+		for _, path := range slices.Concat(cfg.ChromeBrowser.ExtensionDirs, cfg.ChromeBrowser.NativeHostManifests) {
+			if b.pathExists(path) {
+				args = append(args, "--ro-bind", path, path)
+			}
+		}
+	}
+
 	// ── Shim dir ─────────────────────────────────────────────────────────────
 	// Mount the shim directory read-only at /tmp/inner-shims inside the sandbox,
 	// then prepend it to PATH so shims take precedence over real binaries.
