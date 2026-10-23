@@ -836,6 +836,16 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		args = append(args, "--setenv", containers.OverrideEnvVar, sandboxContainersConf)
 	}
 
+	// ── Interactive bash init file ───────────────────────────────────────────
+	// Generated per run on the host tmp dir (see prepareInteractiveShell) and
+	// exposed at a fixed in-sandbox path that the entrypoint's --init-file
+	// already points at. Like containers.conf it lives on the /tmp tmpfs, so
+	// --dir does not touch the read-only root.
+	if cfg.ShellInitPath != "" {
+		args = append(args, "--dir", filepath.Dir(config.SandboxShellInitPath))
+		args = append(args, "--ro-bind", cfg.ShellInitPath, config.SandboxShellInitPath)
+	}
+
 	// ── Git config injection ─────────────────────────────────────────────────
 	if cfg.GitConfigPath != "" {
 		// Mount at a fixed in-sandbox path rather than the host /tmp path to

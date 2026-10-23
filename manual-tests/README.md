@@ -194,7 +194,7 @@ Terminal behaviour to check while you are in there: paste a three-line snippet
 
 ## Known environmental limits
 
-Two of these need things a plain shell session has but a container or a nested
+The probe needs something a plain shell session has but a container or a nested
 sandbox often does not:
 
 - **A pseudo-terminal.** Without one, `/dev/tty` cannot be opened and the probe
@@ -202,11 +202,6 @@ sandbox often does not:
   correctly, not a failure of `inner` — but it also means the run proves
   nothing about signals, so do not record it as a pass. `./pty-test` detects
   this up front and exits 77 rather than reporting failures.
-- **A writable `~/.config/inner`.** `shell-allowlist.toml` uses a `bash`
-  entrypoint, which makes `inner` write a `shell-init.sh` there to set the
-  sandbox prompt. Where that directory is read-only the run stops before
-  starting. The probe profiles avoid this by making the script itself the
-  entrypoint.
 
 ## Recording the result
 

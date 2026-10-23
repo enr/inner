@@ -1394,6 +1394,33 @@ func TestBuild_containersConf_setenvAfterClearenv(t *testing.T) {
 	}
 }
 
+// ── Interactive bash init file ───────────────────────────────────────────────
+
+func TestBuild_shellInit_boundAtSandboxPath(t *testing.T) {
+	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{
+		ShellInitPath: "/tmp/inner-shell-abc/shell-init.sh",
+		Entrypoint:    config.Entrypoint{Cmd: "bash", Args: []string{"--init-file", config.SandboxShellInitPath}},
+	})
+	if !hasSeq(args, "--ro-bind", "/tmp/inner-shell-abc/shell-init.sh", config.SandboxShellInitPath) {
+		t.Errorf("expected shell-init.sh bound at %q, got %v", config.SandboxShellInitPath, args)
+	}
+	// The bind must come after the /tmp tmpfs, or the tmpfs would hide it.
+	tmpfs := lastIndexOfSeq(args, "--tmpfs", "/tmp")
+	bind := lastIndexOfSeq(args, "--ro-bind", "/tmp/inner-shell-abc/shell-init.sh", config.SandboxShellInitPath)
+	if tmpfs < 0 || bind < tmpfs {
+		t.Errorf("shell-init.sh bind must follow --tmpfs /tmp, got %v", args)
+	}
+}
+
+func TestBuild_shellInit_absentWhenUnset(t *testing.T) {
+	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
+	args := cmdArgs(t, iso, config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "bash"}})
+	if slices.Contains(args, config.SandboxShellInitPath) {
+		t.Errorf("no init file generated: %s must not be mounted, got %v", config.SandboxShellInitPath, args)
+	}
+}
+
 // ── Network allowlist proxy ───────────────────────────────────────────────────
 
 // In allowlist mode the sandbox keeps its private namespace AND gets the one

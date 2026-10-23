@@ -272,9 +272,11 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 
 	// 6. For interactive bash: inject --init-file so PS1 survives ~/.bashrc.
-	if err := prepareInteractiveShell(rc, a.loader.Dir, rc.Env.Set["PS1"]); err != nil {
+	cleanupShell, err := prepareInteractiveShell(rc, rc.Env.Set["PS1"])
+	if err != nil {
 		return fmt.Errorf("preparing interactive shell: %w", err)
 	}
+	defer cleanupShell()
 
 	// 7. Validate — print all issues; block on unknown allow keys or errors.
 	//    A downloaded profile was already validated before its consent gate.

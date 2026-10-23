@@ -37,24 +37,30 @@ var claudeAutoConfirmDelay = 1 * time.Second
 // prepareInteractiveShell injects `--init-file` into bash entrypoints so our
 // sandbox PS1 wins even after ~/.bashrc runs.
 //
-// It writes <innerDir>/shell-init.sh (accessible inside the sandbox via the root
-// ro-bind, no extra mounts needed), then prepends ["--init-file", path] to the
-// entrypoint args. It is a no-op for non-bash or non-interactive configs.
-func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
+// It writes the init file into a fresh host temp directory, records it on
+// rc.ShellInitPath (the isolator binds it read-only at
+// config.SandboxShellInitPath) and prepends ["--init-file", that sandbox path]
+// to the entrypoint args. A per-run file, rather than one under ~/.config/inner,
+// keeps runs from rewriting a shared host file and concurrent sessions of
+// different profiles from picking up each other's prompt and history.
+//
+// Returns a cleanup that removes the generated file; the cleanup is never nil.
+// It is a no-op for non-bash or non-interactive configs.
+func prepareInteractiveShell(rc *config.RunConfig, ps1 string) (func(), error) {
+	noop := func() {}
 	if !rc.Entrypoint.Interactive {
-		return nil
+		return noop, nil
 	}
 	if filepath.Base(rc.Entrypoint.Cmd) != "bash" {
-		return nil
+		return noop, nil
 	}
 	// Respect an explicit --init-file / --rcfile already set in the profile.
 	for _, arg := range rc.Entrypoint.Args {
 		if arg == "--init-file" || arg == "--rcfile" {
-			return nil
+			return noop, nil
 		}
 	}
 
-	initPath := filepath.Join(innerDir, "shell-init.sh")
 	// Do NOT source ~/.bashrc: it could export personal data (API keys, tokens,
 	// private paths) that clearenv+inherit is designed to keep out of the sandbox.
 	// bash --init-file replaces ~/.bashrc, so only this file runs.
@@ -68,19 +74,20 @@ func prepareInteractiveShell(rc *config.RunConfig, innerDir, ps1 string) error {
 		content += "history -s " + fmt.Sprintf("%q", cmd) + "\n"
 	}
 
-	if err := os.WriteFile(initPath, []byte(content), 0o755); err != nil {
-		return fmt.Errorf("writing shell-init.sh: %w", err)
+	dir, err := os.MkdirTemp("", "inner-shell-*")
+	if err != nil {
+		return noop, fmt.Errorf("creating shell-init dir: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(dir) } //nolint:errcheck
+	initPath := filepath.Join(dir, "shell-init.sh")
+	if err := os.WriteFile(initPath, []byte(content), 0o644); err != nil {
+		cleanup()
+		return noop, fmt.Errorf("writing shell-init.sh: %w", err)
 	}
 
-	// innerDir lives under $HOME (~/.config/inner). With home = "isolated" the
-	// home tmpfs would erase the file we just wrote before bash could source it,
-	// so re-expose exactly that one file — not the directory around it.
-	if rc.HomeIsolated() {
-		rc.HomeAllow = append(rc.HomeAllow, initPath)
-	}
-
-	rc.Entrypoint.Args = append([]string{"--init-file", initPath}, rc.Entrypoint.Args...)
-	return nil
+	rc.ShellInitPath = initPath
+	rc.Entrypoint.Args = append([]string{"--init-file", config.SandboxShellInitPath}, rc.Entrypoint.Args...)
+	return cleanup, nil
 }
 
 // sandboxPS1 returns a bash PS1 that makes it immediately visible that the

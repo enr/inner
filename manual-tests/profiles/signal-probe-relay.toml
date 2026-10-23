@@ -23,8 +23,7 @@ inherit  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG"]
 # The script IS the entrypoint, not an argument to bash. Two reasons:
 #
 #  - a bash entrypoint makes inner inject --init-file to set PS1, which would
-#    both need a writable config dir and change what bash does with a script
-#    argument;
+#    change what bash does with a script argument;
 #  - tui = false is REQUIRED here. tui = true puts the terminal in raw mode
 #    before the child starts, and raw mode disables ISIG — Ctrl-C would arrive
 #    as the byte 0x03 and never become a SIGINT, which would make this probe

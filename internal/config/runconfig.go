@@ -2,6 +2,12 @@ package config
 
 import "github.com/enr/inner/internal/gitguard"
 
+// SandboxShellInitPath is where the per-run bash init file (see
+// RunConfig.ShellInitPath) appears inside the sandbox. It is a fixed path on
+// the sandbox /tmp tmpfs, so it neither depends on $HOME nor leaks the host
+// tmp layout.
+const SandboxShellInitPath = "/tmp/inner/shell-init.sh"
+
 // RunConfig is the backend-agnostic representation of a sandbox run.
 // It speaks in terms of intent, never backend-specific flags.
 // Produced by the Loader; consumed by the Isolator.
@@ -111,6 +117,11 @@ type RunConfig struct {
 	// injected into the sandbox for rootless podman. Empty when no override is
 	// active. Set by cmd_run.go / cmd_verify.go via applyContainersConf().
 	ContainersConfPath string
+	// ShellInitPath is the host path of the per-run bash init file generated
+	// for interactive bash entrypoints (PS1 and pre-seeded history). The
+	// isolator binds it read-only at SandboxShellInitPath. Empty when no init
+	// file is active. Set by cmd_run.go via prepareInteractiveShell().
+	ShellInitPath string
 
 	// KeepHostAbstractSockets is set by a preparation step that hands the
 	// sandbox a host abstract unix socket on purpose (an unfiltered session

@@ -325,19 +325,23 @@ func TestSandboxPS1_containsUserAndProfile(t *testing.T) {
 // ── prepareInteractiveShell ───────────────────────────────────────────────────
 
 func TestPrepareInteractiveShell_injectsBashInitFile(t *testing.T) {
-	dir := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
 	rc := &config.RunConfig{
-		Entrypoint: config.Entrypoint{Cmd: "/bin/bash", Interactive: true},
+		Entrypoint: config.Entrypoint{Cmd: "/bin/bash", Interactive: true, History: []string{"mvn test"}},
 	}
-	if err := prepareInteractiveShell(rc, dir, "(inner) $ "); err != nil {
+	cleanup, err := prepareInteractiveShell(rc, "(inner) $ ")
+	if err != nil {
 		t.Fatalf("prepareInteractiveShell: %v", err)
 	}
-	if len(rc.Entrypoint.Args) < 2 || rc.Entrypoint.Args[0] != "--init-file" {
-		t.Errorf("expected --init-file as first arg, got: %v", rc.Entrypoint.Args)
+	defer cleanup()
+	// bash is pointed at the fixed in-sandbox path, which the isolator binds
+	// to the host file recorded on rc.
+	if !slices.Equal(rc.Entrypoint.Args, []string{"--init-file", config.SandboxShellInitPath}) {
+		t.Errorf("expected --init-file %s, got: %v", config.SandboxShellInitPath, rc.Entrypoint.Args)
 	}
 	// Init file must exist, set PS1, and NOT source ~/.bashrc
 	// (sourcing it would leak personal data that clearenv is meant to block).
-	content, err := os.ReadFile(rc.Entrypoint.Args[1])
+	content, err := os.ReadFile(rc.ShellInitPath)
 	if err != nil {
 		t.Fatalf("reading init file: %v", err)
 	}
@@ -346,6 +350,43 @@ func TestPrepareInteractiveShell_injectsBashInitFile(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "PS1=") {
 		t.Error("init file should set PS1")
+	}
+	if !strings.Contains(string(content), `history -s "mvn test"`) {
+		t.Errorf("init file should pre-seed history, got:\n%s", content)
+	}
+}
+
+// Regression: the init file used to be written to ~/.config/inner/shell-init.sh,
+// so every run of any profile rewrote that shared host file, and two sessions
+// started together could swap prompts and history. Each run must now get its
+// own file, removed by the cleanup.
+func TestPrepareInteractiveShell_perRunFileRemovedByCleanup(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	newRC := func() *config.RunConfig {
+		return &config.RunConfig{Entrypoint: config.Entrypoint{Cmd: "bash", Interactive: true}}
+	}
+	rcA, rcB := newRC(), newRC()
+	cleanupA, err := prepareInteractiveShell(rcA, "A $ ")
+	if err != nil {
+		t.Fatalf("prepareInteractiveShell A: %v", err)
+	}
+	cleanupB, err := prepareInteractiveShell(rcB, "B $ ")
+	if err != nil {
+		t.Fatalf("prepareInteractiveShell B: %v", err)
+	}
+	defer cleanupB()
+	if rcA.ShellInitPath == rcB.ShellInitPath {
+		t.Fatalf("two runs share the init file %q", rcA.ShellInitPath)
+	}
+	if a, _ := os.ReadFile(rcA.ShellInitPath); !strings.Contains(string(a), `PS1="A $ "`) {
+		t.Errorf("run A's init file was overwritten: %q", a)
+	}
+	cleanupA()
+	if _, err := os.Stat(rcA.ShellInitPath); !os.IsNotExist(err) {
+		t.Errorf("cleanup must remove the init file, stat err = %v", err)
+	}
+	if _, err := os.Stat(rcB.ShellInitPath); err != nil {
+		t.Errorf("cleanup of run A must not touch run B's file: %v", err)
 	}
 }
 
@@ -484,11 +525,10 @@ func TestClaudeShimScript_quotesTheRealPath(t *testing.T) {
 }
 
 func TestPrepareInteractiveShell_noopForNonInteractive(t *testing.T) {
-	dir := t.TempDir()
 	rc := &config.RunConfig{
 		Entrypoint: config.Entrypoint{Cmd: "/bin/bash", Interactive: false},
 	}
-	if err := prepareInteractiveShell(rc, dir, "(inner) $ "); err != nil {
+	if _, err := prepareInteractiveShell(rc, "(inner) $ "); err != nil {
 		t.Fatalf("prepareInteractiveShell: %v", err)
 	}
 	if len(rc.Entrypoint.Args) != 0 {
@@ -497,11 +537,10 @@ func TestPrepareInteractiveShell_noopForNonInteractive(t *testing.T) {
 }
 
 func TestPrepareInteractiveShell_noopForNonBash(t *testing.T) {
-	dir := t.TempDir()
 	rc := &config.RunConfig{
 		Entrypoint: config.Entrypoint{Cmd: "claude", Interactive: true},
 	}
-	if err := prepareInteractiveShell(rc, dir, "(inner) $ "); err != nil {
+	if _, err := prepareInteractiveShell(rc, "(inner) $ "); err != nil {
 		t.Fatalf("prepareInteractiveShell: %v", err)
 	}
 	if len(rc.Entrypoint.Args) != 0 {
@@ -510,7 +549,6 @@ func TestPrepareInteractiveShell_noopForNonBash(t *testing.T) {
 }
 
 func TestPrepareInteractiveShell_noopIfInitFileAlreadySet(t *testing.T) {
-	dir := t.TempDir()
 	rc := &config.RunConfig{
 		Entrypoint: config.Entrypoint{
 			Cmd:         "bash",
@@ -518,7 +556,7 @@ func TestPrepareInteractiveShell_noopIfInitFileAlreadySet(t *testing.T) {
 			Interactive: true,
 		},
 	}
-	if err := prepareInteractiveShell(rc, dir, "(inner) $ "); err != nil {
+	if _, err := prepareInteractiveShell(rc, "(inner) $ "); err != nil {
 		t.Fatalf("prepareInteractiveShell: %v", err)
 	}
 	if rc.Entrypoint.Args[0] != "--init-file" || rc.Entrypoint.Args[1] != "/custom/rc" {

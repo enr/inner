@@ -793,20 +793,13 @@ else
     fail "non-interactive profile: --unshare-pid missing from bwrap command"
 fi
 
-# An interactive profile makes inner write shell-init.sh into its config dir
-# (to inject PS1 through bash --init-file), so these two assertions need that
-# directory to be writable. Where it is not — a read-only $HOME, or inner run
-# from inside another sandbox — the dry-run fails and produces an EMPTY bwrap
-# line, which would make the --new-session assertion below pass for the wrong
-# reason: grep finds no --new-session in an empty string either.
-INNER_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/inner"
+# An empty bwrap line means the dry-run failed; the --new-session assertion
+# below would then pass for the wrong reason (grep finds no --new-session in an
+# empty string either), so treat it as a failure. The interactive profile's
+# shell-init.sh is a per-run temp file, so no writable config dir is needed.
 LINE=$(bwrap_line "$INTERACTIVE")
 if [[ -z "$LINE" ]]; then
-    if [[ -w "$INNER_CONFIG_DIR" ]]; then
-        fail "interactive profile: dry-run produced no bwrap command"
-    else
-        printf "  [SKIP] %s is not writable, skipping interactive dry-run checks\n" "$INNER_CONFIG_DIR"
-    fi
+    fail "interactive profile: dry-run produced no bwrap command"
 else
     # Interactive profile must now ALSO get PID isolation.
     if echo "$LINE" | grep -q -- "--unshare-pid"; then
