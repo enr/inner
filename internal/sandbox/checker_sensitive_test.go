@@ -15,6 +15,17 @@ import (
 // machine running them has a session bus or a gpg-agent.
 const noSuchUID = "4294967294"
 
+// TestMain clears the host variables that relocate sensitive resources: with
+// them set, SensitiveResources follows the developer's own session — e.g.
+// SSH_AUTH_SOCK=/run/user/1000/gcr/ssh from gnome-keyring, a live socket — and
+// checks that expect a clean host fail for reasons the test did not plant.
+func TestMain(m *testing.M) {
+	for _, name := range config.RelocationEnvVars() {
+		os.Unsetenv(name) //nolint:errcheck
+	}
+	os.Exit(m.Run())
+}
+
 func resultByID(results []CheckResult, id string) (CheckResult, bool) {
 	for _, r := range results {
 		if r.ID == id {
