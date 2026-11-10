@@ -10,6 +10,14 @@ A **profile** is a TOML file that fully describes a sandbox environment. Profile
 
 **Local (per-directory) profiles** can be placed in `.config/inner/profiles/` inside the current working directory. They are discovered automatically and shown with a `[local]` tag in `inner profile list`. When a local profile has the same name as a global one, the **local profile takes precedence** — `inner run -p foo` will load `.config/inner/profiles/foo.toml` rather than `~/.config/inner/profiles/foo.toml`. The shadowed global profile is hidden in the default list view and visible only with `inner profile list --wide`.
 
+Because the workdir is writable from inside the sandbox, a run can create or change the project profiles and project config files that the next run loads — an agent asked to "set up inner for this repo" will do exactly that. `inner run` does not block it; when the run ends it lists every inner configuration file that was created, modified or removed (project config files in the workdir and its parents, `.config/inner/profiles/`, and `~/.config/inner/`), so you can review them before the next run:
+
+```
+inner: warning: this run changed inner configuration that later runs load:
+  created   ~/src/app/.config/inner/profiles/claude-interactive.toml
+  review them before the next run: a profile can open the network, un-hide credentials or forward host variables
+```
+
 Alternatively, you can pass a **file path** directly to `-p`/`--profile`. A value that contains `/`, starts with `~` or ends in `.toml` is a file path and is loaded as-is (relative paths are tried against the current directory); anything else is a profile name looked up in the profiles directory, even when a file or folder with that name exists in the current directory — so `-p rust` keeps loading the `rust` profile from a project that has a `rust/` folder. This lets you use local or project-specific profile files without installing them in `~/.config/inner/profiles/`:
 
 ```bash

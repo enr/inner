@@ -385,6 +385,11 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 	fmt.Fprintf(a.errW(), "inner: run %s\n", runID)
 
+	// The workdir is writable: the run may change the inner configuration
+	// the next run loads. Report it afterwards — see config_watch.go.
+	watchDirs := []string{a.loader.WorkDir, rc.Workdir}
+	configBefore := takeConfigSnapshot(a.loader.Dir, watchDirs)
+
 	launcher := a.launcherFn()
 	result, err := launcher.Run(cmd, executor.RunOptions{
 		Interactive:  rc.Entrypoint.Interactive,
@@ -395,6 +400,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		LogDir:       rc.LogDir,
 		RunID:        runID,
 	})
+	reportConfigChanges(a.errW(), diffConfigSnapshots(configBefore, takeConfigSnapshot(a.loader.Dir, watchDirs)))
 	rec.finish(result.ExitCode, err, result.LogPath)
 	if werr := writeRunRecord(logsDir, rec); werr != nil {
 		fmt.Fprintf(a.errW(), "inner: warning: cannot write run record: %v\n", werr)
