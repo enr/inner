@@ -1309,9 +1309,11 @@ Different runtimes (Java, Node, …) don't conflict on `PATH`: list multiple dir
 
 Sanitize the git configuration injected into the sandbox.
 
+The sandbox gets, as its global git config, a sanitized copy of the host's: `~/.config/git/config` (or `$XDG_CONFIG_HOME/git/config`) followed by `~/.gitconfig`, the order git reads them in. Includes are resolved on the host so the rules below reach them too: `[include]` files are inlined, and the target of each `[includeIf]` is copied, sanitized, next to the main file, with the condition left as it is.
+
 | Key | Type | Description |
 |-----|------|-------------|
-| `strip_sections` | list | Remove entire sections from `~/.gitconfig` (e.g. `["credential"]`) |
+| `strip_sections` | list | Remove entire sections from the global git config and its includes (e.g. `["credential"]`) |
 | `overrides` | table | Override individual git config keys inside the sandbox |
 
 ```toml

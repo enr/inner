@@ -825,14 +825,15 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 
 	// ── Git config injection ─────────────────────────────────────────────────
 	if cfg.GitConfigPath != "" {
-		// Mount at a fixed in-sandbox path rather than the host /tmp path to
-		// avoid leaking the host tmp layout into the sandbox.
-		// /tmp is already a writable tmpfs; --dir there avoids touching the
-		// read-only root bind.
-		const sandboxGitConfig = "/tmp/inner/gitconfig"
-		args = append(args, "--dir", "/tmp/inner")
-		args = append(args, "--ro-bind", cfg.GitConfigPath, sandboxGitConfig)
-		args = append(args, "--setenv", "GIT_CONFIG_GLOBAL", sandboxGitConfig)
+		// The whole directory goes in: next to the config sit the sanitized
+		// copies of its [includeIf] targets, which the config names by their
+		// in-sandbox path. Mounted at a fixed in-sandbox path rather than the
+		// host /tmp path to avoid leaking the host tmp layout into the
+		// sandbox. /tmp is already a writable tmpfs; --dir there avoids
+		// touching the read-only root bind.
+		args = append(args, "--dir", config.SandboxGitConfigDir)
+		args = append(args, "--ro-bind", filepath.Dir(cfg.GitConfigPath), config.SandboxGitConfigDir)
+		args = append(args, "--setenv", "GIT_CONFIG_GLOBAL", config.SandboxGitConfigDir+"/"+filepath.Base(cfg.GitConfigPath))
 	}
 
 	// ── Working directory ────────────────────────────────────────────────────

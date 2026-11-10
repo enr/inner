@@ -1,9 +1,12 @@
 package git
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/enr/inner/internal/config"
@@ -41,47 +44,191 @@ func Process(input string, stripSections []string, overrides map[string]string) 
 	for _, strip := range stripSections {
 		sections = applyStrip(sections, strip)
 	}
-	for key, val := range overrides {
-		sections = applyOverride(sections, key, val)
+	keys := make([]string, 0, len(overrides))
+	for k := range overrides {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		sections = applyOverride(sections, key, overrides[key])
 	}
 	return serialize(sections)
 }
 
-// Sanitize reads ~/.gitconfig, applies cfg, writes the result to a temp file,
-// and returns its path. The caller must os.Remove(path) when done.
-func Sanitize(cfg *config.GitConfig) (string, error) {
+// MainFile is the name of the sanitized global config inside the directory
+// Sanitize writes; the copies of [includeIf] targets sit next to it.
+const MainFile = "config"
+
+// maxIncludeDepth is git's own limit on nested includes.
+const maxIncludeDepth = 10
+
+// Sanitize builds the git configuration the sandbox gets as its global one
+// (GIT_CONFIG_GLOBAL) from the host's: $XDG_CONFIG_HOME/git/config (or
+// ~/.config/git/config) and then ~/.gitconfig, the order git itself reads
+// them in — once GIT_CONFIG_GLOBAL is set, git reads neither.
+//
+// It writes a fresh temp directory and returns the path of MainFile in it;
+// the caller removes the directory. sandboxDir is where the isolator binds
+// that directory in the sandbox: [includeIf] paths are rewritten to point
+// there. See SanitizeFrom for how includes are handled.
+func Sanitize(cfg *config.GitConfig, sandboxDir string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
-	return SanitizeFrom(filepath.Join(home, ".gitconfig"), cfg)
+	xdg := os.Getenv("XDG_CONFIG_HOME")
+	if xdg == "" {
+		xdg = filepath.Join(home, ".config")
+	}
+	return SanitizeFrom([]string{filepath.Join(xdg, "git", "config"), filepath.Join(home, ".gitconfig")}, cfg, sandboxDir)
 }
 
-// SanitizeFrom is like Sanitize but reads from an explicit source path.
-// If the source does not exist, the output is produced from an empty input.
-// Used by tests to avoid touching the real ~/.gitconfig.
-func SanitizeFrom(sourcePath string, cfg *config.GitConfig) (string, error) {
-	data, err := os.ReadFile(sourcePath)
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("reading gitconfig %s: %w", sourcePath, err)
-	}
-
-	output := Process(string(data), cfg.StripSections, cfg.Overrides)
-
-	f, err := os.CreateTemp("", "inner-gitconfig-*")
+// SanitizeFrom is Sanitize reading the given sources, in increasing
+// precedence. Missing sources are skipped.
+//
+// Includes are resolved here, on the host, so that strip_sections reaches
+// what they contain — a credential.helper kept in an included file used to
+// survive the strip, read by git inside the sandbox:
+//   - [include] path = … is inlined where it stands, recursively;
+//   - [includeIf "…"] path = … is conditional and cannot be inlined: its
+//     target is copied, with its own includes resolved and strip_sections
+//     applied, next to the main file, and the path is rewritten to the copy
+//     as the sandbox sees it (sandboxDir).
+//
+// Relative include paths resolve against the including file's directory, as
+// in git; a target that cannot be read is dropped, as git ignores it.
+// Overrides are applied last, at the end of the main file, so they win over
+// every included value.
+func SanitizeFrom(sources []string, cfg *config.GitConfig, sandboxDir string) (string, error) {
+	dir, err := os.MkdirTemp("", "inner-gitconfig-*")
 	if err != nil {
-		return "", fmt.Errorf("creating temp gitconfig: %w", err)
+		return "", fmt.Errorf("creating gitconfig dir: %w", err)
 	}
-	if _, err := f.WriteString(output); err != nil {
-		f.Close()
-		os.Remove(f.Name())
-		return "", fmt.Errorf("writing temp gitconfig: %w", err)
+	home, _ := os.UserHomeDir()
+	e := &includeExpander{strip: cfg.StripSections, home: home, sandboxDir: sandboxDir, files: map[string]string{}}
+
+	var main strings.Builder
+	for _, src := range sources {
+		data, err := os.ReadFile(src)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			os.RemoveAll(dir)
+			return "", fmt.Errorf("reading gitconfig %s: %w", src, err)
+		}
+		main.WriteString(e.expand(string(data), filepath.Dir(src), 0))
 	}
-	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
-		return "", err
+	e.files[MainFile] = Process(main.String(), cfg.StripSections, cfg.Overrides)
+
+	for name, content := range e.files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			os.RemoveAll(dir)
+			return "", fmt.Errorf("writing gitconfig: %w", err)
+		}
 	}
-	return f.Name(), nil
+	return filepath.Join(dir, MainFile), nil
+}
+
+// includeExpander resolves the includes of one Sanitize call.
+type includeExpander struct {
+	strip      []string
+	home       string
+	sandboxDir string
+	files      map[string]string // file name in the output dir → content
+	n          int
+}
+
+// expand returns content with its [include] targets inlined and its
+// [includeIf] targets replaced by sanitized copies (see SanitizeFrom).
+func (e *includeExpander) expand(content, baseDir string, depth int) string {
+	var out []rawSection
+	for _, s := range parse(content) {
+		switch {
+		case s.name == "include" && !s.hasSub:
+			for _, line := range s.lines {
+				target, ok := includePath(line, baseDir, e.home)
+				if !ok || depth >= maxIncludeDepth {
+					continue
+				}
+				data, err := os.ReadFile(target)
+				if err != nil {
+					continue
+				}
+				out = append(out, parse(e.expand(string(data), filepath.Dir(target), depth+1))...)
+			}
+		case s.name == "includeif":
+			kept := s
+			kept.lines = nil
+			for _, line := range s.lines {
+				target, ok := includePath(line, baseDir, e.home)
+				if !ok {
+					kept.lines = append(kept.lines, line)
+					continue
+				}
+				data, err := os.ReadFile(target)
+				if err != nil || depth >= maxIncludeDepth {
+					continue
+				}
+				name := fmt.Sprintf("include-%d.config", e.n)
+				e.n++
+				e.files[name] = Process(e.expand(string(data), filepath.Dir(target), depth+1), e.strip, nil)
+				kept.lines = append(kept.lines, "\tpath = "+quoteGitConfigValue(e.sandboxDir+"/"+name))
+			}
+			out = append(out, kept)
+		default:
+			out = append(out, s)
+		}
+	}
+	return serialize(out)
+}
+
+// includePath returns the file a "path = …" line of an include section names,
+// resolved the way git resolves it: ~/ is the home directory, a relative path
+// is relative to the directory of the file holding the include.
+func includePath(line, baseDir, home string) (string, bool) {
+	if key, ok := parseKeyName(line); !ok || key != "path" {
+		return "", false
+	}
+	_, raw, _ := strings.Cut(line, "=")
+	p := unquoteGitConfigValue(strings.TrimSpace(raw))
+	switch {
+	case p == "":
+		return "", false
+	case p == "~" || strings.HasPrefix(p, "~/"):
+		if home == "" {
+			return "", false
+		}
+		p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+	case !filepath.IsAbs(p):
+		p = filepath.Join(baseDir, p)
+	}
+	return filepath.Clean(p), true
+}
+
+// unquoteGitConfigValue undoes the quoting and escapes of a config value.
+func unquoteGitConfigValue(v string) string {
+	var b strings.Builder
+	for i := 0; i < len(v); i++ {
+		switch c := v[i]; {
+		case c == '"':
+		case c == '\\' && i+1 < len(v):
+			i++
+			switch v[i] {
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case 'b':
+				b.WriteByte('\b')
+			default:
+				b.WriteByte(v[i])
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // ── Internal parser ───────────────────────────────────────────────────────────
@@ -254,8 +401,7 @@ func applyStrip(sections []rawSection, strip string) []rawSection {
 
 // applyOverride sets section[.subsection].key = value. Every existing
 // occurrence of the key in the matching sections is removed and the new line
-// goes into the last of them — git reads the last value of a key, and
-// sections may repeat — or into a new section when none matches.
+// goes at the end of the file — git reads the last value of a key.
 //
 // [remote "origin"] and [remote "upstream"] are different sections: an
 // override names the one it means ("remote.origin.url"), and "remote.url"
@@ -283,7 +429,10 @@ func applyOverride(sections []rawSection, overrideKey, value string) []rawSectio
 		}
 		sections[i].lines = kept
 	}
-	if last >= 0 {
+	// At the very end of the file: after every include, so the override wins
+	// over a value an included file sets. Into the last section when it is a
+	// matching one, otherwise in a new section.
+	if last >= 0 && last == len(sections)-1 {
 		sections[last].lines = append(sections[last].lines, newLine)
 		return sections
 	}

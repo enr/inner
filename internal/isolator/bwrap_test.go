@@ -718,13 +718,13 @@ func TestBuild_clipboardFalse_noDisplayArgs(t *testing.T) {
 func TestBuild_gitConfigPath(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{
-		GitConfigPath: "/tmp/inner-gitconfig-abc",
+		GitConfigPath: "/tmp/inner-gitconfig-abc/config",
 		Entrypoint:    config.Entrypoint{Cmd: "sh"},
 	})
 
-	const sandboxPath = "/tmp/inner/gitconfig"
-	if !hasSeq(args, "--ro-bind", "/tmp/inner-gitconfig-abc", sandboxPath) {
-		t.Errorf("expected gitconfig bound to sandbox path %q, got %v", sandboxPath, args)
+	const sandboxPath = "/tmp/inner/git/config"
+	if !hasSeq(args, "--ro-bind", "/tmp/inner-gitconfig-abc", "/tmp/inner/git") {
+		t.Errorf("expected the gitconfig directory bound at /tmp/inner/git, got %v", args)
 	}
 	if !hasSeq(args, "--setenv", "GIT_CONFIG_GLOBAL", sandboxPath) {
 		t.Errorf("expected GIT_CONFIG_GLOBAL=%q, got %v", sandboxPath, args)
@@ -737,7 +737,7 @@ func TestBuild_gitConfigPath_hostPathNotLeaked(t *testing.T) {
 	// It must be mounted at a fixed in-sandbox path instead.
 	iso := testIsolator(runtime.RuntimeInfo{})
 	args := cmdArgs(t, iso, config.RunConfig{
-		GitConfigPath: "/tmp/inner-gitconfig-abc",
+		GitConfigPath: "/tmp/inner-gitconfig-abc/config",
 		Entrypoint:    config.Entrypoint{Cmd: "sh"},
 	})
 	if hasSeq(args, "--ro-bind", "/tmp/inner-gitconfig-abc", "/tmp/inner-gitconfig-abc") {

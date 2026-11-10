@@ -610,7 +610,7 @@ If `cfg.ShimDir` is non-empty (populated by `prepareSandbox` with `shim.Builder.
 
 ### Git config injection
 
-If `cfg.GitConfigPath` is non-empty (set after `git.Sanitize()`), the sanitized gitconfig is bind-mounted at the fixed in-sandbox path `/etc/inner/gitconfig` and `GIT_CONFIG_GLOBAL` is set to that path. The host temp path is never exposed inside the sandbox, so the host `/tmp` layout is not leaked.
+If `cfg.GitConfigPath` is non-empty (set after `git.Sanitize()`), the directory holding the sanitized gitconfig — and the sanitized copies of its `[includeIf]` targets, which it names by their in-sandbox path — is bind-mounted read-only at the fixed in-sandbox path `/tmp/inner/git`, and `GIT_CONFIG_GLOBAL` is set to `/tmp/inner/git/config`. The host temp path is never exposed inside the sandbox, so the host `/tmp` layout is not leaked.
 
 ---
 
