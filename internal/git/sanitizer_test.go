@@ -253,19 +253,100 @@ func TestProcess_subsectionPreserved(t *testing.T) {
 	}
 }
 
-func TestProcess_override_multiInstanceSection_isNoOp(t *testing.T) {
-	// [remote "origin"] and [remote "upstream"] both have section name "remote".
-	// An override of "remote.url" cannot unambiguously target one subsection, so
-	// it must be a no-op rather than silently modifying the first match.
+func TestProcess_override_twoPartKeyLeavesSubsectionsAlone(t *testing.T) {
+	// [remote "origin"] and [remote "upstream"] are not [remote]: an override
+	// of "remote.url" must not touch either of them (git itself would write a
+	// separate [remote] section for it).
 	input := `[remote "origin"]
 	url = https://github.com/user/repo.git
 [remote "upstream"]
 	url = https://github.com/org/repo.git
 `
-	out := Process(input, nil, map[string]string{"remote.url": "https://evil.example.com"})
-	noopOut := Process(input, nil, nil)
-	if out != noopOut {
-		t.Errorf("override on multi-instance section must be a no-op, got:\n%s", out)
+	out := Process(input, nil, map[string]string{"remote.url": "https://elsewhere.example.com"})
+	if !strings.HasPrefix(out, input) {
+		t.Errorf("the existing remote sections must be unchanged, got:\n%s", out)
+	}
+}
+
+// gitGet reads key from a config file with the real git binary, which is the
+// only authority on whether the generated file is valid.
+func gitGet(t *testing.T, content, key string) (string, error) {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	cfgPath := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(gitPath, "config", "--file", cfgPath, "--get-all", key).Output()
+	return strings.TrimRight(string(out), "\n"), err
+}
+
+// A three-part key ("url.<base>.insteadOf") names a subsection. It used to be
+// written as "[url]" plus a line git refuses to parse, which broke every git
+// command in the sandbox.
+func TestProcess_override_threePartKey(t *testing.T) {
+	out := Process("[user]\n\tname = x\n", nil, map[string]string{
+		"url.https://github.com/.insteadOf": "git@github.com:",
+	})
+	if !strings.Contains(out, `[url "https://github.com/"]`) {
+		t.Fatalf("expected a quoted subsection header, got:\n%s", out)
+	}
+	got, err := gitGet(t, out, "url.https://github.com/.insteadOf")
+	if err != nil || got != "git@github.com:" {
+		t.Fatalf("git read %q (err %v), want git@github.com:\n%s", got, err, out)
+	}
+	if name, err := gitGet(t, out, "user.name"); err != nil || name != "x" {
+		t.Fatalf("user.name = %q (err %v), want x", name, err)
+	}
+}
+
+func TestProcess_override_targetsOneSubsection(t *testing.T) {
+	input := `[remote "origin"]
+	url = https://github.com/user/repo.git
+[remote "upstream"]
+	url = https://github.com/org/repo.git
+`
+	out := Process(input, nil, map[string]string{"remote.origin.url": "https://mirror.example.com/repo.git"})
+	if got, _ := gitGet(t, out, "remote.origin.url"); got != "https://mirror.example.com/repo.git" {
+		t.Errorf("remote.origin.url = %q, want the override\n%s", got, out)
+	}
+	if got, _ := gitGet(t, out, "remote.upstream.url"); got != "https://github.com/org/repo.git" {
+		t.Errorf("remote.upstream.url = %q, want it untouched\n%s", got, out)
+	}
+}
+
+// git reads the last value of a key, and a section may appear more than once:
+// the override must be the only value left.
+func TestProcess_override_repeatedSection(t *testing.T) {
+	input := "[push]\n\tdefault = current\n[user]\n\tname = x\n[push]\n\tdefault = simple\n"
+	out := Process(input, nil, map[string]string{"push.default": "nothing"})
+	if got, err := gitGet(t, out, "push.default"); err != nil || got != "nothing" {
+		t.Errorf("push.default values = %q (err %v), want only nothing\n%s", got, err, out)
+	}
+}
+
+func TestProcess_override_subsectionQuoted(t *testing.T) {
+	out := Process("", nil, map[string]string{`branch.we"ird\\name.remote`: "origin"})
+	if got, err := gitGet(t, out, `branch.we"ird\\name.remote`); err != nil || got != "origin" {
+		t.Errorf("got %q (err %v), want origin\n%s", got, err, out)
+	}
+}
+
+func TestProcess_stripKey_threePartOnlyThatSubsection(t *testing.T) {
+	input := `[credential "https://github.com"]
+	helper = store
+[credential "https://example.com"]
+	helper = cache
+`
+	out := Process(input, []string{"credential.https://github.com.helper"}, nil)
+	if got, _ := gitGet(t, out, "credential.https://github.com.helper"); got != "" {
+		t.Errorf("github helper = %q, want stripped\n%s", got, out)
+	}
+	if got, _ := gitGet(t, out, "credential.https://example.com.helper"); got != "cache" {
+		t.Errorf("example helper = %q, want kept\n%s", got, out)
 	}
 }
 

@@ -1322,6 +1322,8 @@ overrides      = { "push.default" = "nothing" }
 
 `push.default = "nothing"` is a useful default to prevent accidental pushes from an agent session.
 
+Keys are spelled as `git config` spells them: `section.key`, or `section.subsection.key` where the subsection is everything between the first and the last dot. So `"url.https://github.com/.insteadOf"` writes `[url "https://github.com/"]`, and `"remote.origin.url"` changes `[remote "origin"]` only. An override replaces every value the key had in that section. `strip_sections` accepts the same spellings: `"credential"` drops every `[credential …]` section, `"credential.helper"` drops the key from all of them, `"credential.https://github.com.helper"` only from that one. A key that is not in one of these forms is ignored, and `inner profile validate` warns about it.
+
 ---
 
 ## `[entrypoint]`

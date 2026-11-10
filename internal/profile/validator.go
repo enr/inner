@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/enr/inner/internal/config"
+	"github.com/enr/inner/internal/git"
 	"github.com/enr/inner/internal/gitguard"
 )
 
@@ -714,6 +715,20 @@ func Validate(p *config.Profile, workDir string) Result {
 
 	// 5b. Validate [sandbox.limits] syntax.
 	validateLimits(&r, p.Sandbox.Limits)
+
+	// 5c. [git] overrides keys the sanitizer would skip.
+	if p.Git != nil {
+		keys := make([]string, 0, len(p.Git.Overrides))
+		for k := range p.Git.Overrides {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			if !git.ValidKey(k) {
+				r.addWarning(fmt.Sprintf("[git] overrides key %q is not a git config key (section.key or section.subsection.key) — it is ignored", k))
+			}
+		}
+	}
 
 	// 6. Validate capabilities (step 1g). Reuses expandedMountDests built above.
 	for _, cap := range p.Capabilities {

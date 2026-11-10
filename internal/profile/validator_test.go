@@ -771,3 +771,24 @@ func TestValidate_gitScanOnReadOnlyMount_warns(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_gitOverrideKeys(t *testing.T) {
+	p := &config.Profile{
+		Entrypoint: config.EntrypointConfig{Interactive: true},
+		Git: &config.GitConfig{Overrides: map[string]string{
+			"push.default":                      "nothing",
+			"url.https://github.com/.insteadOf": "git@github.com:",
+			"nodot":                             "x",
+		}},
+	}
+	r := Validate(p, "")
+	var msgs []string
+	for _, i := range r.Issues {
+		if strings.Contains(i.Message, "[git] overrides") {
+			msgs = append(msgs, i.Message)
+		}
+	}
+	if len(msgs) != 1 || !strings.Contains(msgs[0], `"nodot"`) {
+		t.Errorf("want exactly one warning, about \"nodot\"; got %v", msgs)
+	}
+}
