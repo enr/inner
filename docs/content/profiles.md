@@ -10,7 +10,7 @@ A **profile** is a TOML file that fully describes a sandbox environment. Profile
 
 **Local (per-directory) profiles** can be placed in `.config/inner/profiles/` inside the current working directory. They are discovered automatically and shown with a `[local]` tag in `inner profile list`. When a local profile has the same name as a global one, the **local profile takes precedence** — `inner run -p foo` will load `.config/inner/profiles/foo.toml` rather than `~/.config/inner/profiles/foo.toml`. The shadowed global profile is hidden in the default list view and visible only with `inner profile list --wide`.
 
-Alternatively, you can pass a **file path** directly to `-p`/`--profile`. If the value points to an existing file it is loaded as-is; otherwise it is treated as a profile name looked up in the profiles directory. This lets you use local or project-specific profile files without installing them in `~/.config/inner/profiles/`:
+Alternatively, you can pass a **file path** directly to `-p`/`--profile`. A value that contains `/`, starts with `~` or ends in `.toml` is a file path and is loaded as-is (relative paths are tried against the current directory); anything else is a profile name looked up in the profiles directory, even when a file or folder with that name exists in the current directory — so `-p rust` keeps loading the `rust` profile from a project that has a `rust/` folder. This lets you use local or project-specific profile files without installing them in `~/.config/inner/profiles/`:
 
 ```bash
 inner run -p profiles/inner-dev.toml

@@ -2000,3 +2000,78 @@ func TestBuild_mountGitScan(t *testing.T) {
 		}
 	}
 }
+
+// A profile's [mounts] table is a Go map: without sorting, a "rw" parent and
+// a "ro" child would come out in a different order on different runs, and the
+// child would sometimes lose its read-only flag (bwrap applies binds in order).
+func TestBuild_mountsOrderedParentsFirst(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "nested.toml"), `
+[mounts]
+"/src/a/sub/deep" = { dest = "/w/a/sub/deep", mode = "rw" }
+"/src/a/sub" = { dest = "/w/a/sub", mode = "ro" }
+"/src/a" = { dest = "/w/a", mode = "rw" }
+"/src/b" = { dest = "/w/b" }
+"/src/a-x" = { dest = "/w/a-x" }
+`)
+	l := NewLoader(dir)
+	want := []string{"/w/a", "/w/a-x", "/w/a/sub", "/w/a/sub/deep", "/w/b"}
+	// Map iteration order is randomised per range: a handful of builds would
+	// all have to come out sorted by chance for a missing sort to pass.
+	for range 20 {
+		rc, err := l.Build("nested")
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		var got []string
+		for _, m := range rc.Mounts {
+			got = append(got, m.Dest)
+		}
+		if strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Fatalf("mount order = %v, want %v", got, want)
+		}
+	}
+}
+
+// A directory (or a file) in the current directory that shares a profile's
+// name must not be taken for the profile: `inner run -p shell` from a project
+// with a shell/ folder has to load the shell profile.
+func TestLoadProfileAuto_nameNotShadowedByCwdEntry(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles", "shell.toml"), `name = "the-shell-profile"`)
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, "shell"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(cwd, "rust"), `name = "not-a-profile"`)
+	writeFile(t, filepath.Join(dir, "profiles", "rust.toml"), `name = "the-rust-profile"`)
+	t.Chdir(cwd)
+
+	l := NewLoaderWithWorkDir(dir, cwd)
+	for name, want := range map[string]string{"shell": "the-shell-profile", "rust": "the-rust-profile"} {
+		p, err := l.LoadProfileAuto(name)
+		if err != nil {
+			t.Fatalf("LoadProfileAuto(%q): %v", name, err)
+		}
+		if p.Name != want {
+			t.Errorf("LoadProfileAuto(%q).Name = %q, want %q", name, p.Name, want)
+		}
+		if got, wantPath := l.ResolveProfilePath(name), filepath.Join(dir, "profiles", name+".toml"); got != wantPath {
+			t.Errorf("ResolveProfilePath(%q) = %q, want %q", name, got, wantPath)
+		}
+	}
+}
+
+func TestLoadProfileAuto_bareTomlFileInCwd(t *testing.T) {
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(cwd, "mine.toml"), `name = "from-cwd"`)
+	t.Chdir(cwd)
+	l := NewLoader(t.TempDir())
+	p, err := l.LoadProfileAuto("mine.toml")
+	if err != nil {
+		t.Fatalf("LoadProfileAuto: %v", err)
+	}
+	if p.Name != "from-cwd" {
+		t.Errorf("Name = %q, want from-cwd", p.Name)
+	}
+}
