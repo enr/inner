@@ -412,7 +412,9 @@ S2 — network allowlist proxy
 
  - Timeouts on: the CONNECT request read, DNS resolution, the upstream dial,
    and an idle timeout on the established tunnel. Without the last one a
-   hung tunnel is never reclaimed.
+   hung tunnel is never reclaimed. The tunnel is idle when no byte crosses it
+   in either direction: one-way traffic (an upload to a server that answers at
+   the end) keeps it alive.
  - A cap on concurrent connections. The client is an untrusted agent; an
    unbounded goroutine-per-connection loop lets it exhaust the file
    descriptors of the host inner process.

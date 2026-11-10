@@ -387,6 +387,67 @@ func TestConnect_idleTunnelIsReclaimed(t *testing.T) {
 	}
 }
 
+// A tunnel is idle when NOTHING flows, not when one direction is quiet. An
+// upload that takes longer than the idle timeout, to a server that answers
+// only at the end, keeps the tunnel busy the whole time: it must not be cut
+// because the server side said nothing.
+func TestConnect_oneWayTrafficKeepsTunnelAlive(t *testing.T) {
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upstream.Close()
+	go func() {
+		c, err := upstream.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		// Read the whole upload, silently, then answer.
+		buf := make([]byte, 64)
+		total := 0
+		for total < 12 {
+			n, err := c.Read(buf)
+			if err != nil {
+				return
+			}
+			total += n
+		}
+		_, _ = c.Write([]byte("OK"))
+	}()
+	port := upstream.Addr().(*net.TCPAddr).Port
+
+	res := &fakeResolver{hosts: map[string][]net.IP{"allowed.example.com": {net.ParseIP("127.0.0.1")}}}
+	p, _ := newTestProxy(t, []string{fmt.Sprintf("allowed.example.com:%d", port)}, res)
+	p.IdleTimeout = 200 * time.Millisecond
+	proxyAddr := startProxy(t, p)
+
+	conn, err := net.Dial("tcp", proxyAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "CONNECT allowed.example.com:%d HTTP/1.1\r\nHost: allowed.example.com:%d\r\n\r\n", port, port)
+	if status := readResponseHead(t, conn); !strings.Contains(status, "200") {
+		t.Fatalf("tunnel was not established: %q", status)
+	}
+
+	// 12 bytes over ~720ms: well past the 200ms idle timeout in total, never
+	// quiet for longer than 60ms.
+	for range 12 {
+		if _, err := conn.Write([]byte("x")); err != nil {
+			t.Fatalf("upload cut short: %v", err)
+		}
+		time.Sleep(60 * time.Millisecond)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	reply := make([]byte, 2)
+	if _, err := io.ReadFull(conn, reply); err != nil || string(reply) != "OK" {
+		t.Errorf("reply = %q, err %v: the tunnel was torn down while the upload was flowing", reply, err)
+	}
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // readResponseHead consumes the status line AND the header block, so a
