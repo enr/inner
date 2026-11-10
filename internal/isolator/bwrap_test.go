@@ -468,107 +468,170 @@ func TestBuild_workspaceMountsAfterWorkdirBind(t *testing.T) {
 
 // ── Environment ───────────────────────────────────────────────────────────────
 
+// sandboxEnvOf builds cfg and returns the environment the sandboxed process
+// starts with, the way bwrap computes it: its own environment (cmd.Env), then
+// every --setenv / --unsetenv before the "--" separator, in order.
+func sandboxEnvOf(t *testing.T, iso *BwrapIsolator, cfg config.RunConfig) map[string]string {
+	t.Helper()
+	cmd, err := iso.Build(cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if cmd.Env == nil {
+		t.Fatal("cmd.Env is nil: bwrap would inherit the whole host environment")
+	}
+	env := map[string]string{}
+	for _, kv := range cmd.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		env[k] = v
+	}
+	args := cmd.Args[1:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--":
+			return env
+		case "--clearenv":
+			clear(env)
+		case "--setenv":
+			env[args[i+1]] = args[i+2]
+			i += 2
+		case "--unsetenv":
+			delete(env, args[i+1])
+			i++
+		}
+	}
+	return env
+}
+
+// The profile environment must never reach the bwrap command line, which any
+// process can read through /proc/<pid>/cmdline and which systemd-run records:
+// inherited and [env] set values are often secrets.
+func TestBuild_envValuesNotOnCommandLine(t *testing.T) {
+	t.Setenv("INNER_TEST_SECRET", "s3cr3t-inherited")
+	iso := testIsolator(runtime.RuntimeInfo{})
+	cfg := config.RunConfig{
+		Env: config.EnvConfig{
+			Inherit:     []string{"INNER_TEST_SECRET"},
+			Set:         map[string]string{"API_TOKEN": "s3cr3t-set"},
+			PathPrepend: []string{"/opt/tool/bin"},
+		},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
+	}
+	args := cmdArgs(t, iso, cfg)
+	for _, a := range args {
+		if strings.Contains(a, "s3cr3t") {
+			t.Errorf("secret value on the bwrap command line: %v", args)
+		}
+	}
+	env := sandboxEnvOf(t, iso, cfg)
+	if env["INNER_TEST_SECRET"] != "s3cr3t-inherited" || env["API_TOKEN"] != "s3cr3t-set" {
+		t.Errorf("sandbox env = %v, want both secrets present", env)
+	}
+}
+
 func TestBuild_clearenv_byDefault(t *testing.T) {
 	// When Env is the zero value (no clearenv field in profile), the sandbox
-	// must still clear the host environment. Inheriting it silently leaks
+	// must still start from an empty environment. Inheriting it silently leaks
 	// secrets (AWS_*, GITHUB_TOKEN, etc.) into the sandbox.
+	t.Setenv("INNER_TEST_HOST_ONLY", "x")
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		Env:        config.EnvConfig{}, // zero value — no explicit clearenv field
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	if !hasFlag(args, "--clearenv") {
-		t.Errorf("expected --clearenv by default (zero Env), got %v", args)
+	if len(env) != 0 {
+		t.Errorf("expected an empty sandbox environment by default, got %v", env)
 	}
 }
 
 func TestBuild_clearenv_explicit(t *testing.T) {
+	t.Setenv("INNER_TEST_HOST_ONLY", "x")
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		Env:        config.EnvConfig{Clear: true},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	if !hasFlag(args, "--clearenv") {
-		t.Errorf("expected --clearenv when Clear=true, got %v", args)
+	if _, ok := env["INNER_TEST_HOST_ONLY"]; ok {
+		t.Errorf("host variable leaked with Clear=true: %v", env)
 	}
 }
 
 func TestBuild_inheritAll_noClearing(t *testing.T) {
 	// InheritAll=true is the explicit opt-in to full host env inheritance.
+	t.Setenv("INNER_TEST_HOST_ONLY", "x")
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		Env:        config.EnvConfig{InheritAll: true},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	if hasFlag(args, "--clearenv") {
-		t.Errorf("unexpected --clearenv when InheritAll=true, got %v", args)
+	if env["INNER_TEST_HOST_ONLY"] != "x" {
+		t.Errorf("InheritAll=true must keep the host environment, got %v", env)
 	}
 }
 
 func TestBuild_inheritEnv(t *testing.T) {
 	t.Setenv("INNER_TEST_KEY", "hello")
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		Env: config.EnvConfig{
 			Clear:   true,
 			Inherit: []string{"INNER_TEST_KEY"},
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	if !hasSeq(args, "--setenv", "INNER_TEST_KEY", "hello") {
-		t.Errorf("expected --setenv INNER_TEST_KEY hello, got %v", args)
+	if v, ok := env["INNER_TEST_KEY"]; !ok || v != "hello" {
+		t.Errorf("INNER_TEST_KEY = %q (set %v), want hello", v, ok)
 	}
 }
 
 func TestBuild_inheritEnv_unsetOnHost_omitted(t *testing.T) {
 	os.Unsetenv("INNER_TEST_UNSET_KEY")
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		Env: config.EnvConfig{
 			Clear:   true,
 			Inherit: []string{"INNER_TEST_UNSET_KEY"},
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == "--setenv" && args[i+1] == "INNER_TEST_UNSET_KEY" {
-			t.Errorf("expected no --setenv for unset host variable, got %v", args)
-		}
+	if _, ok := env["INNER_TEST_UNSET_KEY"]; ok {
+		t.Errorf("expected an unset host variable to stay unset, got %v", env)
 	}
 }
 
 func TestBuild_inheritEnv_setButEmptyOnHost_forwarded(t *testing.T) {
 	t.Setenv("INNER_TEST_EMPTY_KEY", "")
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		Env: config.EnvConfig{
 			Clear:   true,
 			Inherit: []string{"INNER_TEST_EMPTY_KEY"},
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	if !hasSeq(args, "--setenv", "INNER_TEST_EMPTY_KEY", "") {
-		t.Errorf("expected --setenv INNER_TEST_EMPTY_KEY \"\", got %v", args)
+	if v, ok := env["INNER_TEST_EMPTY_KEY"]; !ok || v != "" {
+		t.Errorf("expected INNER_TEST_EMPTY_KEY set to \"\", got %q (set %v)", v, ok)
 	}
 }
 
 func TestBuild_setEnv(t *testing.T) {
+	t.Setenv("MY_VAR", "from-host")
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		Env: config.EnvConfig{
-			Set: map[string]string{"MY_VAR": "my_value"},
+			Inherit: []string{"MY_VAR"},
+			Set:     map[string]string{"MY_VAR": "my_value"},
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	if !hasSeq(args, "--setenv", "MY_VAR", "my_value") {
-		t.Errorf("expected --setenv MY_VAR my_value, got %v", args)
+	if env["MY_VAR"] != "my_value" {
+		t.Errorf("MY_VAR = %q, want my_value ([env] set wins over inherit)", env["MY_VAR"])
 	}
 }
 
 func TestBuild_setEnv_deterministicOrder(t *testing.T) {
-	// Map iteration in Go is randomised; --setenv entries must be emitted in
-	// sorted key order so that dry-run output and command logging are
-	// reproducible across runs.
+	// Map iteration in Go is randomised; the environment must come out in the
+	// same order every time so the command is reproducible.
 	iso := testIsolator(runtime.RuntimeInfo{})
 	cfg := config.RunConfig{
 		Env: config.EnvConfig{
@@ -580,40 +643,14 @@ func TestBuild_setEnv_deterministicOrder(t *testing.T) {
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	}
-
-	// Collect indices of the three --setenv KEY triples.
-	collectSetenvPositions := func() (int, int, int) {
-		args := cmdArgs(t, iso, cfg)
-		alpha, mango, zebra := -1, -1, -1
-		for i := 0; i+2 < len(args); i++ {
-			if args[i] == "--setenv" {
-				switch args[i+1] {
-				case "ALPHA":
-					alpha = i
-				case "MANGO":
-					mango = i
-				case "ZEBRA":
-					zebra = i
-				}
-			}
-		}
-		return alpha, mango, zebra
-	}
-
-	alpha, mango, zebra := collectSetenvPositions()
-	if alpha == -1 || mango == -1 || zebra == -1 {
-		t.Fatalf("not all --setenv entries found; ALPHA=%d MANGO=%d ZEBRA=%d", alpha, mango, zebra)
-	}
-	if !(alpha < mango && mango < zebra) {
-		t.Errorf("--setenv entries not in sorted key order: ALPHA@%d MANGO@%d ZEBRA@%d", alpha, mango, zebra)
-	}
-
-	// Run several times to catch non-determinism that might not show on first call.
+	want := []string{"ALPHA=a", "MANGO=m", "ZEBRA=z"}
 	for range 20 {
-		a, m, z := collectSetenvPositions()
-		if a != alpha || m != mango || z != zebra {
-			t.Errorf("non-deterministic order: ALPHA@%d MANGO@%d ZEBRA@%d (first run: %d %d %d)",
-				a, m, z, alpha, mango, zebra)
+		cmd, err := iso.Build(cfg)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		if !slices.Equal(cmd.Env, want) {
+			t.Fatalf("cmd.Env = %v, want %v", cmd.Env, want)
 		}
 	}
 }
@@ -1176,58 +1213,42 @@ func TestBuild_noShimDir_noPathOverride(t *testing.T) {
 
 func TestBuild_shimDir_pathPreservesProfilePath(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	got, _ := sandboxPath(t, iso, config.RunConfig{
 		ShimDir: "/tmp/inner-shims-test",
 		Env: config.EnvConfig{
 			Set: map[string]string{"PATH": "/custom/bin:/usr/bin"},
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-
-	// Find the PATH setenv that comes after the shim dir bind.
-	// There may be multiple --setenv PATH entries; the last one wins in bwrap.
-	// We verify the last one has the custom path appended.
-	lastPathVal := ""
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == "--setenv" && i+2 < len(args) && args[i+1] == "PATH" {
-			lastPathVal = args[i+2]
-		}
+	if !strings.HasPrefix(got, "/tmp/inner-shims:") {
+		t.Errorf("PATH should start with /tmp/inner-shims:, got %q", got)
 	}
-	if !strings.HasPrefix(lastPathVal, "/tmp/inner-shims:") {
-		t.Errorf("PATH should start with /tmp/inner-shims:, got %q", lastPathVal)
-	}
-	if !strings.Contains(lastPathVal, "/custom/bin") {
-		t.Errorf("PATH should contain original /custom/bin, got %q", lastPathVal)
+	if !strings.Contains(got, "/custom/bin") {
+		t.Errorf("PATH should contain original /custom/bin, got %q", got)
 	}
 }
 
 // ── path_prepend ──────────────────────────────────────────────────────────────
 
-// lastPathValue returns the value of the last --setenv PATH entry in args,
-// mirroring bwrap's own "last --setenv for a key wins" semantics.
-func lastPathValue(args []string) (string, bool) {
-	val, found := "", false
-	for i := 0; i < len(args)-2; i++ {
-		if args[i] == "--setenv" && args[i+1] == "PATH" {
-			val, found = args[i+2], true
-		}
-	}
-	return val, found
+// sandboxPath returns the PATH the sandboxed process starts with.
+func sandboxPath(t *testing.T, iso *BwrapIsolator, cfg config.RunConfig) (string, bool) {
+	t.Helper()
+	v, ok := sandboxEnvOf(t, iso, cfg)["PATH"]
+	return v, ok
 }
 
 func TestBuild_pathPrepend_onlyPrepend(t *testing.T) {
 	t.Setenv("PATH", "/host/bin")
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	got, found := sandboxPath(t, iso, config.RunConfig{
 		Env: config.EnvConfig{
 			InheritAll:  true, // simplest way to make basePathValue fall back to host PATH
 			PathPrepend: []string{"/opt/jdk/jdk-21/bin"},
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	got, found := lastPathValue(args)
 	if !found {
-		t.Fatalf("expected --setenv PATH, got %v", args)
+		t.Fatal("expected PATH in the sandbox environment")
 	}
 	if got != "/opt/jdk/jdk-21/bin:/host/bin" {
 		t.Errorf("PATH = %q, want %q", got, "/opt/jdk/jdk-21/bin:/host/bin")
@@ -1236,16 +1257,15 @@ func TestBuild_pathPrepend_onlyPrepend(t *testing.T) {
 
 func TestBuild_pathPrepend_withExplicitSetPath(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	got, found := sandboxPath(t, iso, config.RunConfig{
 		Env: config.EnvConfig{
 			Set:         map[string]string{"PATH": "/custom/bin:/usr/bin"},
 			PathPrepend: []string{"/opt/jdk/jdk-21/bin"},
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	got, found := lastPathValue(args)
 	if !found {
-		t.Fatalf("expected --setenv PATH, got %v", args)
+		t.Fatal("expected PATH in the sandbox environment")
 	}
 	want := "/opt/jdk/jdk-21/bin:/custom/bin:/usr/bin"
 	if got != want {
@@ -1255,7 +1275,7 @@ func TestBuild_pathPrepend_withExplicitSetPath(t *testing.T) {
 
 func TestBuild_pathPrepend_withShimDir(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	got, found := sandboxPath(t, iso, config.RunConfig{
 		ShimDir: "/tmp/inner-shims-test",
 		Env: config.EnvConfig{
 			Set:         map[string]string{"PATH": "/custom/bin"},
@@ -1263,9 +1283,8 @@ func TestBuild_pathPrepend_withShimDir(t *testing.T) {
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	got, found := lastPathValue(args)
 	if !found {
-		t.Fatalf("expected --setenv PATH, got %v", args)
+		t.Fatal("expected PATH in the sandbox environment")
 	}
 	want := "/tmp/inner-shims:/opt/jdk/jdk-21/bin:/custom/bin"
 	if got != want {
@@ -1274,25 +1293,14 @@ func TestBuild_pathPrepend_withShimDir(t *testing.T) {
 }
 
 func TestBuild_noPathPrepend_unchangedBehavior(t *testing.T) {
-	// Regression: without path_prepend, PATH handling must be identical to
-	// before this feature existed (no extra --setenv PATH beyond Set/shim).
+	// Regression: without path_prepend, [env] set PATH is used as is.
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	got, _ := sandboxPath(t, iso, config.RunConfig{
 		Env: config.EnvConfig{
 			Set: map[string]string{"PATH": "/custom/bin"},
 		},
 		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-	count := 0
-	for i := 0; i < len(args)-2; i++ {
-		if args[i] == "--setenv" && args[i+1] == "PATH" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("expected exactly 1 --setenv PATH entry, got %d in %v", count, args)
-	}
-	got, _ := lastPathValue(args)
 	if got != "/custom/bin" {
 		t.Errorf("PATH = %q, want %q", got, "/custom/bin")
 	}
@@ -1373,24 +1381,17 @@ func TestBuild_containersConf_absentWhenUnset(t *testing.T) {
 	}
 }
 
-// Regression: bwrap applies --clearenv when it parses it, so a --setenv
-// emitted earlier is wiped. The override must be exported AFTER the
-// environment section.
-func TestBuild_containersConf_setenvAfterClearenv(t *testing.T) {
+// The generated override is applied on top of the profile environment.
+func TestBuild_containersConf_overridesProfileEnv(t *testing.T) {
 	iso := testIsolatorNoneExist(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		Allow:              []string{"nested-user-ns"},
 		ContainersConfPath: "/tmp/inner-containers-abc/containers.conf",
+		Env:                config.EnvConfig{InheritAll: true},
 		Entrypoint:         config.Entrypoint{Cmd: "sh"},
 	})
-
-	clearenv := slices.Index(args, "--clearenv")
-	setenv := lastIndexOfSeq(args, "--setenv", "CONTAINERS_CONF_OVERRIDE", "/tmp/inner/containers.conf")
-	if clearenv < 0 || setenv < 0 {
-		t.Fatalf("expected both --clearenv and the override --setenv, got %v", args)
-	}
-	if setenv < clearenv {
-		t.Errorf("--setenv CONTAINERS_CONF_OVERRIDE must come after --clearenv, got %v", args)
+	if got := env["CONTAINERS_CONF_OVERRIDE"]; got != "/tmp/inner/containers.conf" {
+		t.Errorf("CONTAINERS_CONF_OVERRIDE = %q, want /tmp/inner/containers.conf", got)
 	}
 }
 
@@ -1463,28 +1464,24 @@ func TestBuild_allowlistBindsTheProxySocketAndSetsTheProxyEnv(t *testing.T) {
 	}
 }
 
-// bwrap applies --clearenv when it parses it, wiping every --setenv that came
-// before. The proxy variables would be silently erased if this block were
-// emitted too early — and the symptom would be an agent with no network and no
-// explanation.
-func TestBuild_proxyEnvIsEmittedAfterClearenv(t *testing.T) {
+// A profile that sets the proxy variables itself, or inherits the host's,
+// must not route around the proxy: inner's values win.
+func TestBuild_proxyEnvWinsOverProfileEnv(t *testing.T) {
 	iso := testIsolator(runtime.RuntimeInfo{})
-	args := cmdArgs(t, iso, config.RunConfig{
+	env := sandboxEnvOf(t, iso, config.RunConfig{
 		NetworkMode:        config.NetworkAllowlist,
 		NetProxySocketPath: "/tmp/inner-net-abc/proxy.sock",
-		Entrypoint:         config.Entrypoint{Cmd: "sh"},
+		Env: config.EnvConfig{Set: map[string]string{
+			"HTTP_PROXY": "http://elsewhere:3128",
+			"NO_PROXY":   "*",
+		}},
+		Entrypoint: config.Entrypoint{Cmd: "sh"},
 	})
-
-	clearenv := indexOfFlag(args, "--clearenv")
-	if clearenv < 0 {
-		t.Fatal("expected --clearenv by default")
+	if env["HTTP_PROXY"] != netproxy.ProxyURL() {
+		t.Errorf("HTTP_PROXY = %q, want %q", env["HTTP_PROXY"], netproxy.ProxyURL())
 	}
-	proxy := indexOfSetenv(args, "HTTP_PROXY")
-	if proxy < 0 {
-		t.Fatal("HTTP_PROXY was not set")
-	}
-	if proxy < clearenv {
-		t.Errorf("HTTP_PROXY at %d is emitted before --clearenv at %d: bwrap would wipe it", proxy, clearenv)
+	if env["NO_PROXY"] != "" {
+		t.Errorf("NO_PROXY = %q, want empty", env["NO_PROXY"])
 	}
 }
 
@@ -1524,15 +1521,6 @@ func hasPair(args []string, flag, value string) bool {
 		}
 	}
 	return false
-}
-
-func indexOfFlag(args []string, flag string) int {
-	for i, a := range args {
-		if a == flag {
-			return i
-		}
-	}
-	return -1
 }
 
 // indexOfSetenv returns the position of the LAST "--setenv key" for key, since

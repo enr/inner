@@ -545,7 +545,7 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// process. Running as the same UID it can then read
 	// /proc/<pid>/environ of any of the user's other processes (leaking
 	// secrets like AWS_*/GITHUB_TOKEN exported in other shells, and defeating
-	// --clearenv) and can signal them. So PID isolation is applied for ALL
+	// the cleared environment) and can signal them. So PID isolation is applied for ALL
 	// runs, interactive included, unless the profile explicitly opts out via
 	// [sandbox] pid_namespace = false.
 	//
@@ -609,38 +609,17 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	}
 
 	// ── Environment ──────────────────────────────────────────────────────────
-	// Clear by default; only skip when InheritAll explicitly opts into full
-	// host env inheritance (leaks secrets — use sparingly).
-	if !cfg.Env.InheritAll {
-		args = append(args, "--clearenv")
-		// Explicitly forward each whitelisted variable from the host. Skip
-		// variables that are unset on the host rather than forwarding an
-		// empty string: with --clearenv the sandbox already treats them as
-		// unset, and some tools (e.g. build toolchains checking JAVA_HOME)
-		// distinguish "unset" from "set but empty".
-		for _, key := range cfg.Env.Inherit {
-			if val, ok := os.LookupEnv(key); ok {
-				args = append(args, "--setenv", key, val)
-			}
-		}
-	}
-	// Explicitly set variables override whatever was inherited.
-	setKeys := make([]string, 0, len(cfg.Env.Set))
-	for k := range cfg.Env.Set {
-		setKeys = append(setKeys, k)
-	}
-	slices.Sort(setKeys)
-	for _, key := range setKeys {
-		args = append(args, "--setenv", key, cfg.Env.Set[key])
-	}
-
-	// path_prepend anteposes directories to PATH (e.g. to pin a specific JDK)
-	// without requiring the profile to know or repeat the rest of PATH. Emitted
-	// after the [env] set loop above so it wins when both are declared: bwrap
-	// uses the last --setenv for a given key.
-	if len(cfg.Env.PathPrepend) > 0 {
-		args = append(args, "--setenv", "PATH", sandboxPathBeforeShim(cfg))
-	}
+	// The profile's environment ([env] inherit / inherit_all / set /
+	// path_prepend) is NOT passed on the bwrap command line: it becomes bwrap's
+	// own environment (cmd.Env, see sandboxEnv), which bwrap hands to the
+	// sandboxed process. The values are often secrets — an inherited
+	// GEMINI_API_KEY, a token passed with -e — and a command line is readable
+	// by every process of every user through /proc/<pid>/cmdline, and is
+	// recorded by systemd-run as the description of the resource-limit scope.
+	//
+	// The --setenv flags that follow (clipboard, proxy, shims, gitconfig, …)
+	// carry only values inner generates; they are applied on top of that
+	// environment, so they still win over the profile.
 
 	// ── Clipboard / display server ───────────────────────────────────────────
 	if cfg.Clipboard {
@@ -821,11 +800,9 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// Only relevant when nested-user-ns is allowed: nothing else runs
 	// containers from inside the sandbox.
 	//
-	// This block MUST stay after the environment section: bwrap applies
-	// --clearenv when it parses it, wiping any variable set by an earlier
-	// --setenv. A profile that sets CONTAINERS_CONF_OVERRIDE in [env] set
-	// still wins, because in that case cmd_run.go skips the generation
-	// entirely and ContainersConfPath is empty.
+	// A profile that sets CONTAINERS_CONF_OVERRIDE in [env] set still wins:
+	// in that case cmd_run.go skips the generation entirely and
+	// ContainersConfPath is empty.
 	if cfg.ContainersConfPath != "" && isAllowed(cfg.Allow, "nested-user-ns") {
 		// Mounted at a fixed in-sandbox path rather than the host tmp path so
 		// the host tmp layout is not leaked. /tmp is already a writable tmpfs,
@@ -870,10 +847,7 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	// listening. A read-only bind is enough: the EROFS check in the kernel's
 	// inode_permission covers regular files, directories and symlinks, not
 	// sockets, so connect(2) still succeeds.
-	//
-	// Like the containers.conf block above, this MUST stay after the environment
-	// section: bwrap applies --clearenv when it parses it, wiping every --setenv
-	// that came earlier.
+
 	if cfg.EffectiveNetworkMode() == config.NetworkAllowlist && cfg.NetProxySocketPath != "" {
 		// /tmp is already a writable tmpfs at this point, so --dir creates the
 		// directory without touching the read-only root, and the host's temp
@@ -887,10 +861,9 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 		for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
 			args = append(args, "--setenv", key, netproxy.ProxyURL())
 		}
-		// Forced empty rather than left alone. With --clearenv there is nothing
-		// to inherit, so the case this actually covers is a profile that sets
-		// NO_PROXY in [env] set or turns on inherit_all: this block is emitted
-		// after the environment section, so it wins by position.
+		// Forced empty rather than left alone: a profile that sets NO_PROXY in
+		// [env] set, or turns on inherit_all, must not route around the proxy.
+		// --setenv is applied on top of the profile environment, so it wins.
 		args = append(args, "--setenv", "NO_PROXY", "")
 		args = append(args, "--setenv", "no_proxy", "")
 		// Node 26+ ignores the proxy environment for fetch()/undici unless this
@@ -926,5 +899,59 @@ func (b *BwrapIsolator) Build(cfg config.RunConfig) (*exec.Cmd, error) {
 	args = append(args, cmd)
 	args = append(args, cfg.Entrypoint.Args...)
 
-	return exec.Command(b.bwrapPath, args...), nil
+	c := exec.Command(b.bwrapPath, args...)
+	c.Env = SandboxEnv(cfg)
+	return c, nil
+}
+
+// SandboxEnv returns the environment the sandboxed process starts from, as
+// KEY=VALUE pairs: the host variables the profile inherits (all of them with
+// inherit_all), then [env] set on top, then PATH with [env] path_prepend.
+// Variables listed in inherit but unset on the host are left unset rather than
+// set to "": some tools (build toolchains checking JAVA_HOME) tell the two
+// apart.
+//
+// The result is never nil: a nil exec.Cmd.Env means "inherit everything",
+// which is the opposite of an empty environment.
+func SandboxEnv(cfg config.RunConfig) []string {
+	vals := map[string]string{}
+	var order []string
+	set := func(k, v string) {
+		if _, ok := vals[k]; !ok {
+			order = append(order, k)
+		}
+		vals[k] = v
+	}
+	if cfg.Env.InheritAll {
+		for _, kv := range os.Environ() {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				set(k, v)
+			}
+		}
+	} else {
+		for _, key := range cfg.Env.Inherit {
+			if val, ok := os.LookupEnv(key); ok {
+				set(key, val)
+			}
+		}
+	}
+	setKeys := make([]string, 0, len(cfg.Env.Set))
+	for k := range cfg.Env.Set {
+		setKeys = append(setKeys, k)
+	}
+	slices.Sort(setKeys)
+	for _, k := range setKeys {
+		set(k, cfg.Env.Set[k])
+	}
+	// path_prepend anteposes directories to PATH (e.g. to pin a specific JDK)
+	// without requiring the profile to know or repeat the rest of PATH. After
+	// [env] set, so it wins when both are declared.
+	if len(cfg.Env.PathPrepend) > 0 {
+		set("PATH", sandboxPathBeforeShim(cfg))
+	}
+	env := make([]string, 0, len(order))
+	for _, k := range order {
+		env = append(env, k+"="+vals[k])
+	}
+	return env
 }
