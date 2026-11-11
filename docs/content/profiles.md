@@ -1491,7 +1491,7 @@ capabilities = ["claude"]
 
 | Name | What it injects |
 |------|----------------|
-| `claude` | `~/.claude` (sanitized clone) and `~/.claude.json` (copy, if present). Runs `claude auth status` on the host before copying credentials to unlock the OS credential store and refresh any expired OAuth token. |
+| `claude` | `~/.claude` (sanitized clone) and `~/.claude.json` (copy, if present, without its `mcpServers` and without the `projects` entries unrelated to the workdir). Runs `claude auth status` on the host before copying credentials to unlock the OS credential store and refresh any expired OAuth token. |
 | `gemini` | `~/.gemini` (sanitized clone with `settings.json` only) |
 | `cursor` | `~/.cursor` (sanitized clone) and `~/.config/cursor` (sanitized clone) |
 | `opencode` | `~/.config/opencode` (sanitized clone with config only) and `~/.local/share/opencode` (sanitized clone with `auth.json` only) |
@@ -1667,7 +1667,7 @@ inner run -p claude-interactive
        │    ├─ copy settings.json      (from ~/.claude, if present)
        │    ├─ copy skills/            (from ~/.claude, if present)
        │    └─ mkdir sessions/ cache/ projects/ tasks/ …  (empty)
-       └─ copy ~/.claude.json -> /tmp/inner-claudejson-XXXXXX  (if present)
+       └─ copy ~/.claude.json -> /tmp/inner-claudejson-XXXXXX  (if present; MCP servers and other projects dropped)
   └─ mount /tmp/inner-claude-XXXXXX    -> ~/.claude      inside sandbox
   └─ mount /tmp/inner-claudejson-XXXXXX -> ~/.claude.json inside sandbox
   └─ [agent runs, writes sessions/tasks/cache to the clone]

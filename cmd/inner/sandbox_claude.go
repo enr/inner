@@ -630,7 +630,9 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 	// tips history, …) regardless of whether the workdir makes the home
 	// directory writable.  Without this, running with -w <subdir> leaves the
 	// home read-only and claude hangs trying to write the file at startup.
-	// We mount a temporary copy so the real file is never modified by the sandbox.
+	// We mount a temporary copy so the real file is never modified by the
+	// sandbox, without the MCP servers and the other projects it lists (see
+	// copyClaudeJSONStripped).
 	claudeJsonPath := claudeDir + ".json"
 	if _, err := os.Stat(claudeJsonPath); err == nil {
 		tmpJson, err := os.CreateTemp("", "inner-claude-*.json")
@@ -643,7 +645,7 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		tmpJson.Close()
 		tmpJsonPath := tmpJson.Name()
 		cleanups = append(cleanups, func() { os.Remove(tmpJsonPath) })
-		if err := copyFile(claudeJsonPath, tmpJsonPath); err != nil {
+		if err := copyClaudeJSONStripped(claudeJsonPath, tmpJsonPath, []string{rc.Workdir}); err != nil {
 			for _, fn := range cleanups {
 				fn()
 			}
