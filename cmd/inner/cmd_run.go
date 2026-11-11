@@ -106,6 +106,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		}
 		tmp.Close()
 		profileName = tmp.Name()
+		a.loader.ExemptFromTrust(profileName)
 	} else if flags.sha256 != "" {
 		return fmt.Errorf("--sha256 pins the content of a downloaded profile, but %q is a local profile", profileName)
 	}

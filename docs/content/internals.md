@@ -34,6 +34,27 @@ CLI overrides (`applyOverrides` in `cmd_run.go`) are applied on top of the loade
 
 ---
 
+## The trust boundary: files in the working directory
+
+The working directory is what a sandbox writes. Every file `inner` discovers
+through it — project config files in the working directory and its ancestors,
+project profiles in `.config/inner/profiles`, profile paths under the working
+directory, every layer of an `extends` chain — would otherwise be trusted like
+the user's own: an agent could drop an `inner.toml` with `log_dir` pointing at a
+directory the host shell sources, or rewrite the profile the user runs next with
+`inherit_all = true`.
+
+So the production `Loader` (`RequireTrust`) honors such a file only when its
+sha256 matches the one recorded by `inner trust` in `~/.config/inner/trusted`
+(`internal/config/trust.go`). A config file that does not match is skipped with a
+warning; a profile that does not match is an error. The bytes checked are the
+bytes decoded — the file is read once — so a sandbox still running cannot swap
+the content between the check and the parse. Files under the user and system
+config directories are exempt, as is the temporary copy of a downloaded profile
+(`ExemptFromTrust`), which has its own consent gate below.
+
+---
+
 ## The trust boundary: profiles downloaded from a URL
 
 A local profile is trusted: the user wrote it, or installed it deliberately. A

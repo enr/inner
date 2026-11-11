@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +17,16 @@ type Loader struct {
 	Dir       string // user config directory, e.g. ~/.config/inner
 	SystemDir string // system config directory, e.g. /etc/inner; empty = skip
 	WorkDir   string // current working directory for project config lookup; empty = no project config
+
+	// RequireTrust honors project config files and project profiles only when
+	// their content was approved with `inner trust` (see trust.go). On in
+	// DefaultLoader; off in the test constructors.
+	RequireTrust bool
+	// Warn receives the warnings about skipped untrusted files; nil = silent.
+	Warn io.Writer
+
+	warned      map[string]bool
+	trustExempt string // canonical path of a downloaded profile being built untrusted
 }
 
 // DefaultLoader returns a Loader pointing at the default config directories.
@@ -25,8 +36,10 @@ func DefaultLoader() (*Loader, error) {
 		return nil, fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	return &Loader{
-		Dir:       filepath.Join(home, ".config", "inner"),
-		SystemDir: "/etc/inner",
+		Dir:          filepath.Join(home, ".config", "inner"),
+		SystemDir:    "/etc/inner",
+		RequireTrust: true,
+		Warn:         os.Stderr,
 	}, nil
 }
 
@@ -147,6 +160,20 @@ func (l *Loader) loadGlobalFrom(path string) (*GlobalConfig, error) {
 	return cfg, nil
 }
 
+// loadProjectConfig is loadGlobalFrom for a file found through the working
+// directory: it is skipped (nil, no error) unless trusted. See trust.go.
+func (l *Loader) loadProjectConfig(path string) (*GlobalConfig, error) {
+	data, err := l.readProjectConfig(path)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	cfg := &GlobalConfig{}
+	if _, err := toml.Decode(string(data), cfg); err != nil {
+		return nil, fmt.Errorf("reading config %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
 // pathAncestors returns the chain of directories from the filesystem root to
 // absPath (inclusive), ordered root-first.
 func pathAncestors(absPath string) []string {
@@ -226,7 +253,7 @@ func (l *Loader) LoadLocal() (*GlobalConfig, error) {
 	}
 	var result *GlobalConfig
 	for _, name := range names {
-		overlay, err := l.loadGlobalFrom(filepath.Join(l.WorkDir, name))
+		overlay, err := l.loadProjectConfig(filepath.Join(l.WorkDir, name))
 		if err != nil {
 			return nil, err
 		}
@@ -275,7 +302,7 @@ func (l *Loader) loadEffectiveGlobal() (*GlobalConfig, error) {
 
 	if l.WorkDir != "" {
 		for _, path := range collectProjectConfigFiles(l.WorkDir) {
-			proj, err := l.loadGlobalFrom(path)
+			proj, err := l.loadProjectConfig(path)
 			if err != nil {
 				return nil, err
 			}
@@ -807,7 +834,11 @@ func resolveResourceLimits(global *GlobalConfig, p *Profile) ResourceLimits {
 // explicitly set), and any error.
 func (l *Loader) loadRaw(path string) (*Profile, toml.MetaData, error) {
 	p := &Profile{}
-	meta, err := toml.DecodeFile(path, p)
+	data, err := l.readProfileFile(path)
+	if err != nil {
+		return nil, toml.MetaData{}, err
+	}
+	meta, err := toml.Decode(string(data), p)
 	if err != nil {
 		return nil, meta, err
 	}
