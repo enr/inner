@@ -120,12 +120,12 @@ func prepareSandbox(rc *config.RunConfig, opts sandboxOptions) (func(), error) {
 	}
 
 	if opts.GitConfig && rc.Git != nil {
-		gitPath, err := git.Sanitize(rc.Git)
+		gitPath, err := git.Sanitize(rc.Git, config.SandboxGitConfigDir)
 		if err != nil {
 			return fail("sanitizing gitconfig: %w", err)
 		}
 		rc.GitConfigPath = gitPath
-		cleanups = append(cleanups, func() { _ = os.Remove(gitPath) })
+		cleanups = append(cleanups, func() { _ = os.RemoveAll(filepath.Dir(gitPath)) })
 	}
 
 	if opts.Capabilities {

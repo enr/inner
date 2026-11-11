@@ -64,14 +64,17 @@ func prepareInteractiveShell(rc *config.RunConfig, ps1 string) (func(), error) {
 	// Do NOT source ~/.bashrc: it could export personal data (API keys, tokens,
 	// private paths) that clearenv+inherit is designed to keep out of the sandbox.
 	// bash --init-file replaces ~/.bashrc, so only this file runs.
+	// Single-quoted: bash sources this file, and inside double quotes a
+	// history entry such as `kill $(pgrep foo)` would run at shell start and
+	// be recorded already expanded.
 	content := "# inner sandbox — shell initialization\n" +
-		"PS1=" + fmt.Sprintf("%q", ps1) + "\n"
+		"PS1=" + shellQuote(ps1) + "\n"
 
 	// Pre-populate shell history so the user can recall useful commands
 	// immediately with the up-arrow key. Commands are injected oldest-first
 	// so the last entry in the list sits at the top of the history stack.
 	for _, cmd := range rc.Entrypoint.History {
-		content += "history -s " + fmt.Sprintf("%q", cmd) + "\n"
+		content += "history -s " + shellQuote(cmd) + "\n"
 	}
 
 	dir, err := os.MkdirTemp("", "inner-shell-*")
@@ -99,8 +102,13 @@ func prepareInteractiveShell(rc *config.RunConfig, ps1 string) (func(), error) {
 //   - bold yellow  →  (inner)
 //   - bold green   →  user@profile
 //   - bold blue    →  working directory
+//
+// bash decodes backslash sequences in PS1 and then expands $(…) and
+// backquotes every time it shows the prompt, so the profile name is shown with
+// those characters replaced: no escaping survives both steps.
 func sandboxPS1(profileName string) string {
-	return `\[\033[1;33m\](inner)\[\033[0m\] \[\033[1;32m\]\u@` + profileName + `\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ `
+	name := strings.NewReplacer(`\`, "_", "$", "_", "`", "_").Replace(profileName)
+	return `\[\033[1;33m\](inner)\[\033[0m\] \[\033[1;32m\]\u@` + name + `\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ `
 }
 
 // ── Cross-session messaging socket ────────────────────────────────────────────
@@ -400,6 +408,17 @@ func unlockClaudeCredentials(w io.Writer, autoConfirm bool, credPath string) {
 	// test code (which overrides HOME with a temp dir) cannot redirect the
 	// credential unlock to a fake environment.
 	cmd.Env = append(append([]string{}, os.Environ()...), "HOME="+hostHome)
+	// In an empty scratch directory, never the current one. This claude runs
+	// on the HOST, and in the project directory it would load the project's
+	// .claude/settings.json — which a sandboxed session can write — and run
+	// its hooks outside the sandbox (-p skips the workspace trust prompt).
+	scratch, err := os.MkdirTemp("", "inner-claude-unlock-*")
+	if err != nil {
+		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "inner: warning")+": could not start claude for credential unlock: %v\n", err)
+		return
+	}
+	defer os.RemoveAll(scratch)
+	cmd.Dir = scratch
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 
@@ -611,7 +630,9 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 	// tips history, …) regardless of whether the workdir makes the home
 	// directory writable.  Without this, running with -w <subdir> leaves the
 	// home read-only and claude hangs trying to write the file at startup.
-	// We mount a temporary copy so the real file is never modified by the sandbox.
+	// We mount a temporary copy so the real file is never modified by the
+	// sandbox, without the MCP servers and the other projects it lists (see
+	// copyClaudeJSONStripped).
 	claudeJsonPath := claudeDir + ".json"
 	if _, err := os.Stat(claudeJsonPath); err == nil {
 		tmpJson, err := os.CreateTemp("", "inner-claude-*.json")
@@ -624,7 +645,7 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 		tmpJson.Close()
 		tmpJsonPath := tmpJson.Name()
 		cleanups = append(cleanups, func() { os.Remove(tmpJsonPath) })
-		if err := copyFile(claudeJsonPath, tmpJsonPath); err != nil {
+		if err := copyClaudeJSONStripped(claudeJsonPath, tmpJsonPath, []string{rc.Workdir}); err != nil {
 			for _, fn := range cleanups {
 				fn()
 			}

@@ -253,19 +253,100 @@ func TestProcess_subsectionPreserved(t *testing.T) {
 	}
 }
 
-func TestProcess_override_multiInstanceSection_isNoOp(t *testing.T) {
-	// [remote "origin"] and [remote "upstream"] both have section name "remote".
-	// An override of "remote.url" cannot unambiguously target one subsection, so
-	// it must be a no-op rather than silently modifying the first match.
+func TestProcess_override_twoPartKeyLeavesSubsectionsAlone(t *testing.T) {
+	// [remote "origin"] and [remote "upstream"] are not [remote]: an override
+	// of "remote.url" must not touch either of them (git itself would write a
+	// separate [remote] section for it).
 	input := `[remote "origin"]
 	url = https://github.com/user/repo.git
 [remote "upstream"]
 	url = https://github.com/org/repo.git
 `
-	out := Process(input, nil, map[string]string{"remote.url": "https://evil.example.com"})
-	noopOut := Process(input, nil, nil)
-	if out != noopOut {
-		t.Errorf("override on multi-instance section must be a no-op, got:\n%s", out)
+	out := Process(input, nil, map[string]string{"remote.url": "https://elsewhere.example.com"})
+	if !strings.HasPrefix(out, input) {
+		t.Errorf("the existing remote sections must be unchanged, got:\n%s", out)
+	}
+}
+
+// gitGet reads key from a config file with the real git binary, which is the
+// only authority on whether the generated file is valid.
+func gitGet(t *testing.T, content, key string) (string, error) {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	cfgPath := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(gitPath, "config", "--file", cfgPath, "--get-all", key).Output()
+	return strings.TrimRight(string(out), "\n"), err
+}
+
+// A three-part key ("url.<base>.insteadOf") names a subsection. It used to be
+// written as "[url]" plus a line git refuses to parse, which broke every git
+// command in the sandbox.
+func TestProcess_override_threePartKey(t *testing.T) {
+	out := Process("[user]\n\tname = x\n", nil, map[string]string{
+		"url.https://github.com/.insteadOf": "git@github.com:",
+	})
+	if !strings.Contains(out, `[url "https://github.com/"]`) {
+		t.Fatalf("expected a quoted subsection header, got:\n%s", out)
+	}
+	got, err := gitGet(t, out, "url.https://github.com/.insteadOf")
+	if err != nil || got != "git@github.com:" {
+		t.Fatalf("git read %q (err %v), want git@github.com:\n%s", got, err, out)
+	}
+	if name, err := gitGet(t, out, "user.name"); err != nil || name != "x" {
+		t.Fatalf("user.name = %q (err %v), want x", name, err)
+	}
+}
+
+func TestProcess_override_targetsOneSubsection(t *testing.T) {
+	input := `[remote "origin"]
+	url = https://github.com/user/repo.git
+[remote "upstream"]
+	url = https://github.com/org/repo.git
+`
+	out := Process(input, nil, map[string]string{"remote.origin.url": "https://mirror.example.com/repo.git"})
+	if got, _ := gitGet(t, out, "remote.origin.url"); got != "https://mirror.example.com/repo.git" {
+		t.Errorf("remote.origin.url = %q, want the override\n%s", got, out)
+	}
+	if got, _ := gitGet(t, out, "remote.upstream.url"); got != "https://github.com/org/repo.git" {
+		t.Errorf("remote.upstream.url = %q, want it untouched\n%s", got, out)
+	}
+}
+
+// git reads the last value of a key, and a section may appear more than once:
+// the override must be the only value left.
+func TestProcess_override_repeatedSection(t *testing.T) {
+	input := "[push]\n\tdefault = current\n[user]\n\tname = x\n[push]\n\tdefault = simple\n"
+	out := Process(input, nil, map[string]string{"push.default": "nothing"})
+	if got, err := gitGet(t, out, "push.default"); err != nil || got != "nothing" {
+		t.Errorf("push.default values = %q (err %v), want only nothing\n%s", got, err, out)
+	}
+}
+
+func TestProcess_override_subsectionQuoted(t *testing.T) {
+	out := Process("", nil, map[string]string{`branch.we"ird\\name.remote`: "origin"})
+	if got, err := gitGet(t, out, `branch.we"ird\\name.remote`); err != nil || got != "origin" {
+		t.Errorf("got %q (err %v), want origin\n%s", got, err, out)
+	}
+}
+
+func TestProcess_stripKey_threePartOnlyThatSubsection(t *testing.T) {
+	input := `[credential "https://github.com"]
+	helper = store
+[credential "https://example.com"]
+	helper = cache
+`
+	out := Process(input, []string{"credential.https://github.com.helper"}, nil)
+	if got, _ := gitGet(t, out, "credential.https://github.com.helper"); got != "" {
+		t.Errorf("github helper = %q, want stripped\n%s", got, out)
+	}
+	if got, _ := gitGet(t, out, "credential.https://example.com.helper"); got != "cache" {
+		t.Errorf("example helper = %q, want kept\n%s", got, out)
 	}
 }
 
@@ -294,11 +375,11 @@ func TestSanitizeFrom_createsFile(t *testing.T) {
 	src := writeFixture(t, sampleGitconfig)
 	cfg := &config.GitConfig{StripSections: []string{"credential"}}
 
-	path, err := SanitizeFrom(src, cfg)
+	path, err := SanitizeFrom([]string{src}, cfg, "/sandbox/git")
 	if err != nil {
 		t.Fatalf("SanitizeFrom: %v", err)
 	}
-	defer os.Remove(path)
+	defer os.RemoveAll(filepath.Dir(path))
 
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("temp file not created: %v", err)
@@ -312,11 +393,11 @@ func TestSanitizeFrom_contentIsProcessed(t *testing.T) {
 		Overrides:     map[string]string{"push.default": "nothing"},
 	}
 
-	path, err := SanitizeFrom(src, cfg)
+	path, err := SanitizeFrom([]string{src}, cfg, "/sandbox/git")
 	if err != nil {
 		t.Fatalf("SanitizeFrom: %v", err)
 	}
-	defer os.Remove(path)
+	defer os.RemoveAll(filepath.Dir(path))
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -335,11 +416,11 @@ func TestSanitizeFrom_contentIsProcessed(t *testing.T) {
 func TestSanitizeFrom_missingSourceProducesEmptyFile(t *testing.T) {
 	cfg := &config.GitConfig{}
 
-	path, err := SanitizeFrom("/nonexistent/path/gitconfig-xyz", cfg)
+	path, err := SanitizeFrom([]string{"/nonexistent/path/gitconfig-xyz"}, cfg, "/sandbox/git")
 	if err != nil {
 		t.Fatalf("expected no error for missing source, got: %v", err)
 	}
-	defer os.Remove(path)
+	defer os.RemoveAll(filepath.Dir(path))
 
 	data, _ := os.ReadFile(path)
 	if strings.TrimSpace(string(data)) != "" {
@@ -351,11 +432,11 @@ func TestSanitizeFrom_tempFileIsReadable(t *testing.T) {
 	src := writeFixture(t, sampleGitconfig)
 	cfg := &config.GitConfig{}
 
-	path, err := SanitizeFrom(src, cfg)
+	path, err := SanitizeFrom([]string{src}, cfg, "/sandbox/git")
 	if err != nil {
 		t.Fatalf("SanitizeFrom: %v", err)
 	}
-	defer os.Remove(path)
+	defer os.RemoveAll(filepath.Dir(path))
 
 	if _, err := os.ReadFile(path); err != nil {
 		t.Errorf("temp file not readable: %v", err)
@@ -425,5 +506,122 @@ func TestParseKeyName(t *testing.T) {
 			t.Errorf("parseKeyName(%q) = (%q, %v), want (%q, %v)",
 				c.line, key, ok, c.key, c.ok)
 		}
+	}
+}
+
+// ── SanitizeFrom: sources and includes ──────────────────────────────────────
+
+// sanitizeFiles writes files (relative name → content) into a temp dir,
+// sanitizes the listed sources and returns the output dir.
+func sanitizeFiles(t *testing.T, files map[string]string, sources []string, cfg *config.GitConfig) (string, string) {
+	t.Helper()
+	src := t.TempDir()
+	for name, content := range files {
+		path := filepath.Join(src, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var abs []string
+	for _, s := range sources {
+		abs = append(abs, filepath.Join(src, s))
+	}
+	out := t.TempDir()
+	path, err := SanitizeFrom(abs, cfg, out) // the "sandbox" path is the host dir itself, so git can follow it
+	if err != nil {
+		t.Fatalf("SanitizeFrom: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(filepath.Dir(path)) })
+	// Move the result to out so includeIf paths (rewritten to out) resolve.
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	for _, e := range entries {
+		data, _ := os.ReadFile(filepath.Join(filepath.Dir(path), e.Name()))
+		if err := os.WriteFile(filepath.Join(out, e.Name()), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, _ := os.ReadFile(filepath.Join(out, MainFile))
+	return out, string(data)
+}
+
+func gitGetFile(t *testing.T, dir, key string, extra ...string) string {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	args := append(extra, "config", "--file", filepath.Join(dir, MainFile), "--includes", "--get-all", key)
+	out, _ := exec.Command(gitPath, args...).Output()
+	return strings.TrimRight(string(out), "\n")
+}
+
+// git reads ~/.config/git/config before ~/.gitconfig; with GIT_CONFIG_GLOBAL
+// set it reads neither, so both must end up in the sanitized file.
+func TestSanitizeFrom_readsXDGAndHomeConfig(t *testing.T) {
+	dir, out := sanitizeFiles(t, map[string]string{
+		"xdg/git/config":  "[user]\n\tname = From XDG\n\temail = xdg@example.com\n",
+		"home/.gitconfig": "[user]\n\temail = home@example.com\n",
+	}, []string{"xdg/git/config", "home/.gitconfig"}, &config.GitConfig{})
+	if got := gitGetFile(t, dir, "user.name"); got != "From XDG" {
+		t.Errorf("user.name = %q, want From XDG\n%s", got, out)
+	}
+	if got := gitGetFile(t, dir, "user.email"); !strings.HasSuffix(got, "home@example.com") {
+		t.Errorf("user.email = %q, want ~/.gitconfig to win\n%s", got, out)
+	}
+}
+
+// A credential helper kept in an included file must be stripped too.
+func TestSanitizeFrom_includeInlinedAndStripped(t *testing.T) {
+	dir, out := sanitizeFiles(t, map[string]string{
+		".gitconfig":       "[user]\n\tname = x\n[include]\n\tpath = .gitconfig.local\n",
+		".gitconfig.local": "[credential]\n\thelper = store\n[include]\n\tpath = nested/more\n",
+		"nested/more":      "[alias]\n\tst = status\n",
+	}, []string{".gitconfig"}, &config.GitConfig{StripSections: []string{"credential"}})
+	if strings.Contains(out, "helper") || strings.Contains(out, "[include]") {
+		t.Errorf("expected the include inlined and the helper stripped:\n%s", out)
+	}
+	if got := gitGetFile(t, dir, "alias.st"); got != "status" {
+		t.Errorf("alias.st = %q, want status (nested include, relative path)\n%s", got, out)
+	}
+}
+
+// An override wins over a value an included file sets after it.
+func TestSanitizeFrom_overrideWinsOverInclude(t *testing.T) {
+	dir, out := sanitizeFiles(t, map[string]string{
+		".gitconfig": "[push]\n\tdefault = simple\n[include]\n\tpath = extra\n",
+		"extra":      "[push]\n\tdefault = current\n",
+	}, []string{".gitconfig"}, &config.GitConfig{Overrides: map[string]string{"push.default": "nothing"}})
+	if got := gitGetFile(t, dir, "push.default"); !strings.HasSuffix(got, "nothing") {
+		t.Errorf("push.default = %q, want nothing last\n%s", got, out)
+	}
+}
+
+// includeIf is conditional, so its target is copied, sanitized, next to the
+// main file and the path rewritten; the condition keeps working.
+func TestSanitizeFrom_includeIfCopiedAndStripped(t *testing.T) {
+	repo := t.TempDir()
+	if err := exec.Command("git", "init", "-q", repo).Run(); err != nil {
+		t.Skip("git init failed")
+	}
+	dir, out := sanitizeFiles(t, map[string]string{
+		".gitconfig": "[user]\n\temail = me@home\n[includeIf \"gitdir:" + repo + "/\"]\n\tpath = work.inc\n",
+		"work.inc":   "[user]\n\temail = me@work\n[credential]\n\thelper = store\n",
+	}, []string{".gitconfig"}, &config.GitConfig{StripSections: []string{"credential"}})
+	inc, _ := os.ReadFile(filepath.Join(dir, "include-0.config"))
+	if strings.Contains(string(inc), "helper") {
+		t.Errorf("credential helper survived in the includeIf copy:\n%s", inc)
+	}
+	if !strings.Contains(out, filepath.Join(dir, "include-0.config")) {
+		t.Errorf("includeIf path not rewritten to the copy:\n%s", out)
+	}
+	gitPath, _ := exec.LookPath("git")
+	cmd := exec.Command(gitPath, "-C", repo, "config", "--get", "user.email")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+filepath.Join(dir, MainFile), "GIT_CONFIG_NOSYSTEM=1")
+	got, _ := cmd.Output()
+	if strings.TrimSpace(string(got)) != "me@work" {
+		t.Errorf("user.email in the repo = %q, want me@work (condition must still apply)\n%s", got, out)
 	}
 }

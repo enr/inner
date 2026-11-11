@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -254,9 +255,17 @@ func (p *Proxy) handleConnect(conn net.Conn, br *bufio.Reader, req *http.Request
 		return
 	}
 
-	idle := orDuration(p.IdleTimeout, defaultIdleTimeout)
-	client := &idleConn{Conn: conn, idle: idle}
-	up := &idleConn{Conn: upstream, idle: idle}
+	// One idle clock for the whole tunnel: traffic in either direction
+	// keeps both alive. A clock per direction would cut an upload to a server
+	// that answers only at the end, after the idle timeout, because the read
+	// from that server sat waiting while the client kept sending.
+	watch := newIdleWatch(orDuration(p.IdleTimeout, defaultIdleTimeout), func() {
+		_ = conn.Close()
+		_ = upstream.Close()
+	})
+	defer watch.stop()
+	client := &activityConn{Conn: conn, watch: watch}
+	up := &activityConn{Conn: upstream, watch: watch}
 
 	// Splice both directions. When either side finishes, close the other so the
 	// second copy cannot hang: a half-closed tunnel is the classic way to leak
@@ -265,7 +274,8 @@ func (p *Proxy) handleConnect(conn net.Conn, br *bufio.Reader, req *http.Request
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(up, br) // br, not conn: it may hold buffered client bytes
+		// br, not conn: it may hold buffered client bytes.
+		_, _ = io.Copy(up, &activityReader{r: br, watch: watch})
 		_ = upstream.Close()
 	}()
 	go func() {
@@ -359,25 +369,81 @@ func (p *Proxy) writeStatus(conn net.Conn, code int, reason string) {
 	fmt.Fprintf(conn, "Connection: close\r\n\r\n%s", body)
 }
 
-// idleConn applies an idle timeout by refreshing the deadline before every
-// operation, so a tunnel is reclaimed when it goes quiet rather than when the
-// whole transfer takes too long — a long download must not be killed for being
-// long, only for being stalled.
-type idleConn struct {
+// idleWatch closes a tunnel once no byte has crossed it, in either direction,
+// for its idle duration — so a tunnel is reclaimed when it goes quiet rather
+// than when the whole transfer takes too long: a long download or upload must
+// not be killed for being long, only for being stalled.
+//
+// Activity is a timestamp, not a timer reset: only the watch's own callback
+// re-arms the timer, so the copies never race on it.
+type idleWatch struct {
+	idle    time.Duration
+	last    atomic.Int64 // UnixNano of the last activity
+	timer   *time.Timer
+	onIdle  func()
+	stopped atomic.Bool
+}
+
+func newIdleWatch(idle time.Duration, onIdle func()) *idleWatch {
+	w := &idleWatch{idle: idle, onIdle: onIdle}
+	w.touch()
+	// Armed only once assigned: check reads w.timer.
+	w.timer = time.AfterFunc(time.Hour, w.check)
+	w.timer.Reset(idle)
+	return w
+}
+
+func (w *idleWatch) touch() { w.last.Store(time.Now().UnixNano()) }
+
+func (w *idleWatch) check() {
+	if w.stopped.Load() {
+		return
+	}
+	quiet := time.Since(time.Unix(0, w.last.Load()))
+	if quiet >= w.idle {
+		w.onIdle()
+		return
+	}
+	w.timer.Reset(w.idle - quiet)
+}
+
+func (w *idleWatch) stop() {
+	w.stopped.Store(true)
+	w.timer.Stop()
+}
+
+// activityConn reports every read and write to its watch.
+type activityConn struct {
 	net.Conn
-	idle time.Duration
+	watch *idleWatch
 }
 
-func (c *idleConn) Read(b []byte) (int, error) {
-	if c.idle > 0 {
-		_ = c.Conn.SetReadDeadline(time.Now().Add(c.idle))
+func (c *activityConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.watch.touch()
 	}
-	return c.Conn.Read(b)
+	return n, err
 }
 
-func (c *idleConn) Write(b []byte) (int, error) {
-	if c.idle > 0 {
-		_ = c.Conn.SetWriteDeadline(time.Now().Add(c.idle))
+func (c *activityConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if n > 0 {
+		c.watch.touch()
 	}
-	return c.Conn.Write(b)
+	return n, err
+}
+
+// activityReader is activityConn for the buffered client reader.
+type activityReader struct {
+	r     io.Reader
+	watch *idleWatch
+}
+
+func (a *activityReader) Read(b []byte) (int, error) {
+	n, err := a.r.Read(b)
+	if n > 0 {
+		a.watch.touch()
+	}
+	return n, err
 }

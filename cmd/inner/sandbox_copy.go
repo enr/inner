@@ -113,6 +113,82 @@ func copySettingsStripped(src, dst string) error {
 	return os.WriteFile(dst, out, 0o644)
 }
 
+// copyClaudeJSONStripped copies ~/.claude.json to dst, keeping what the
+// claude CLI needs inside the sandbox and dropping what is only a leak there:
+//
+//   - the top-level mcpServers: the user's MCP servers, routinely with API
+//     keys in their env;
+//   - every projects entry that has nothing to do with this run: the paths of
+//     all the user's other projects, with their own mcpServers.
+//
+// The projects entries for the workdir — the workdir itself, a parent (the
+// repository root claude may key it by) or a directory inside it — are kept,
+// minus their mcpServers: they hold the workspace trust answer and the
+// allowed tools, and dropping them would make claude ask again on every run.
+//
+// A file that is not a JSON object is replaced by an empty one rather than
+// copied: claude starts from defaults, and nothing unreadable goes in.
+func copyClaudeJSONStripped(src, dst string, workdirs []string) error {
+	in, _, err := openRegularNoFollow(src)
+	if err != nil {
+		return err
+	}
+	data, err := io.ReadAll(in)
+	in.Close()
+	if err != nil {
+		return err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil || doc == nil {
+		return os.WriteFile(dst, []byte("{}"), 0o600)
+	}
+	delete(doc, "mcpServers")
+
+	if raw, ok := doc["projects"]; ok {
+		var projects map[string]map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &projects); err != nil {
+			delete(doc, "projects")
+		} else {
+			kept := map[string]map[string]json.RawMessage{}
+			for path, entry := range projects {
+				if !projectRelevant(path, workdirs) {
+					continue
+				}
+				delete(entry, "mcpServers")
+				kept[path] = entry
+			}
+			out, err := json.Marshal(kept)
+			if err != nil {
+				return err
+			}
+			doc["projects"] = out
+		}
+	}
+
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, out, 0o600)
+}
+
+// projectRelevant reports whether a claude projects key belongs to one of
+// workdirs: the same directory, a parent, or a directory inside it.
+func projectRelevant(path string, workdirs []string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	for _, wd := range workdirs {
+		if wd == "" {
+			continue
+		}
+		if config.PathCoveredBy([]string{path}, wd) || config.PathCoveredBy([]string{wd}, path) {
+			return true
+		}
+	}
+	return false
+}
+
 // hiddenResourceCovering returns the sensitive resource path that covers
 // path, or "" if none does.
 func hiddenResourceCovering(path string) string {

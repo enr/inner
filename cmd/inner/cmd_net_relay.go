@@ -122,10 +122,12 @@ func runNetRelay(stderr io.Writer, opts netRelayOptions) (int, error) {
 	defer closeListeners()
 
 	var wg sync.WaitGroup
-	// Connections from the host on published ports. Closed when the child
-	// exits: a browser keeps idle connections open for minutes, and the
-	// sandbox must not wait on them to exit.
-	var published sync.Map
+	// Closed when the child exits. Every connection the relay serves, through
+	// the proxy or on a published port, is torn down then — both ends: a
+	// browser keeps idle connections open for minutes, a background process
+	// or a client's pool can keep a proxy tunnel open for as long as the
+	// upstream does, and the sandbox must not wait on any of them to exit.
+	stop := make(chan struct{})
 	serve := func(l net.Listener, handle func(net.Conn)) {
 		listeners = append(listeners, l)
 		go func() {
@@ -151,7 +153,7 @@ func runNetRelay(stderr io.Writer, opts netRelayOptions) (int, error) {
 			// message that says nothing about the real cause.
 			return 0, fmt.Errorf("network relay: cannot listen on %s: %w", opts.ListenAddr, err)
 		}
-		serve(listener, func(conn net.Conn) { relayConn(stderr, conn, opts.UnixPath) })
+		serve(listener, func(conn net.Conn) { relayConn(stderr, conn, opts.UnixPath, stop) })
 	}
 
 	// Published ports: also before the child, so the host side never meets a
@@ -166,11 +168,7 @@ func runNetRelay(stderr io.Writer, opts netRelayOptions) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("network relay: cannot listen on %s: %w", sock, err)
 		}
-		serve(listener, func(conn net.Conn) {
-			published.Store(conn, struct{}{})
-			defer published.Delete(conn)
-			publishConn(conn, target)
-		})
+		serve(listener, func(conn net.Conn) { publishConn(conn, target, stop) })
 	}
 
 	child := exec.Command(opts.Cmd, opts.Args...)
@@ -209,10 +207,7 @@ func runNetRelay(stderr io.Writer, opts netRelayOptions) (int, error) {
 	waitErr := child.Wait()
 	close(done)
 	closeListeners()
-	published.Range(func(conn, _ any) bool {
-		_ = conn.(net.Conn).Close()
-		return true
-	})
+	close(stop)
 	wg.Wait()
 
 	return exitCodeOf(waitErr), nil
@@ -246,7 +241,7 @@ func exitCodeOf(waitErr error) int {
 // with a message, and never takes the accept loop or any other connection with
 // it. The client sees a closed connection, which is what it would see from any
 // proxy that refused it.
-func relayConn(stderr io.Writer, client net.Conn, unixPath string) {
+func relayConn(stderr io.Writer, client net.Conn, unixPath string, stop <-chan struct{}) {
 	defer client.Close()
 
 	upstream, err := net.Dial("unix", unixPath)
@@ -255,7 +250,7 @@ func relayConn(stderr io.Writer, client net.Conn, unixPath string) {
 		return
 	}
 	defer upstream.Close()
-	pipeConns(client, upstream)
+	pipeConnsUntil(stop, client, upstream)
 }
 
 // publishConn pipes one connection from the host (arriving on a publish
@@ -264,13 +259,29 @@ func relayConn(stderr io.Writer, client net.Conn, unixPath string) {
 // Silent when nothing listens there yet: the host client sees its connection
 // closed, the usual answer of a port with no server, and a line on the
 // sandbox's terminal would be painted into whatever TUI is running there.
-func publishConn(client net.Conn, target string) {
+func publishConn(client net.Conn, target string, stop <-chan struct{}) {
 	defer client.Close()
 	upstream, err := net.Dial("tcp", target)
 	if err != nil {
 		return
 	}
 	defer upstream.Close()
+	pipeConnsUntil(stop, client, upstream)
+}
+
+// pipeConnsUntil is pipeConns that also closes both connections as soon as
+// stop is closed. A nil stop never fires.
+func pipeConnsUntil(stop <-chan struct{}, client, upstream net.Conn) {
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-stop:
+			_ = client.Close()
+			_ = upstream.Close()
+		case <-finished:
+		}
+	}()
 	pipeConns(client, upstream)
 }
 

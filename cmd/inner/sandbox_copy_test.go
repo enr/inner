@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,5 +166,72 @@ func TestWriteHidePlaceholders(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Errorf("placeholder left behind: %v", err)
+	}
+}
+
+// ~/.claude.json carries the user's MCP servers (with their API keys) and
+// every project claude has seen. Only what this run needs goes in.
+func TestCopyClaudeJSONStripped(t *testing.T) {
+	src := filepath.Join(t.TempDir(), ".claude.json")
+	in := `{
+	  "numStartups": 3,
+	  "oauthAccount": {"emailAddress": "me@example.com"},
+	  "mcpServers": {"db": {"command": "db-mcp", "env": {"DB_PASSWORD": "hunter2"}}},
+	  "projects": {
+	    "/home/u/src/app": {"hasTrustDialogAccepted": true, "mcpServers": {"x": {"env": {"TOKEN": "t0ken"}}}},
+	    "/home/u/src": {"allowedTools": ["Bash"]},
+	    "/home/u/src/app/sub": {"hasTrustDialogAccepted": true},
+	    "/home/u/secret-client-project": {"hasTrustDialogAccepted": true},
+	    "/home/u/src/app2": {"hasTrustDialogAccepted": true}
+	  }
+	}`
+	if err := os.WriteFile(src, []byte(in), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "copy.json")
+	if err := copyClaudeJSONStripped(src, dst, []string{"/home/u/src/app"}); err != nil {
+		t.Fatalf("copyClaudeJSONStripped: %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+	for _, leak := range []string{"hunter2", "t0ken", "secret-client-project", "app2", `"mcpServers"`} {
+		if strings.Contains(out, leak) {
+			t.Errorf("copy still contains %q:\n%s", leak, out)
+		}
+	}
+	var doc struct {
+		NumStartups int                                   `json:"numStartups"`
+		Projects    map[string]map[string]json.RawMessage `json:"projects"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("copy is not JSON: %v\n%s", err, out)
+	}
+	if doc.NumStartups != 3 || !strings.Contains(out, "me@example.com") {
+		t.Errorf("unrelated settings must be kept:\n%s", out)
+	}
+	for _, want := range []string{"/home/u/src/app", "/home/u/src", "/home/u/src/app/sub"} {
+		if _, ok := doc.Projects[want]; !ok {
+			t.Errorf("project %q (the workdir, a parent or a child) was dropped:\n%s", want, out)
+		}
+	}
+	if _, ok := doc.Projects["/home/u/src/app"]["hasTrustDialogAccepted"]; !ok {
+		t.Errorf("the workdir's trust answer was dropped:\n%s", out)
+	}
+}
+
+func TestCopyClaudeJSONStripped_notJSONBecomesEmpty(t *testing.T) {
+	src := filepath.Join(t.TempDir(), ".claude.json")
+	if err := os.WriteFile(src, []byte("not json, but API_KEY=sk-123"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "copy.json")
+	if err := copyClaudeJSONStripped(src, dst, nil); err != nil {
+		t.Fatalf("copyClaudeJSONStripped: %v", err)
+	}
+	if data, _ := os.ReadFile(dst); string(data) != "{}" {
+		t.Errorf("copy = %q, want {}", data)
 	}
 }

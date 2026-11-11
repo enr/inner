@@ -356,8 +356,11 @@ func (l *Loader) LoadProfileFromPath(path string) (*Profile, error) {
 // Otherwise it checks the local profiles directory first, then falls back to global.
 // ~ is expanded before the file-existence check.
 func (l *Loader) ResolveProfilePath(nameOrPath string) string {
-	expanded := ExpandPath(nameOrPath)
-	if _, err := os.Stat(expanded); err == nil {
+	if IsProfilePath(nameOrPath) {
+		if path, ok := l.findProfileFile(nameOrPath); ok {
+			return path
+		}
+		expanded := ExpandPath(nameOrPath)
 		if abs, err := filepath.Abs(expanded); err == nil {
 			return abs
 		}
@@ -380,30 +383,49 @@ func (l *Loader) ResolveProfilePath(nameOrPath string) string {
 // directly; otherwise it is treated as a profile name looked up in the
 // profiles directory.
 func (l *Loader) LoadProfileAuto(nameOrPath string) (*Profile, error) {
-	expanded := ExpandPath(nameOrPath)
-	if _, err := os.Stat(expanded); err == nil {
-		abs, err := filepath.Abs(expanded)
-		if err != nil {
-			abs = expanded
-		}
-		return l.loadProfilePath(abs, nil)
+	if !IsProfilePath(nameOrPath) {
+		return l.LoadProfile(nameOrPath)
 	}
-	// If the value looks like a path (contains separators), also try resolving
-	// it relative to WorkDir before falling through to bare-name lookup.
-	if strings.ContainsAny(expanded, "/\\") {
-		if l.WorkDir != "" {
-			candidate := filepath.Join(l.WorkDir, expanded)
-			if _, err := os.Stat(candidate); err == nil {
-				abs, err := filepath.Abs(candidate)
-				if err != nil {
-					abs = candidate
-				}
-				return l.loadProfilePath(abs, nil)
-			}
-		}
+	path, ok := l.findProfileFile(nameOrPath)
+	if !ok {
 		return nil, fmt.Errorf("profile file not found: %s", nameOrPath)
 	}
-	return l.LoadProfile(nameOrPath)
+	return l.loadProfilePath(path, nil)
+}
+
+// IsProfilePath reports whether a -p / default_profile value names a profile
+// FILE rather than a profile by name: it contains a path separator, starts
+// with "~", or ends in ".toml".
+//
+// The decision is made on the spelling alone, never on what happens to exist
+// in the current directory. Otherwise a directory or file that shares a
+// profile's name — a "rust/" or "shell/" folder in the project — would be
+// taken for the profile and `inner run -p rust` would fail, or load the
+// wrong file, depending on where it was launched from.
+func IsProfilePath(nameOrPath string) bool {
+	return strings.ContainsAny(nameOrPath, "/\\") ||
+		strings.HasPrefix(nameOrPath, "~") ||
+		strings.HasSuffix(nameOrPath, ".toml")
+}
+
+// findProfileFile resolves a path-like profile value to an absolute path:
+// as given (after ~ expansion), then relative to WorkDir. Directories are not
+// profile files.
+func (l *Loader) findProfileFile(nameOrPath string) (string, bool) {
+	expanded := ExpandPath(nameOrPath)
+	candidates := []string{expanded}
+	if l.WorkDir != "" && !filepath.IsAbs(expanded) {
+		candidates = append(candidates, filepath.Join(l.WorkDir, expanded))
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			if abs, err := filepath.Abs(c); err == nil {
+				return abs, true
+			}
+			return c, true
+		}
+	}
+	return "", false
 }
 
 // Aliases returns the merged alias map from global and local config.
@@ -683,6 +705,8 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string, expand func(s
 			NoGitScan: entry.GitScan != nil && !*entry.GitScan,
 		})
 	}
+	sortMounts(cfg.Mounts)
+	slices.Sort(cfg.WorkspaceDests)
 
 	// Entrypoint.
 	cfg.Entrypoint = Entrypoint{
@@ -718,6 +742,24 @@ func toRunConfig(global *GlobalConfig, p *Profile, workDir string, expand func(s
 	cfg.Limits = resolveResourceLimits(global, p)
 
 	return cfg, nil
+}
+
+// sortMounts puts the profile mounts in a fixed order: by destination, then
+// by source. [mounts] is a TOML table, decoded into a Go map, and map order
+// changes from one run to the next — while bwrap applies binds left to right,
+// so a later bind shadows an earlier one at or above it. Without a fixed order
+// a "rw" parent and a "ro" child would come out child-first in some runs, and
+// the child would silently lose its read-only flag.
+//
+// Lexicographic order on the cleaned destination is enough to put every
+// parent before its children: a path sorts before any longer path it prefixes.
+func sortMounts(mounts []Mount) {
+	slices.SortStableFunc(mounts, func(a, b Mount) int {
+		if c := strings.Compare(filepath.Clean(a.Dest), filepath.Clean(b.Dest)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Src, b.Src)
+	})
 }
 
 // ResolveResourceLimits builds the effective ResourceLimits for a run.

@@ -82,7 +82,7 @@ returns one line per change, which the gate prints:
 | `[sandbox] allow` key in `config.CredentialAllowKeys` | key dropped | un-hides a readable credential from the [hide table](#sensitive-resource-hiding) |
 | `[sandbox] allow` key in `config.HostPrivilegeAllowKeys` (`docker-socket`, `podman-socket`, `nested-user-ns`, `session-bus`, `systemd-user`, `ssh-agent`, `gpg-agent`, `abstract-sockets`, `chrome-browser`) | key dropped | a container socket is root on the host; nested user namespaces grant caps; the session bus and systemd user manager start processes outside the sandbox; the agents sign with your keys; the host X server types into your windows; Claude in Chrome drives your logged-in browser |
 | a `[mounts]` entry whose source covers or lies inside a hidden path and whose destination is elsewhere (`"~/.ssh" = { dest = "/tmp/k" }`, `"/" = { dest = "/tmp/root" }`) | mount dropped | the hide rules act on the host path; relocating it escapes them. The source is resolved through symlinks first |
-| `[sandbox] pid_namespace = false` | ignored | host `/proc/<pid>/environ` is readable, defeating `--clearenv` (see [process isolation](#process-isolation---unshare-pid)) |
+| `[sandbox] pid_namespace = false` | ignored | host `/proc/<pid>/environ` is readable, defeating the cleared environment (see [process isolation](#process-isolation---unshare-pid)) |
 | `[sandbox] git_dir = "rw"` | set to `"protected"` | the sandbox could plant hooks or a `core.fsmonitor` that the host runs on the next git command (see [git repository protection](#git-repository-protection)) |
 | `[sandbox] publish` entry on a non-loopback host address | entry dropped | it would open the sandbox to other machines; loopback entries are kept and listed in the prompt |
 
@@ -276,7 +276,7 @@ if cfg.PidNamespace {
 
 The decision is driven by `cfg.PidNamespace`, which defaults to **true** and is controlled per-profile via `[sandbox] pid_namespace = false`.
 
-**Why it must be on by default:** the base mount is `--ro-bind / /` and `--proc /proc` mounts a fresh procfs of the *current* PID namespace. Without `--unshare-pid` the sandbox shares the host PID namespace, so every host process is visible under `/proc`. Running as the same UID, the sandboxed agent can then read `/proc/<pid>/environ` of any of the user's other processes — leaking secrets such as `AWS_SECRET_ACCESS_KEY` or `GITHUB_TOKEN` exported in another shell, which defeats the `--clearenv` hygiene — and can send signals to those processes. A private PID namespace closes that hole: inside the sandbox only the sandbox's own processes exist.
+**Why it must be on by default:** the base mount is `--ro-bind / /` and `--proc /proc` mounts a fresh procfs of the *current* PID namespace. Without `--unshare-pid` the sandbox shares the host PID namespace, so every host process is visible under `/proc`. Running as the same UID, the sandboxed agent can then read `/proc/<pid>/environ` of any of the user's other processes — leaking secrets such as `AWS_SECRET_ACCESS_KEY` or `GITHUB_TOKEN` exported in another shell, which defeats the cleared-environment hygiene — and can send signals to those processes. A private PID namespace closes that hole: inside the sandbox only the sandbox's own processes exist.
 
 **Why it does not break TUI apps (the historical concern):** an earlier version skipped `--unshare-pid` for interactive runs, believing it forced bwrap to call `setsid()` and detach the controlling terminal, making TUI apps (claude, gemini — Node.js/libuv opens `/dev/tty` with `O_RDWR` during init) fail with `ENXIO` and hang. This was a misdiagnosis. Empirical testing (bubblewrap 0.9.0, under a real PTY) shows:
 
@@ -383,9 +383,9 @@ are refused regardless of configuration, because otherwise the feature would
 The test is positive (reject unless the address is ordinary global unicast), so
 a range nobody thought of fails closed.
 
-**Environment injection** happens after the `--clearenv` block in `bwrap.go`,
-for the same reason the `containers.conf` injection does: bwrap applies
-`--clearenv` when it parses it and wipes every earlier `--setenv`. All four
+**Environment injection** uses `--setenv`, which bwrap applies on top of the
+profile environment (see [Environment](#environment)), so a profile that sets
+the proxy variables itself cannot route around the proxy. All four
 spellings of the proxy variable are set, `NO_PROXY` is forced empty, and
 `NODE_USE_ENV_PROXY=1` is set because Node 26+ otherwise ignores the proxy
 environment for `fetch()`.
@@ -485,21 +485,22 @@ The three ways to make podman's default work are all rejected on security ground
 | Bind `/run/user/<uid>/systemd/` | The user manager does not consult polkit for same-uid callers, so the sandbox could start arbitrary host units — a full escape |
 | A permissive polkit rule | Changes the **host** security posture to accommodate a sandbox |
 
-So `Build` instead binds a generated `containers.conf` fragment (`internal/containers`) at `/tmp/inner/containers.conf` and exports `CONTAINERS_CONF_OVERRIDE`, which podman merges on top of the user's own files. The generation happens in `applyContainersConf` (`cmd_run.go`, called from `prepareSandbox`, which `inner run` and `inner verify` share) so `Build` stays side-effect free, matching the shim-dir and gitconfig patterns. The `--setenv` is emitted inside the `nested-user-ns` block, i.e. *before* the `[env] set` loop, so a profile that sets `CONTAINERS_CONF_OVERRIDE` itself still wins (bwrap honours the last `--setenv` for a key).
+So `Build` instead binds a generated `containers.conf` fragment (`internal/containers`) at `/tmp/inner/containers.conf` and exports `CONTAINERS_CONF_OVERRIDE`, which podman merges on top of the user's own files. The generation happens in `applyContainersConf` (`cmd_run.go`, called from `prepareSandbox`, which `inner run` and `inner verify` share) so `Build` stays side-effect free, matching the shim-dir and gitconfig patterns. A profile that sets `CONTAINERS_CONF_OVERRIDE` itself in `[env] set` still wins: `applyContainersConf` then skips the generation entirely.
 
 Consequence: per-container resource limits (`--memory`, `--cpus`, `--pids-limit`) are unavailable inside the sandbox. This is consistent with `wrapWithLimits`, which already skips the `systemd-run --scope` wrapper when `nested-user-ns` is active. `[sandbox] cgroup_manager = "systemd"` opts out of the injection.
 
 ### Environment
 
 ```go
-if !cfg.Env.InheritAll {
-    args = append(args, "--clearenv")
-    for _, key := range cfg.Env.Inherit { ... }
-}
-for key, val := range cfg.Env.Set { ... }
+c := exec.Command(b.bwrapPath, args...)
+c.Env = SandboxEnv(cfg) // inherit / inherit_all, then set, then path_prepend
 ```
 
-Driven by `cfg.Env` (profile `[env]` section, CLI `-e KEY=VAL`). The host environment is always cleared unless `InheritAll` is set (`inherit_all = true` in the profile). Explicit `set` values always override inherited ones.
+Driven by `cfg.Env` (profile `[env]` section, CLI `-e KEY=VAL`). The sandbox starts from an empty environment unless `InheritAll` is set (`inherit_all = true` in the profile). Explicit `set` values always override inherited ones.
+
+The profile environment is bwrap's **own** environment (`cmd.Env`), which bwrap hands to the sandboxed process; it is never written on the bwrap command line as `--setenv KEY VALUE`. The values are often secrets (an inherited API key, a token passed with `-e`), and a command line is readable by every local user through `/proc/<pid>/cmdline`, and is recorded by `systemd-run` when resource limits apply. The `--setenv` flags `Build` still emits (proxy, shims, gitconfig, clipboard, containers.conf) carry only values inner generates, and are applied on top of that environment.
+
+Under resource limits, `systemd-run --user --scope` runs bwrap with its own environment and needs `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS` to reach the user manager. `wrapWithLimits` adds them for `systemd-run` and has bwrap drop them again (`--unsetenv`), so the sandbox never sees the host bus address. The scope gets a fixed `--description`, so the entrypoint arguments do not end up in the journal either.
 
 ### Clipboard / display server
 
@@ -609,7 +610,7 @@ If `cfg.ShimDir` is non-empty (populated by `prepareSandbox` with `shim.Builder.
 
 ### Git config injection
 
-If `cfg.GitConfigPath` is non-empty (set after `git.Sanitize()`), the sanitized gitconfig is bind-mounted at the fixed in-sandbox path `/etc/inner/gitconfig` and `GIT_CONFIG_GLOBAL` is set to that path. The host temp path is never exposed inside the sandbox, so the host `/tmp` layout is not leaked.
+If `cfg.GitConfigPath` is non-empty (set after `git.Sanitize()`), the directory holding the sanitized gitconfig — and the sanitized copies of its `[includeIf]` targets, which it names by their in-sandbox path — is bind-mounted read-only at the fixed in-sandbox path `/tmp/inner/git`, and `GIT_CONFIG_GLOBAL` is set to `/tmp/inner/git/config`. The host temp path is never exposed inside the sandbox, so the host `/tmp` layout is not leaked.
 
 ---
 

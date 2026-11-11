@@ -8,6 +8,10 @@ import "github.com/enr/inner/internal/gitguard"
 // tmp layout.
 const SandboxShellInitPath = "/tmp/inner/shell-init.sh"
 
+// SandboxGitConfigDir is where the directory holding the sanitized git
+// configuration (see RunConfig.GitConfigPath) is bound inside the sandbox.
+const SandboxGitConfigDir = "/tmp/inner/git"
+
 // RunConfig is the backend-agnostic representation of a sandbox run.
 // It speaks in terms of intent, never backend-specific flags.
 // Produced by the Loader; consumed by the Isolator.
@@ -63,7 +67,11 @@ type RunConfig struct {
 	PidNamespace  bool
 	Entrypoint    Entrypoint
 	Git           *GitConfig // sanitization config (strip sections, overrides)
-	GitConfigPath string     // path to pre-sanitized gitconfig temp file (set by git.Sanitizer)
+	// GitConfigPath is the host path of the sanitized global git config,
+	// written by git.Sanitize into a directory of its own together with the
+	// copies of its [includeIf] targets. The isolator binds that whole
+	// directory at SandboxGitConfigDir.
+	GitConfigPath string
 	LogDir        string
 	LogSummary    bool
 	Timeout       int // seconds; 0 = no timeout

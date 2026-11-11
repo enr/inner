@@ -181,7 +181,7 @@ func TestRelayConn_pipesBothDirections(t *testing.T) {
 
 	client, server := net.Pipe()
 	defer client.Close()
-	go relayConn(io.Discard, server, sockPath)
+	go relayConn(io.Discard, server, sockPath, nil)
 
 	_ = client.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := client.Write([]byte("hello")); err != nil {
@@ -204,7 +204,7 @@ func TestRelayConn_unreachableSocketClosesOnlyThatConnection(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		relayConn(&stderr, server, filepath.Join(t.TempDir(), "absent.sock"))
+		relayConn(&stderr, server, filepath.Join(t.TempDir(), "absent.sock"), nil)
 		close(done)
 	}()
 
@@ -265,7 +265,7 @@ func TestRelay_throughTheRealProxyToAnAllowedUpstream(t *testing.T) {
 			if err != nil {
 				return
 			}
-			go relayConn(io.Discard, conn, sockPath)
+			go relayConn(io.Discard, conn, sockPath, nil)
 		}
 	}()
 
@@ -347,5 +347,62 @@ func TestNetRelayCmd_passesChildArgumentsThroughUntouched(t *testing.T) {
 	const want = "[--listen][bogus][--][-v]"
 	if string(got) != want {
 		t.Errorf("child received %s, want %s — the relay must not consume the entrypoint's arguments", got, want)
+	}
+}
+
+// A connection through the proxy that is still open when the entrypoint exits
+// (a background process kept it, a client pooled it) must not keep the relay
+// — and with it the whole sandbox — waiting until the upstream gives up.
+func TestRunNetRelay_openProxyConnectionDoesNotDelayExit(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "proxy.sock")
+	proxy, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	go func() {
+		for {
+			c, err := proxy.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close() // held open: a tunnel that never ends
+		}
+	}()
+
+	listen := freeLoopbackAddr(t)
+	done := make(chan int, 1)
+	go func() {
+		code, _ := runNetRelay(io.Discard, netRelayOptions{
+			ListenAddr: listen,
+			UnixPath:   sock,
+			Cmd:        "sleep",
+			Args:       []string{"0.5"},
+		})
+		done <- code
+	}()
+
+	// Open a connection through the relay while the child runs, and keep it.
+	var client net.Conn
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if client, err = net.Dial("tcp", listen); err == nil {
+			break
+		}
+	}
+	if client == nil {
+		t.Fatalf("could not reach the relay: %v", err)
+	}
+	defer client.Close()
+	if _, err := client.Write([]byte("CONNECT x:443 HTTP/1.1\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("exit code = %d, want 0", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the relay is still waiting on a proxy connection after its child exited")
 	}
 }

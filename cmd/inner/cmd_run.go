@@ -385,6 +385,11 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 	}
 	fmt.Fprintf(a.errW(), "inner: run %s\n", runID)
 
+	// The workdir is writable: the run may change the inner configuration
+	// the next run loads. Report it afterwards — see config_watch.go.
+	watchDirs := []string{a.loader.WorkDir, rc.Workdir}
+	configBefore := takeConfigSnapshot(a.loader.Dir, watchDirs)
+
 	launcher := a.launcherFn()
 	result, err := launcher.Run(cmd, executor.RunOptions{
 		Interactive:  rc.Entrypoint.Interactive,
@@ -395,6 +400,7 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		LogDir:       rc.LogDir,
 		RunID:        runID,
 	})
+	reportConfigChanges(a.errW(), diffConfigSnapshots(configBefore, takeConfigSnapshot(a.loader.Dir, watchDirs)))
 	rec.finish(result.ExitCode, err, result.LogPath)
 	if werr := writeRunRecord(logsDir, rec); werr != nil {
 		fmt.Fprintf(a.errW(), "inner: warning: cannot write run record: %v\n", werr)
@@ -1158,7 +1164,10 @@ func wrapWithLimits(w io.Writer, cmd *exec.Cmd, limits config.ResourceLimits, ne
 	}
 
 	var args []string
-	args = append(args, "--user", "--scope")
+	// A fixed description: by default systemd names the scope after the
+	// command line, which carries the entrypoint arguments (a prompt) into
+	// the journal.
+	args = append(args, "--user", "--scope", "--description=inner sandbox")
 
 	if limits.Memory != "" {
 		args = append(args, "--property=MemoryMax="+limits.Memory)
@@ -1176,16 +1185,54 @@ func wrapWithLimits(w io.Writer, cmd *exec.Cmd, limits config.ResourceLimits, ne
 		args = append(args, fmt.Sprintf("--property=TasksMax=%d", limits.Pids))
 	}
 
+	env, bwrapArgs := systemdRunEnv(cmd.Env, cmd.Args)
 	args = append(args, "--")
-	args = append(args, cmd.Args...)
+	args = append(args, bwrapArgs...)
 
 	wrapped := exec.Command(sdPath, args...)
-	wrapped.Env = cmd.Env
+	wrapped.Env = env
 	wrapped.Dir = cmd.Dir
 	// ExtraFiles intentionally NOT copied: no extra fds are present at this
 	// point (nested-user-ns is handled above), and systemd-run in --scope
 	// mode may close non-standard fds before exec'ing its child.
 	return wrapped, nil
+}
+
+// systemdRunUserBusVars are what `systemd-run --user` reads to find the user
+// manager's bus.
+var systemdRunUserBusVars = []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"}
+
+// systemdRunEnv adapts the bwrap command's environment for running it under
+// `systemd-run --user --scope`.
+//
+// The isolator sets bwrap's environment to exactly the sandbox's (see
+// isolator.SandboxEnv), and a scope runs its command with systemd-run's own
+// environment. systemd-run, though, needs the variables that locate the user
+// bus, which the sandbox environment usually lacks. Those are added for
+// systemd-run, and bwrap is told to drop them again (--unsetenv, before its
+// "--" separator) so the sandbox does not get them: the host bus is exactly
+// what the sandbox must not reach. Variables the sandbox environment already
+// carries are left as they are.
+//
+// A nil env (a command built without an explicit environment) is returned
+// unchanged: it inherits everything anyway.
+func systemdRunEnv(env, bwrapArgs []string) ([]string, []string) {
+	if env == nil {
+		return nil, bwrapArgs
+	}
+	env = slices.Clone(env)
+	bwrapArgs = slices.Clone(bwrapArgs)
+	sep := slices.Index(bwrapArgs, "--")
+	for _, key := range systemdRunUserBusVars {
+		val, ok := os.LookupEnv(key)
+		if !ok || sep < 0 || slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, key+"=") }) {
+			continue
+		}
+		env = append(env, key+"="+val)
+		bwrapArgs = slices.Insert(bwrapArgs, sep, "--unsetenv", key)
+		sep += 2
+	}
+	return env, bwrapArgs
 }
 
 // systemdUserSessionAvailableFn is the function used by wrapWithLimits to

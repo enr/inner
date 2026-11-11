@@ -10,7 +10,15 @@ A **profile** is a TOML file that fully describes a sandbox environment. Profile
 
 **Local (per-directory) profiles** can be placed in `.config/inner/profiles/` inside the current working directory. They are discovered automatically and shown with a `[local]` tag in `inner profile list`. When a local profile has the same name as a global one, the **local profile takes precedence** — `inner run -p foo` will load `.config/inner/profiles/foo.toml` rather than `~/.config/inner/profiles/foo.toml`. The shadowed global profile is hidden in the default list view and visible only with `inner profile list --wide`.
 
-Alternatively, you can pass a **file path** directly to `-p`/`--profile`. If the value points to an existing file it is loaded as-is; otherwise it is treated as a profile name looked up in the profiles directory. This lets you use local or project-specific profile files without installing them in `~/.config/inner/profiles/`:
+Because the workdir is writable from inside the sandbox, a run can create or change the project profiles and project config files that the next run loads — an agent asked to "set up inner for this repo" will do exactly that. `inner run` does not block it; when the run ends it lists every inner configuration file that was created, modified or removed (project config files in the workdir and its parents, `.config/inner/profiles/`, and `~/.config/inner/`), so you can review them before the next run:
+
+```
+inner: warning: this run changed inner configuration that later runs load:
+  created   ~/src/app/.config/inner/profiles/claude-interactive.toml
+  review them before the next run: a profile can open the network, un-hide credentials or forward host variables
+```
+
+Alternatively, you can pass a **file path** directly to `-p`/`--profile`. A value that contains `/`, starts with `~` or ends in `.toml` is a file path and is loaded as-is (relative paths are tried against the current directory); anything else is a profile name looked up in the profiles directory, even when a file or folder with that name exists in the current directory — so `-p rust` keeps loading the `rust` profile from a project that has a `rust/` folder. This lets you use local or project-specific profile files without installing them in `~/.config/inner/profiles/`:
 
 ```bash
 inner run -p profiles/inner-dev.toml
@@ -1301,9 +1309,11 @@ Different runtimes (Java, Node, …) don't conflict on `PATH`: list multiple dir
 
 Sanitize the git configuration injected into the sandbox.
 
+The sandbox gets, as its global git config, a sanitized copy of the host's: `~/.config/git/config` (or `$XDG_CONFIG_HOME/git/config`) followed by `~/.gitconfig`, the order git reads them in. Includes are resolved on the host so the rules below reach them too: `[include]` files are inlined, and the target of each `[includeIf]` is copied, sanitized, next to the main file, with the condition left as it is.
+
 | Key | Type | Description |
 |-----|------|-------------|
-| `strip_sections` | list | Remove entire sections from `~/.gitconfig` (e.g. `["credential"]`) |
+| `strip_sections` | list | Remove entire sections from the global git config and its includes (e.g. `["credential"]`) |
 | `overrides` | table | Override individual git config keys inside the sandbox |
 
 ```toml
@@ -1313,6 +1323,8 @@ overrides      = { "push.default" = "nothing" }
 ```
 
 `push.default = "nothing"` is a useful default to prevent accidental pushes from an agent session.
+
+Keys are spelled as `git config` spells them: `section.key`, or `section.subsection.key` where the subsection is everything between the first and the last dot. So `"url.https://github.com/.insteadOf"` writes `[url "https://github.com/"]`, and `"remote.origin.url"` changes `[remote "origin"]` only. An override replaces every value the key had in that section. `strip_sections` accepts the same spellings: `"credential"` drops every `[credential …]` section, `"credential.helper"` drops the key from all of them, `"credential.https://github.com.helper"` only from that one. A key that is not in one of these forms is ignored, and `inner profile validate` warns about it.
 
 ---
 
@@ -1479,7 +1491,7 @@ capabilities = ["claude"]
 
 | Name | What it injects |
 |------|----------------|
-| `claude` | `~/.claude` (sanitized clone) and `~/.claude.json` (copy, if present). Runs `claude auth status` on the host before copying credentials to unlock the OS credential store and refresh any expired OAuth token. |
+| `claude` | `~/.claude` (sanitized clone) and `~/.claude.json` (copy, if present, without its `mcpServers` and without the `projects` entries unrelated to the workdir). Runs `claude auth status` on the host before copying credentials to unlock the OS credential store and refresh any expired OAuth token. |
 | `gemini` | `~/.gemini` (sanitized clone with `settings.json` only) |
 | `cursor` | `~/.cursor` (sanitized clone) and `~/.config/cursor` (sanitized clone) |
 | `opencode` | `~/.config/opencode` (sanitized clone with config only) and `~/.local/share/opencode` (sanitized clone with `auth.json` only) |
@@ -1655,7 +1667,7 @@ inner run -p claude-interactive
        │    ├─ copy settings.json      (from ~/.claude, if present)
        │    ├─ copy skills/            (from ~/.claude, if present)
        │    └─ mkdir sessions/ cache/ projects/ tasks/ …  (empty)
-       └─ copy ~/.claude.json -> /tmp/inner-claudejson-XXXXXX  (if present)
+       └─ copy ~/.claude.json -> /tmp/inner-claudejson-XXXXXX  (if present; MCP servers and other projects dropped)
   └─ mount /tmp/inner-claude-XXXXXX    -> ~/.claude      inside sandbox
   └─ mount /tmp/inner-claudejson-XXXXXX -> ~/.claude.json inside sandbox
   └─ [agent runs, writes sessions/tasks/cache to the clone]

@@ -1244,3 +1244,41 @@ func TestRunCmd_jsonNeedsDryRun(t *testing.T) {
 		t.Errorf("err = %v, want --json needs --dry-run", err)
 	}
 }
+
+// systemd-run needs the user bus variables, the sandbox must not get them:
+// they are added to systemd-run's environment and unset again by bwrap.
+func TestSystemdRunEnv_busVarsForSystemdRunOnly(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+	env, args := systemdRunEnv(
+		[]string{"PATH=/usr/bin"},
+		[]string{"/usr/bin/bwrap", "--ro-bind", "/", "/", "--", "sh", "--", "x"},
+	)
+	if !slices.Contains(env, "XDG_RUNTIME_DIR=/run/user/1000") || !slices.Contains(env, "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus") {
+		t.Errorf("systemd-run env = %v, want the bus variables added", env)
+	}
+	want := []string{"/usr/bin/bwrap", "--ro-bind", "/", "/",
+		"--unsetenv", "XDG_RUNTIME_DIR", "--unsetenv", "DBUS_SESSION_BUS_ADDRESS",
+		"--", "sh", "--", "x"}
+	if !slices.Equal(args, want) {
+		t.Errorf("bwrap args = %v, want %v", args, want)
+	}
+}
+
+// A variable the sandbox environment already carries is the profile's choice:
+// it is neither duplicated nor unset.
+func TestSystemdRunEnv_keepsSandboxOwnValue(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "") // restored after the test
+	os.Unsetenv("DBUS_SESSION_BUS_ADDRESS")
+	env, args := systemdRunEnv(
+		[]string{"XDG_RUNTIME_DIR=/tmp/xdg"},
+		[]string{"bwrap", "--", "sh"},
+	)
+	if !slices.Equal(env, []string{"XDG_RUNTIME_DIR=/tmp/xdg"}) {
+		t.Errorf("env = %v, want the sandbox value untouched", env)
+	}
+	if !slices.Equal(args, []string{"bwrap", "--", "sh"}) {
+		t.Errorf("args = %v, want unchanged", args)
+	}
+}
