@@ -749,6 +749,35 @@ func TestUnlockClaudeCredentials_autoConfirm_shimFails(t *testing.T) {
 	}
 }
 
+// The unlock runs claude on the HOST, outside the sandbox. In the project
+// directory, claude would load that project's .claude/settings.json — which a
+// sandboxed session may have written — and run its hooks on the host.
+func TestUnlockClaudeCredentials_runsOutsideTheProject(t *testing.T) {
+	withTestbin(t)
+	project := t.TempDir()
+	t.Chdir(project)
+	pwdFile := filepath.Join(t.TempDir(), "pwd")
+	t.Setenv("CLAUDE_SHIM_PWD", pwdFile)
+	// Long enough for the shim to write its directory before it is killed.
+	orig := claudeAutoConfirmDelay
+	claudeAutoConfirmDelay = 500 * time.Millisecond
+	t.Cleanup(func() { claudeAutoConfirmDelay = orig })
+
+	unlockClaudeCredentials(io.Discard, true, "")
+
+	data, err := os.ReadFile(pwdFile)
+	if err != nil {
+		t.Fatalf("the shim did not record its directory: %v", err)
+	}
+	dir := strings.TrimSpace(string(data))
+	if dir == project || strings.HasPrefix(dir, project+"/") {
+		t.Errorf("claude ran in the project directory %q", dir)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("the scratch directory %q was not removed: %v", dir, err)
+	}
+}
+
 // ── formatTokenExpiry ─────────────────────────────────────────────────────────
 
 func TestFormatTokenExpiry_claudeAiOauth(t *testing.T) {

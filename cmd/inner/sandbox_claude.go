@@ -408,6 +408,17 @@ func unlockClaudeCredentials(w io.Writer, autoConfirm bool, credPath string) {
 	// test code (which overrides HOME with a temp dir) cannot redirect the
 	// credential unlock to a fake environment.
 	cmd.Env = append(append([]string{}, os.Environ()...), "HOME="+hostHome)
+	// In an empty scratch directory, never the current one. This claude runs
+	// on the HOST, and in the project directory it would load the project's
+	// .claude/settings.json — which a sandboxed session can write — and run
+	// its hooks outside the sandbox (-p skips the workspace trust prompt).
+	scratch, err := os.MkdirTemp("", "inner-claude-unlock-*")
+	if err != nil {
+		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "inner: warning")+": could not start claude for credential unlock: %v\n", err)
+		return
+	}
+	defer os.RemoveAll(scratch)
+	cmd.Dir = scratch
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 
