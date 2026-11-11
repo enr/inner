@@ -30,6 +30,7 @@ func buildRootCmd(app *App) *cobra.Command {
 	root.AddCommand(app.newRunCmd())
 	root.AddCommand(app.newProfileCmd())
 	root.AddCommand(app.newConfigCmd())
+	root.AddCommand(app.newTrustCmd())
 	root.AddCommand(app.newDoctorCmd())
 	root.AddCommand(app.newLogCmd())
 	root.AddCommand(app.newVerifyCmd())

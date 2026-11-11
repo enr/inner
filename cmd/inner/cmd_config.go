@@ -54,6 +54,9 @@ func (a *App) configShow(w io.Writer) error {
 			if rel, err := filepath.Rel(a.loader.WorkDir, path); err == nil {
 				label = "Local: " + rel
 			}
+			if !a.loader.IsTrustedProjectConfig(path) {
+				label += " (NOT TRUSTED, ignored: run 'inner trust " + path + "')"
+			}
 			if err := showConfigSection(w, label, path); err != nil {
 				return err
 			}
@@ -148,7 +151,14 @@ func (a *App) configEdit(_ io.Writer, useLocal bool) error {
 			return fmt.Errorf("writing default config: %w", err)
 		}
 	}
-	return a.editorFn(path)
+	if err := a.editorFn(path); err != nil {
+		return err
+	}
+	if useLocal {
+		// The user just edited it: that is the approval (see `inner trust`).
+		a.trustQuietly(path)
+	}
+	return nil
 }
 
 // globalConfigTemplate returns a starter global config.toml with commented defaults.

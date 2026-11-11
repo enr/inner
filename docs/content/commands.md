@@ -847,6 +847,42 @@ memory = "2G"     # only memory is overridden; cpu and pids keep the user-config
 
 ---
 
+## `inner trust`
+
+```
+inner trust [FILE...]
+```
+
+Approves the exact content of project files. `inner` honors a **project config
+file** (`inner.toml`, `.config/inner.toml`, `.config/inner/config.toml` and their
+`.local` variants, in the working directory or any ancestor) and a **project
+profile** (`.config/inner/profiles/*.toml`, or any profile path under the working
+directory) only after it has been approved:
+
+- an unapproved project config file is **ignored**, with a warning;
+- an unapproved project profile is **refused**: the run stops and says which file
+  to review.
+
+Why: the working directory is mounted read-write, so a sandbox could otherwise
+drop an `inner.toml` (choosing `log_dir`, which `inner` writes from the host, or
+`default_profile`) or rewrite a project profile, and so decide the policy of your
+next run. A freshly cloned repository could do the same.
+
+The approval is a sha256 recorded in `~/.config/inner/trusted`, which the sandbox
+cannot write. **Any change to an approved file withdraws the approval**: review
+the change, then run `inner trust` again.
+
+With no arguments, every project config file found from the current directory and
+every profile in `.config/inner/profiles` is approved and listed with its digest.
+`inner init --local` and `inner config edit --local` approve the file they create
+or edit. Files under `~/.config/inner` and `/etc/inner` are your own and never
+need approval. `inner config show` marks the project files it ignores.
+
+```bash
+inner trust                                   # approve this project's files
+inner trust .config/inner/profiles/dev.toml   # approve one file
+```
+
 ## `inner doctor`
 
 Check that the host environment satisfies all requirements:

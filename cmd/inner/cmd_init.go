@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/enr/inner/internal/setup"
@@ -27,6 +28,8 @@ func (a *App) init_(w io.Writer, local bool) error {
 		}
 		if r.ConfigCreated {
 			fmt.Fprintln(w, "config: created")
+			// Created by the user through inner: approved (see `inner trust`).
+			a.trustQuietly(filepath.Join(a.loader.WorkDir, ".config", "inner.toml"))
 		} else {
 			fmt.Fprintln(w, "config: already exists (skipped)")
 		}
