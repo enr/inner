@@ -351,7 +351,7 @@ func TestPrepareInteractiveShell_injectsBashInitFile(t *testing.T) {
 	if !strings.Contains(string(content), "PS1=") {
 		t.Error("init file should set PS1")
 	}
-	if !strings.Contains(string(content), `history -s "mvn test"`) {
+	if !strings.Contains(string(content), `history -s 'mvn test'`) {
 		t.Errorf("init file should pre-seed history, got:\n%s", content)
 	}
 }
@@ -378,7 +378,7 @@ func TestPrepareInteractiveShell_perRunFileRemovedByCleanup(t *testing.T) {
 	if rcA.ShellInitPath == rcB.ShellInitPath {
 		t.Fatalf("two runs share the init file %q", rcA.ShellInitPath)
 	}
-	if a, _ := os.ReadFile(rcA.ShellInitPath); !strings.Contains(string(a), `PS1="A $ "`) {
+	if a, _ := os.ReadFile(rcA.ShellInitPath); !strings.Contains(string(a), `PS1='A $ '`) {
 		t.Errorf("run A's init file was overwritten: %q", a)
 	}
 	cleanupA()
@@ -1179,5 +1179,49 @@ func TestApplyClaude_exemptsItsTokenFromHiding(t *testing.T) {
 	}
 	if !hidden {
 		t.Errorf("%s is not in the hide table: the exemption has nothing to exempt", cred)
+	}
+}
+
+// The init file is sourced by bash: a history entry or a profile name must
+// land there literally. With double quotes a "$(…)" entry ran when the shell
+// started, and was recorded already expanded.
+func TestPrepareInteractiveShell_initFileIsLiteral(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not on PATH")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	marker := filepath.Join(t.TempDir(), "ran")
+	entries := []string{
+		"touch " + marker + " $(touch " + marker + ")",
+		"echo $HOME `id` \\ 'quoted' \"dq\"",
+	}
+	rc := &config.RunConfig{
+		Name:       "evil$(touch " + marker + ")",
+		Entrypoint: config.Entrypoint{Cmd: "bash", Interactive: true, History: entries},
+	}
+	cleanup, err := prepareInteractiveShell(rc, sandboxPS1(rc.Name))
+	if err != nil {
+		t.Fatalf("prepareInteractiveShell: %v", err)
+	}
+	defer cleanup()
+
+	// Source the file, list the history, then expand the prompt the way bash
+	// does before showing it.
+	script := "set -o history; . " + rc.ShellInitPath + "; history | sed 's/^ *[0-9]* *//'; echo \"${PS1@P}\""
+	out, err := exec.Command(bash, "--norc", "--noprofile", "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("sourcing the init file ran a command substitution:\n%s", out)
+	}
+	for _, e := range entries {
+		if !strings.Contains(string(out), e) {
+			t.Errorf("history entry %q not recorded literally:\n%s", e, out)
+		}
+	}
+	if !strings.Contains(string(out), "evil_(touch") {
+		t.Errorf("profile name not shown, defused, in the prompt:\n%s", out)
 	}
 }
