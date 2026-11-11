@@ -1540,7 +1540,7 @@ remain untouched even if the agent writes to its own copies.
 
 Before copying `.credentials.json` into the sandbox, `inner` always runs `claude auth status` on the host. This step serves two purposes:
 
-1. **OS credential store unlock.** On Linux and macOS, Claude stores its OAuth token in the OS native credential store (libsecret/gnome-keyring on Linux, Keychain on macOS). If the store is locked when the sandbox process starts, Claude cannot read its credentials even though `.credentials.json` is present. Running `claude auth status` on the host — before the sandbox is created — prompts the OS to unlock the store so the token is accessible.
+1. **OS credential store unlock.** On Linux and macOS, Claude may keep its OAuth token in the OS native credential store (Keychain on macOS; on Linux Claude Code uses `.credentials.json`, and this step is harmless). If the store is locked when the sandbox process starts, Claude cannot read its credentials even though `.credentials.json` is present. Running `claude auth status` on the host — before the sandbox is created — prompts the OS to unlock the store so the token is accessible.
 
 2. **Token refresh.** If the stored OAuth token is expired, Claude's startup sequence refreshes it silently during the `auth status` call, ensuring the freshest token is captured in the sandbox copy.
 
@@ -1553,31 +1553,30 @@ Run 'claude' on the host machine to renew it, then relaunch inner.
 
 To manually renew the token, run `claude auth login` on the host. If the OAuth **refresh token** is still valid, Claude will refresh silently without opening a browser; otherwise the full browser-based login flow runs.
 
-### Session bus (keyring access for token refresh)
+### Session bus (off by default)
 
-Claude reaches the OS keyring over the D-Bus session bus to refresh its token
-mid-session. The whole session bus is much more than the keyring: it carries
-`org.freedesktop.systemd1`, which starts processes in your systemd user
-instance — outside the sandbox — and every other desktop service running as
-you.
+The claude capability gives the sandbox **no** D-Bus session bus. Claude Code
+on Linux keeps its OAuth token in `~/.claude/.credentials.json` (the sandbox
+gets a copy of it) and does not use the OS keyring, so it does not need one.
+The bus would be a hole: through `org.freedesktop.secrets` the sandbox can read
+**every** item of an unlocked keyring (the `gh` token, browser "Safe Storage"
+keys, saved passwords, …), and the whole bus carries `org.freedesktop.systemd1`,
+which starts processes in your systemd user instance — outside the sandbox.
 
-So the claude capability does **not** hand the sandbox the session bus. When
-[`xdg-dbus-proxy`](https://github.com/flatpak/xdg-dbus-proxy) is installed (it
-ships with flatpak; the package is `xdg-dbus-proxy` on most distributions),
-`inner` starts it on the host for the length of the run, filtered to the one
-name the token refresh needs, `org.freedesktop.secrets`, and points the
-sandbox's `DBUS_SESSION_BUS_ADDRESS` at the proxy socket
-(`/tmp/inner-dbus/bus`). The real bus socket stays hidden.
+Two explicit opt-ins exist, for tools inside the sandbox that do need the
+keyring:
 
-If `xdg-dbus-proxy` is missing or fails to start, the sandbox gets **no**
-session bus and `inner` prints a warning each run: claude starts normally, but
-an OAuth token that expires in the middle of a session cannot be refreshed
-there. Install `xdg-dbus-proxy` to get the refresh back; or, if you knowingly
-want the whole bus inside the sandbox, add `allow = ["session-bus"]` to the
-profile.
-
-Even filtered, `org.freedesktop.secrets` is the whole Secret Service API: the
-sandbox can read every item of an unlocked keyring, not only Claude's token.
+- `allow = ["keyrings"]`: when
+  [`xdg-dbus-proxy`](https://github.com/flatpak/xdg-dbus-proxy) is installed
+  (it ships with flatpak; the package is `xdg-dbus-proxy` on most
+  distributions), `inner` starts it on the host for the length of the run,
+  filtered to `org.freedesktop.secrets`, and points the sandbox's
+  `DBUS_SESSION_BUS_ADDRESS` at the proxy socket (`/tmp/inner-dbus/bus`). The
+  real bus socket stays hidden. The filter is per service, not per secret:
+  every item of an unlocked keyring is readable. If `xdg-dbus-proxy` is
+  missing or fails to start, the sandbox gets no bus and `inner` prints a
+  warning.
+- `allow = ["session-bus"]`: the whole, unfiltered bus.
 
 ### Cross-session messaging socket
 

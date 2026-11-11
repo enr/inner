@@ -213,10 +213,10 @@ for key in session-bus systemd-user ssh-agent gpg-agent; do
     fi
 done
 
-# Claude capability: the session bus it passes in must be the filtered proxy.
+# Claude capability: no session bus by default; allow = ["keyrings"] gives the
+# keyring only, through the filtering proxy.
 if [[ -f "$HOME/.claude/.credentials.json" && -S "$RUNTIME_DIR/bus" ]]; then
-    # The shape of the built-in claude profiles: a tmpfs over the runtime dir,
-    # the capability binding the (filtered) bus back in.
+    # The shape of the built-in claude profiles: a tmpfs over the runtime dir.
     CLAUDECAP="$WORK/claudecap.toml"
     cat > "$CLAUDECAP" <<'EOF'
 schema_version = "1"
@@ -239,31 +239,41 @@ interactive = false
 [output]
 timeout_seconds = 60
 EOF
+    # Default: the keyring behind the bus holds every secret of the user (the gh
+    # token among them), and Claude on Linux does not use it.
+    out=$(in_sandbox "$CLAUDECAP" "echo \"addr=[\$DBUS_SESSION_BUS_ADDRESS]\"; test -e /tmp/inner-dbus/bus && echo proxysock=yes || echo proxysock=no")
+    [[ "$out" == *"addr=[]"* && "$out" == *"proxysock=no"* ]] && pass "claude capability: no session bus by default" \
+        || fail "claude capability: a session bus reaches the sandbox without opt-in ($(grep -E 'addr=|proxysock=' <<<"$out" | tr '\n' ' '))"
+    [[ "$out" != *"cannot filter the session bus"* ]] && pass "claude capability: no bus warning by default" \
+        || fail "claude capability: warns about the bus although none was asked for"
+
+    CLAUDEKR="$WORK/claudecap-keyrings.toml"
+    sed 's/^network = false$/network = false\nallow = ["keyrings"]/' "$CLAUDECAP" > "$CLAUDEKR"
     if have xdg-dbus-proxy; then
-        out=$(in_sandbox "$CLAUDECAP" "$BUS_CALL; echo \"addr=\$DBUS_SESSION_BUS_ADDRESS\"; echo \"systemd1=\$(bus_ping \$DBUS_SESSION_BUS_ADDRESS org.freedesktop.systemd1)\"; echo \"secrets=\$(bus_ping \$DBUS_SESSION_BUS_ADDRESS org.freedesktop.secrets)\"")
-        [[ "$out" == *"addr=unix:path=/tmp/inner-dbus/bus"* ]] && pass "claude capability: DBUS_SESSION_BUS_ADDRESS points at the filtering proxy" \
-            || fail "claude capability: the session bus is not the proxy ($(grep addr= <<<"$out"))"
+        out=$(in_sandbox "$CLAUDEKR" "$BUS_CALL; echo \"addr=\$DBUS_SESSION_BUS_ADDRESS\"; echo \"systemd1=\$(bus_ping \$DBUS_SESSION_BUS_ADDRESS org.freedesktop.systemd1)\"; echo \"secrets=\$(bus_ping \$DBUS_SESSION_BUS_ADDRESS org.freedesktop.secrets)\"")
+        [[ "$out" == *"addr=unix:path=/tmp/inner-dbus/bus"* ]] && pass "claude capability + keyrings: DBUS_SESSION_BUS_ADDRESS points at the filtering proxy" \
+            || fail "claude capability + keyrings: the session bus is not the proxy ($(grep addr= <<<"$out"))"
         if [[ "$out" == *NOCLIENT* ]]; then
             skip "no gdbus/dbus-send: cannot probe the filtered bus"
         else
-            [[ "$(grep systemd1= <<<"$out")" != *OK* ]] && pass "claude capability: org.freedesktop.systemd1 is not reachable through the proxy" \
-                || fail "claude capability: org.freedesktop.systemd1 answers through the proxy"
+            [[ "$(grep systemd1= <<<"$out")" != *OK* ]] && pass "claude capability + keyrings: org.freedesktop.systemd1 is not reachable through the proxy" \
+                || fail "claude capability + keyrings: org.freedesktop.systemd1 answers through the proxy"
             if [[ "$(grep secrets= <<<"$out")" == *OK* ]]; then
-                pass "claude capability: org.freedesktop.secrets (the keyring) is reachable — token refresh keeps working"
+                pass "claude capability + keyrings: org.freedesktop.secrets (the keyring) is reachable as asked"
             else
                 info "org.freedesktop.secrets did not answer ($(grep secrets= <<<"$out")) — is a keyring daemon running on the host?"
             fi
         fi
         sleep 1
         if pgrep -u "$(id -u)" -f 'xdg-dbus-proxy .*inner-dbus-' >/dev/null; then
-            fail "claude capability: xdg-dbus-proxy is still running after the sandbox exited"
+            fail "claude capability + keyrings: xdg-dbus-proxy is still running after the sandbox exited"
         else
-            pass "claude capability: the proxy is gone after the run"
+            pass "claude capability + keyrings: the proxy is gone after the run"
         fi
     else
-        out=$(in_sandbox "$CLAUDECAP" "true")
-        [[ "$out" == *"cannot filter the session bus"* ]] && pass "claude capability without xdg-dbus-proxy: the fallback warns about the unfiltered bus" \
-            || fail "claude capability without xdg-dbus-proxy: no warning about the unfiltered bus"
+        out=$(in_sandbox "$CLAUDEKR" "true")
+        [[ "$out" == *"cannot filter the session bus"* ]] && pass "claude capability + keyrings without xdg-dbus-proxy: the fallback warns that there is no bus" \
+            || fail "claude capability + keyrings without xdg-dbus-proxy: no warning about the missing bus"
         skip "xdg-dbus-proxy not installed: install it and rerun to check the filter"
     fi
 else

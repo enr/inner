@@ -80,8 +80,8 @@ func TestDBusProxyArgs(t *testing.T) {
 	}
 }
 
-// Filtered path: the sandbox gets the proxy socket at a fixed /tmp path and an
-// address pointing at it, never the real bus.
+// Filtered path (allow = ["keyrings"]): the sandbox gets the proxy socket at a
+// fixed /tmp path and an address pointing at it, never the real bus.
 func TestApplyClaudeSessionBus_filtered(t *testing.T) {
 	argsFile := useFakeDBusProxy(t, "ok")
 	realBus := filepath.Join(t.TempDir(), "bus")
@@ -89,7 +89,7 @@ func TestApplyClaudeSessionBus_filtered(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+realBus)
 
 	var warn bytes.Buffer
-	rc := &config.RunConfig{}
+	rc := &config.RunConfig{Allow: []string{"keyrings"}}
 	cleanup := applyClaudeSessionBus(&warn, rc)
 
 	if warn.Len() > 0 {
@@ -131,19 +131,89 @@ func TestApplyClaudeSessionBus_filtered(t *testing.T) {
 	cleanup() // idempotent
 }
 
-// No proxy available: no bus at all (fail closed), plus a warning that names
-// the risk and the two ways out.
+// Default: no opt-in, no bus. The proxy is not even started — the keyring
+// behind it holds every secret of the user (gh token, browser keys, …), not
+// only Claude's, and Claude on Linux does not use it. Silent: this is the
+// normal case, not a degraded one.
+func TestApplyClaudeSessionBus_defaultGivesNoBus(t *testing.T) {
+	argsFile := useFakeDBusProxy(t, "ok")
+	realBus := filepath.Join(t.TempDir(), "bus")
+	os.WriteFile(realBus, nil, 0o600) //nolint:errcheck
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+realBus)
+
+	for _, allow := range [][]string{nil, {"ssh-keys", "gh-config"}} {
+		var warn bytes.Buffer
+		rc := &config.RunConfig{Allow: allow}
+		applyClaudeSessionBus(&warn, rc)()
+
+		assertNoBus(t, rc, realBus)
+		if warn.Len() > 0 {
+			t.Errorf("allow=%v: unexpected warning: %s", allow, warn.String())
+		}
+		if _, err := os.Stat(argsFile); !os.IsNotExist(err) {
+			t.Errorf("allow=%v: xdg-dbus-proxy was started without allow = [\"keyrings\"]", allow)
+		}
+	}
+}
+
+// The default path through applyClaude itself: the claude capability alone
+// must not put a bus address or a bus socket in the sandbox.
+func TestApplyClaude_defaultGivesNoBus(t *testing.T) {
+	useFakeDBusProxy(t, "ok")
+	fakeHome := makeFakeHome(t)
+	makeClaudeHome(t, filepath.Join(fakeHome, ".claude"), map[string]string{
+		".credentials.json": `{}`,
+	})
+	realBus := filepath.Join(t.TempDir(), "bus")
+	os.WriteFile(realBus, nil, 0o600) //nolint:errcheck
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+realBus)
+
+	rc := &config.RunConfig{}
+	cleanup, err := applyClaude(rc)
+	if err != nil {
+		t.Fatalf("applyClaude: %v", err)
+	}
+	defer cleanup()
+	assertNoBus(t, rc, realBus)
+}
+
+func TestApplyClaude_keyringsOptInGivesFilteredBus(t *testing.T) {
+	useFakeDBusProxy(t, "ok")
+	fakeHome := makeFakeHome(t)
+	makeClaudeHome(t, filepath.Join(fakeHome, ".claude"), map[string]string{
+		".credentials.json": `{}`,
+	})
+	realBus := filepath.Join(t.TempDir(), "bus")
+	os.WriteFile(realBus, nil, 0o600) //nolint:errcheck
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+realBus)
+
+	rc := &config.RunConfig{Allow: []string{"keyrings"}}
+	cleanup, err := applyClaude(rc)
+	if err != nil {
+		t.Fatalf("applyClaude: %v", err)
+	}
+	defer cleanup()
+	if got := rc.Env.Set["DBUS_SESSION_BUS_ADDRESS"]; got != "unix:path="+sandboxDBusSocket {
+		t.Errorf("DBUS_SESSION_BUS_ADDRESS = %q, want the proxy socket", got)
+	}
+	if !slices.ContainsFunc(rc.Mounts, func(m config.Mount) bool { return m.Dest == sandboxDBusSocket }) {
+		t.Errorf("no proxy socket mount; mounts: %v", rc.Mounts)
+	}
+}
+
+// Keyring asked for but no proxy available: no bus at all (fail closed), plus
+// a warning that names the risk and the two ways out.
 func TestApplyClaudeSessionBus_fallbackWhenProxyMissing(t *testing.T) {
 	realBus := filepath.Join(t.TempDir(), "bus")
 	os.WriteFile(realBus, nil, 0o600) //nolint:errcheck
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+realBus)
 
 	var warn bytes.Buffer
-	rc := &config.RunConfig{}
+	rc := &config.RunConfig{Allow: []string{"keyrings"}}
 	applyClaudeSessionBus(&warn, rc)()
 
 	assertNoBus(t, rc, realBus)
-	for _, want := range []string{"xdg-dbus-proxy", "systemd1", `allow = ["session-bus"]`} {
+	for _, want := range []string{"xdg-dbus-proxy", "systemd1", `allow = ["keyrings"]`, `allow = ["session-bus"]`} {
 		if !strings.Contains(warn.String(), want) {
 			t.Errorf("warning %q does not mention %q", warn.String(), want)
 		}
@@ -157,7 +227,7 @@ func TestApplyClaudeSessionBus_fallbackWhenProxyFails(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+realBus)
 
 	var warn bytes.Buffer
-	rc := &config.RunConfig{}
+	rc := &config.RunConfig{Allow: []string{"keyrings"}}
 	applyClaudeSessionBus(&warn, rc)()
 
 	assertNoBus(t, rc, realBus)
@@ -176,7 +246,7 @@ func TestApplyClaudeSessionBus_fallbackWhenProxyHangs(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+realBus)
 
 	var warn bytes.Buffer
-	rc := &config.RunConfig{}
+	rc := &config.RunConfig{Allow: []string{"keyrings"}}
 	applyClaudeSessionBus(&warn, rc)()
 
 	assertNoBus(t, rc, realBus)
@@ -286,17 +356,17 @@ func TestStartDBusProxy_real(t *testing.T) {
 func assertNoBus(t *testing.T, rc *config.RunConfig, realBus string) {
 	t.Helper()
 	if slices.Contains(rc.Env.Inherit, "DBUS_SESSION_BUS_ADDRESS") {
-		t.Error("the host bus address must not be inherited without the filter")
+		t.Error("the host bus address must not be inherited")
 	}
 	if _, ok := rc.Env.Set["DBUS_SESSION_BUS_ADDRESS"]; ok {
-		t.Error("no bus address must be set without the filter")
+		t.Error("no bus address must be set")
 	}
 	for _, m := range rc.Mounts {
 		if m.Src == realBus || m.Dest == realBus || m.Dest == sandboxDBusSocket {
-			t.Errorf("bus mounted without the filter: %+v", m)
+			t.Errorf("bus mounted: %+v", m)
 		}
 	}
 	if slices.Contains(rc.HideExempt, realBus) {
-		t.Error("the real bus must stay hidden without the filter")
+		t.Error("the real bus must stay hidden")
 	}
 }

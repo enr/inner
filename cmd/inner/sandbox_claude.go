@@ -553,10 +553,10 @@ func dbusSocketPath(addr string) string {
 // A near-expiry warning is printed when the token will expire within
 // tokenNearExpiryThreshold. Warnings are written to os.Stderr.
 //
-// D-Bus passthrough: DBUS_SESSION_BUS_ADDRESS is inherited into the sandbox so
-// that Claude's libsecret can reach the OS keyring for mid-session token
-// refresh. Without it, an expired token inside a long session causes a 401
-// because the sandbox environment is otherwise fully cleared.
+// Session bus: none by default — Claude on Linux keeps its token in
+// .credentials.json, and the keyring holds every other secret too. A profile
+// opts in with allow = ["keyrings"] (filtered) or ["session-bus"] (whole bus);
+// see sandbox_dbus.go.
 func applyClaude(rc *config.RunConfig) (func(), error) {
 	claudeDir := claudeHomeDir()
 	w := claudeWarningWriter
@@ -618,12 +618,9 @@ func applyClaude(rc *config.RunConfig) (func(), error) {
 	// hide rule from covering it.
 	rc.HideExempt = append(rc.HideExempt, credPath)
 
-	// ── Session bus for mid-session token refresh ─────────────────────────────
-	// The sandbox clears the environment. Without DBUS_SESSION_BUS_ADDRESS,
-	// Claude's libsecret cannot locate the keyring daemon and cannot refresh
-	// an expired OAuth token mid-session, causing a 401 after long sessions.
-	// The bus is filtered down to the keyring when xdg-dbus-proxy is available
-	// — see sandbox_dbus.go for why the whole bus must not go in.
+	// ── Session bus (opt-in only) ─────────────────────────────────────────────
+	// No bus unless the profile allows "keyrings" (filtered to the Secret
+	// Service) or "session-bus" (whole bus) — see sandbox_dbus.go for why.
 	cleanups = append(cleanups, applyClaudeSessionBus(w, rc))
 
 	// Bind ~/.claude.json writable so claude can update UI state (numStartups,

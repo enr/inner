@@ -15,24 +15,38 @@ import (
 	"github.com/enr/inner/internal/config"
 )
 
-// The claude capability hands the sandbox a session bus so that libsecret can
-// refresh the OAuth token mid-session (see applyClaude). The whole session bus
-// is far more than that: org.freedesktop.systemd1 on it starts arbitrary
-// commands in the user's systemd instance — outside the sandbox — and any
-// other service on the bus acts with the user's full authority.
+// The claude capability used to hand every sandbox a session bus filtered to
+// org.freedesktop.secrets, on the belief that Claude refreshes its OAuth token
+// through libsecret. On Linux it does not: Claude Code keeps its credentials in
+// ~/.claude/.credentials.json and talks to no keyring (only macOS has a
+// Keychain backend). And the filter is per bus name, not per secret:
+// org.freedesktop.secrets is the whole Secret Service API, so the sandbox
+// could read and enumerate every item of an unlocked keyring — the gh token,
+// browser "Safe Storage" keys, saved passwords — and, with network access,
+// send them anywhere.
 //
-// So by default the bus reaches the sandbox through xdg-dbus-proxy, the filter
-// flatpak uses, restricted to the one name libsecret needs:
-// org.freedesktop.secrets. The proxy socket is bound at a fixed path on the
-// sandbox /tmp tmpfs and DBUS_SESSION_BUS_ADDRESS is pointed at it; the real
-// bus socket stays hidden (the session-bus hide rule, or the profile's tmpfs
-// over /run/user/<uid>).
+// So by default the claude capability gives the sandbox no session bus at all.
+// Two explicit opt-ins remain:
+//   - allow = ["keyrings"]: the keyring, and nothing else on the bus, through
+//     xdg-dbus-proxy (the filter flatpak uses) restricted to
+//     org.freedesktop.secrets. The proxy socket is bound at a fixed path on the
+//     sandbox /tmp tmpfs and DBUS_SESSION_BUS_ADDRESS is pointed at it; the
+//     real bus socket stays hidden (the session-bus hide rule, or the
+//     profile's tmpfs over /run/user/<uid>). If xdg-dbus-proxy is missing or
+//     fails to start: no bus at all, with a warning.
+//   - allow = ["session-bus"] (or a profile that sets DBUS_SESSION_BUS_ADDRESS
+//     itself): the unfiltered bus, the real socket bound as is.
 //
-// Fallbacks:
-//   - allow = ["session-bus"] in the profile asks for the unfiltered bus: the
-//     real socket is bound as before;
-//   - xdg-dbus-proxy missing or failing to start: no bus at all, with a
-//     warning — the mid-session token refresh is lost, the sandbox is not.
+// The whole bus must never go in by default: org.freedesktop.systemd1 on it
+// starts arbitrary commands in the user's systemd instance — outside the
+// sandbox — and any other service on the bus acts with the user's full
+// authority.
+
+// keyringBusAllowKey is the [sandbox] allow key that opts into the filtered
+// keyring bus. It is the key that already un-hides the keyring files and the
+// gnome-keyring control socket: asking for the Secret Service is asking for
+// the same secrets.
+const keyringBusAllowKey = "keyrings"
 
 // sandboxDBusSocket is where the filtered bus appears inside the sandbox. /tmp
 // is a fresh tmpfs there, so bwrap can create the mount point.
@@ -144,9 +158,10 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// applyClaudeSessionBus gives the sandbox the session bus the claude token
-// refresh needs: filtered when possible, unfiltered when the profile asks for
-// it or no filter is available. Returns the cleanup for the proxy, if any.
+// applyClaudeSessionBus gives the sandbox the session bus only when the
+// profile asks for it: filtered to the keyring with allow = ["keyrings"],
+// unfiltered with allow = ["session-bus"] or a profile-set address. Otherwise
+// the sandbox gets no bus. Returns the cleanup for the proxy, if any.
 func applyClaudeSessionBus(w io.Writer, rc *config.RunConfig) func() {
 	addr := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
 	if addr == "" {
@@ -161,15 +176,19 @@ func applyClaudeSessionBus(w io.Writer, rc *config.RunConfig) func() {
 		return func() {}
 	}
 
+	// No opt-in: no bus. Claude does not need one (see the comment at the top
+	// of this file), and the keyring behind it holds every other secret too.
+	if !config.AllowKeyEnabled(rc.Allow, keyringBusAllowKey) {
+		return func() {}
+	}
+
 	proxy, err := startDBusProxy(addr)
 	if err != nil {
 		// Fail closed: the whole bus would hand the sandbox
-		// org.freedesktop.systemd1, which starts processes outside it. Claude
-		// still starts; only a token refresh in the middle of a session needs
-		// the keyring.
+		// org.freedesktop.systemd1, which starts processes outside it.
 		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "inner: warning")+
-			": claude: cannot filter the session bus (%v) — the sandbox gets no session bus, so the OAuth token "+
-			"cannot be refreshed mid-session. Install xdg-dbus-proxy to give it the keyring only, or add "+
+			": claude: cannot filter the session bus (%v) — allow = [\"keyrings\"] asked for the keyring, "+
+			"but the sandbox gets no session bus. Install xdg-dbus-proxy to give it the keyring only, or add "+
 			"allow = [\"session-bus\"] to the profile to pass the whole bus (org.freedesktop.systemd1 on it "+
 			"can start processes outside the sandbox)\n", err)
 		return func() {}
