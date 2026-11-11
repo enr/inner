@@ -940,14 +940,19 @@ fi
 # existing: inside a container or another sandbox, /dev/ptmx is often
 # unavailable and script fails with "failed to create pseudo-terminal". That is
 # a property of where the suite is running, not of inner.
-if command -v script >/dev/null 2>&1 && script -qec true /dev/null >/dev/null 2>&1; then
+# stdin is /dev/null so script(1) never puts the CALLER's terminal in raw mode:
+# if it is killed before restoring it, the rest of the suite's output staircases.
+# The output is captured rather than piped into `grep -q`: under pipefail, grep
+# exiting on the first match SIGPIPEs script and fails the pipeline.
+if command -v script >/dev/null 2>&1 && script -qec true /dev/null </dev/null >/dev/null 2>&1; then
     TTY_PROBE="$TMPWORK/tty-probe.sh"
     cat > "$TTY_PROBE" <<EOF
 #!/usr/bin/env bash
 inner run -p "$PIDNS_ON" --no-interactive -- -c 'exec 3<>/dev/tty && echo TTY_OK'
 EOF
     chmod +x "$TTY_PROBE"
-    if script -qec "$TTY_PROBE" /dev/null 2>&1 | grep -q TTY_OK; then
+    TTY_OUT=$(script -qec "$TTY_PROBE" /dev/null </dev/null 2>&1 || true)
+    if [[ "$TTY_OUT" == *TTY_OK* ]]; then
         pass "process isolation: /dev/tty is still openable under --unshare-pid"
     else
         fail "process isolation: /dev/tty could not be opened under --unshare-pid (TUIs would hang)"
@@ -1027,8 +1032,11 @@ if [[ -d "$HOME/.claude" ]]; then
         fail "claude capability: ~/.claude not referenced in bwrap command"
     fi
 
+    # Match whole arguments: ~/.claude/.credentials.json legitimately appears in
+    # every profile, hidden by the agent-credentials sensitive resource. What the
+    # capability adds is a mount whose destination is ~/.claude or ~/.claude.json.
     LINE_NOCAP=$(bwrap_line "$NONET")
-    if echo "$LINE_NOCAP" | grep -qF ".claude"; then
+    if echo "$LINE_NOCAP" | tr ' ' '\n' | grep -qxF -e "$HOME/.claude" -e "$HOME/.claude.json"; then
         fail "no-capability profile: ~/.claude unexpectedly present in bwrap command"
     else
         pass "no-capability profile: ~/.claude correctly absent from bwrap command"
