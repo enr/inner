@@ -55,6 +55,13 @@ review = "run --profile code-review"   # used everywhere
 review = "run --profile my-project-review"  # used only inside /my-project
 ```
 
+A local config file is honored only after you approve it with
+[`inner trust`](../commands/#inner-trust): until then it is ignored, with a warning,
+and so are its aliases and its `workspaces_path`. Any change to the file withdraws
+the approval; run `inner trust` again after reviewing it. `inner config edit --local`
+approves the file it edits. Settings you want everywhere, without approvals, belong
+in `~/.config/inner/config.toml`.
+
 ## Precedence rules
 
 - **Built-in commands are never shadowed.** If an alias name collides with an existing `inner` subcommand (e.g. `run`, `profile`, `config`), the built-in takes precedence and the alias is ignored.

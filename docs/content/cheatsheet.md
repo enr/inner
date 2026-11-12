@@ -82,6 +82,8 @@ weight: 7
 | View merged config | `inner config show` |
 | Edit global config | `inner config edit` |
 | Edit local (.config/inner.toml) config | `inner config edit --local` |
+| Approve this project's config and profiles | `inner trust` |
+| Approve one project file | `inner trust .config/inner/profiles/dev.toml` |
 
 ---
 
