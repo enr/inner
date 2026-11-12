@@ -873,10 +873,27 @@ cannot write. **Any change to an approved file withdraws the approval**: review
 the change, then run `inner trust` again.
 
 With no arguments, every project config file found from the current directory and
-every profile in `.config/inner/profiles` is approved and listed with its digest.
+its ancestors, and every profile in `.config/inner/profiles`, is approved and
+listed. Each file is reported as one of:
+
+- `— CHANGED since last approval`: listed first. It was approved before with
+  different content, so someone (possibly a sandbox) modified it since you
+  last reviewed it. Check what changed;
+- `— new`: never approved before;
+- `already trusted … (unchanged)`: nothing new to review.
+
+```
+$ inner trust
+trusted /home/me/Projects/.config/inner/config.toml (sha256:1f55…) — CHANGED since last approval
+trusted /home/me/Projects/app/.config/inner/profiles/dev.toml (sha256:9e44…) — new
+already trusted /home/me/Projects/app/.config/inner/config.toml (unchanged)
+```
+
 `inner init --local` and `inner config edit --local` approve the file they create
 or edit. Files under `~/.config/inner` and `/etc/inner` are your own and never
-need approval. `inner config show` marks the project files it ignores.
+need approval: walking up through `$HOME` does not pick up
+`~/.config/inner/config.toml` as a project file. `inner config show` marks the
+project files it ignores.
 
 ```bash
 inner trust                                   # approve this project's files

@@ -197,7 +197,11 @@ func pathAncestors(absPath string) []string {
 //	.config/inner.toml, .config/inner/config.toml,
 //	.config/inner.local.toml, .config/inner/config.local.toml,
 //	inner.toml, inner.local.toml
-func collectProjectConfigFiles(workDir string) []string {
+//
+// Files in the user or system config directory are left out: walking through
+// $HOME finds ~/.config/inner/config.toml, which is the user config, already
+// loaded as such, and not a project file.
+func (l *Loader) collectProjectConfigFiles(workDir string) []string {
 	dirs := pathAncestors(workDir)
 	var files []string
 	for _, dir := range dirs {
@@ -210,7 +214,7 @@ func collectProjectConfigFiles(workDir string) []string {
 			"inner.local.toml",
 		} {
 			p := filepath.Join(dir, rel)
-			if _, err := os.Stat(p); err == nil {
+			if _, err := os.Stat(p); err == nil && !l.ownConfigFile(canonicalPath(p)) {
 				files = append(files, p)
 			}
 		}
@@ -253,7 +257,11 @@ func (l *Loader) LoadLocal() (*GlobalConfig, error) {
 	}
 	var result *GlobalConfig
 	for _, name := range names {
-		overlay, err := l.loadProjectConfig(filepath.Join(l.WorkDir, name))
+		path := filepath.Join(l.WorkDir, name)
+		if l.ownConfigFile(canonicalPath(path)) {
+			continue
+		}
+		overlay, err := l.loadProjectConfig(path)
 		if err != nil {
 			return nil, err
 		}
@@ -301,7 +309,7 @@ func (l *Loader) loadEffectiveGlobal() (*GlobalConfig, error) {
 	cfg = mergeGlobalConfig(cfg, user)
 
 	if l.WorkDir != "" {
-		for _, path := range collectProjectConfigFiles(l.WorkDir) {
+		for _, path := range l.collectProjectConfigFiles(l.WorkDir) {
 			proj, err := l.loadProjectConfig(path)
 			if err != nil {
 				return nil, err
@@ -322,7 +330,7 @@ func (l *Loader) ProjectConfigFiles() []string {
 	if l.WorkDir == "" {
 		return nil
 	}
-	return collectProjectConfigFiles(l.WorkDir)
+	return l.collectProjectConfigFiles(l.WorkDir)
 }
 
 // LoadProfile reads a named profile file.

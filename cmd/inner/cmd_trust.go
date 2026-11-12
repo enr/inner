@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/enr/inner/internal/config"
 )
 
 // trust_ records the current content of project files as approved by the user
@@ -22,12 +24,27 @@ func (a *App) trust_(w io.Writer, paths []string) error {
 			return nil
 		}
 	}
-	trusted, err := a.loader.Trust(paths...)
+	results, err := a.loader.Trust(paths...)
 	if err != nil {
 		return err
 	}
-	for _, t := range trusted {
-		fmt.Fprintf(w, "trusted %s (sha256:%s)\n", t[0], t[1])
+	// Changed files first and loudest: an approval that existed for other
+	// content is exactly what a sandbox rewriting a project file looks like,
+	// and must not blend in with files the user already reviewed.
+	for _, state := range []config.TrustState{config.TrustChanged, config.TrustNew, config.TrustUnchanged} {
+		for _, r := range results {
+			if r.State != state {
+				continue
+			}
+			switch state {
+			case config.TrustChanged:
+				fmt.Fprintf(w, "trusted %s (sha256:%s) — CHANGED since last approval\n", r.Path, r.Digest)
+			case config.TrustNew:
+				fmt.Fprintf(w, "trusted %s (sha256:%s) — new\n", r.Path, r.Digest)
+			case config.TrustUnchanged:
+				fmt.Fprintf(w, "already trusted %s (unchanged)\n", r.Path)
+			}
+		}
 	}
 	return nil
 }
@@ -68,7 +85,9 @@ of your next run. A freshly cloned repository could do the same. Any change to
 an approved file withdraws the approval: review the change, then trust it again.
 
 With no arguments, every project config file found from the current directory
-and every profile in .config/inner/profiles is approved and listed.`,
+and its ancestors, and every profile in .config/inner/profiles, is approved and
+listed. A file whose approval existed for different content is flagged as
+CHANGED: someone — possibly a sandbox — modified it since you last reviewed it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.trust_(cmd.OutOrStdout(), args)
 		},

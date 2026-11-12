@@ -136,14 +136,35 @@ func (l *Loader) trusted(path string, data []byte) bool {
 	return store[path] == fileDigest(data)
 }
 
-// Trust records the current content of each file as approved. It returns the
-// canonical path and digest of each, in order.
-func (l *Loader) Trust(paths ...string) ([][2]string, error) {
+// TrustState is what an approval did to a file's standing.
+type TrustState int
+
+const (
+	// TrustNew: the file had never been approved.
+	TrustNew TrustState = iota
+	// TrustChanged: an approval existed for different content. The file
+	// changed since the user last reviewed it — possibly by a sandbox.
+	TrustChanged
+	// TrustUnchanged: the content was already approved; nothing to record.
+	TrustUnchanged
+)
+
+// TrustResult reports one file approved by Trust.
+type TrustResult struct {
+	Path   string // canonical path
+	Digest string // hex sha256 of the approved content
+	State  TrustState
+}
+
+// Trust records the current content of each file as approved. It returns,
+// in order, the canonical path and digest of each and whether it was new,
+// changed since its last approval, or already approved as it is.
+func (l *Loader) Trust(paths ...string) ([]TrustResult, error) {
 	store, err := l.readTrustStore()
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", l.TrustStorePath(), err)
 	}
-	var out [][2]string
+	var out []TrustResult
 	for _, p := range paths {
 		canon := canonicalPath(p)
 		info, err := os.Stat(canon)
@@ -158,8 +179,15 @@ func (l *Loader) Trust(paths ...string) ([][2]string, error) {
 			return nil, err
 		}
 		digest := fileDigest(data)
+		state := TrustNew
+		if prev, ok := store[canon]; ok {
+			state = TrustChanged
+			if prev == digest {
+				state = TrustUnchanged
+			}
+		}
 		store[canon] = digest
-		out = append(out, [2]string{canon, digest})
+		out = append(out, TrustResult{Path: canon, Digest: digest, State: state})
 	}
 	if err := l.writeTrustStore(store); err != nil {
 		return nil, err
