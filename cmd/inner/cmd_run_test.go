@@ -280,6 +280,48 @@ func TestApplyOverrides_workdir(t *testing.T) {
 	}
 }
 
+// A workdir that is the destination of a remapped mount (the documented
+// ${workspaces_path} layout) must not be bound onto itself: the host path is
+// the empty mount point, and the self-bind would hide the mount.
+func TestApplyOverrides_workdirUnderRemappedMount(t *testing.T) {
+	for _, wd := range []string{"/ws/app", "/ws/app/sub"} {
+		rc := &config.RunConfig{Mounts: []config.Mount{
+			{Src: "/home/u/Projects/app", Dest: "/ws/app", Mode: "rw"},
+		}}
+		if err := applyOverrides(rc, runCLIFlags{workdir: wd}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(rc.Mounts) != 1 {
+			t.Errorf("workdir %s: expected no workdir mount, got %+v", wd, rc.Mounts)
+		}
+		if rc.Workdir != wd {
+			t.Errorf("Workdir = %q, want %q", rc.Workdir, wd)
+		}
+	}
+}
+
+// A mount at the same host path (src == dest) is not remapped: -w on it is
+// how the user makes a declared ro mount writable, so the bind is still added.
+// A sibling whose name merely shares the prefix is not under the mount.
+func TestApplyOverrides_workdirNotRemapped(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		mount config.Mount
+		wd    string
+	}{
+		{"same path mount", config.Mount{Src: "/p/app", Dest: "/p/app", Mode: "ro"}, "/p/app"},
+		{"prefix sibling", config.Mount{Src: "/h/app", Dest: "/ws/app", Mode: "rw"}, "/ws/application"},
+	} {
+		rc := &config.RunConfig{Mounts: []config.Mount{tc.mount}}
+		if err := applyOverrides(rc, runCLIFlags{workdir: tc.wd}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(rc.Mounts) != 2 {
+			t.Errorf("%s: expected workdir mount, got %+v", tc.name, rc.Mounts)
+		}
+	}
+}
+
 func TestApplyOverrides_mountFlag(t *testing.T) {
 	rc := &config.RunConfig{}
 	if err := applyOverrides(rc, runCLIFlags{mounts: []string{"/a:/b:rw"}}, nil); err != nil {

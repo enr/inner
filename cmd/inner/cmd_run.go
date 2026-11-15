@@ -520,6 +520,26 @@ func (a *App) validateProfileFile(w io.Writer, profileName string) error {
 	return nil
 }
 
+// workdirRemapped reports whether workdir lies at or below the destination of
+// a mount whose source is a different host path, e.g. a profile mount
+// "~/Projects/app" → "${workspaces_path}/app" with workdir
+// "${workspaces_path}/app". Inside the sandbox that path already shows the
+// mount source; the host directory at the same path is only the mount point
+// inner pre-created (empty). Binding the workdir onto itself would lay that
+// empty directory over the mount — and send every write to the mount point.
+func workdirRemapped(mounts []config.Mount, workdir string) bool {
+	for _, m := range mounts {
+		if m.Src == m.Dest || m.Mode == "tmpfs" {
+			continue
+		}
+		dest := filepath.Clean(m.Dest)
+		if workdir == dest || strings.HasPrefix(workdir, dest+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // applyOverrides merges CLI flags into rc.
 // Pure function: no I/O, no side effects — primary target for unit tests.
 func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string) error {
@@ -572,11 +592,13 @@ func applyOverrides(rc *config.RunConfig, flags runCLIFlags, extraArgs []string)
 		if abs, err := filepath.Abs(expanded); err == nil {
 			expanded = abs
 		}
-		rc.Mounts = append(rc.Mounts, config.Mount{
-			Src:  expanded,
-			Dest: expanded,
-			Mode: "rw",
-		})
+		if !workdirRemapped(rc.Mounts, expanded) {
+			rc.Mounts = append(rc.Mounts, config.Mount{
+				Src:  expanded,
+				Dest: expanded,
+				Mode: "rw",
+			})
+		}
 		rc.Workdir = expanded
 	}
 
