@@ -249,7 +249,11 @@ func (l *Loader) warnUntrusted(path string) {
 		return
 	}
 	l.warned[path] = true
-	fmt.Fprintf(l.Warn, "inner: warning: ignoring %s: project config not trusted (new or changed since `inner trust`); review it, then run: inner trust %s\n", path, path)
+	marker := l.WarnMarker
+	if marker == "" {
+		marker = "inner: warning:"
+	}
+	fmt.Fprintf(l.Warn, "%s ignoring %s: project config not trusted (new or changed since `inner trust`); review it, then run: inner trust %s\n", marker, path, path)
 }
 
 // untrustedProfileError is returned for a project profile that is not approved.

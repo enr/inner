@@ -41,6 +41,7 @@ func newApp() (*App, error) {
 	if cwd, err := os.Getwd(); err == nil {
 		loader.WorkDir = cwd
 	}
+	loader.WarnMarker = colorizeW(os.Stderr, ansiBoldYellow, "[warning]")
 	return &App{
 		loader:     loader,
 		editorFn:   openInEditor,

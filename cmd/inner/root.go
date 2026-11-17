@@ -62,7 +62,7 @@ func execute() {
 		if code, ok := exitCodeFromError(err); ok {
 			os.Exit(code)
 		}
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, colorizeW(os.Stderr, ansiBoldRed, "[error]"), err)
 		os.Exit(1)
 	}
 }

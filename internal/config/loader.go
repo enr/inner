@@ -24,6 +24,9 @@ type Loader struct {
 	RequireTrust bool
 	// Warn receives the warnings about skipped untrusted files; nil = silent.
 	Warn io.Writer
+	// WarnMarker prefixes those warnings; empty = "inner: warning:". The CLI
+	// sets a coloured "[warning]" to match its other warnings.
+	WarnMarker string
 
 	warned      map[string]bool
 	trustExempt string // canonical path of a downloaded profile being built untrusted
