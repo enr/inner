@@ -9,6 +9,8 @@ clipboard = false
 
 [mounts]
 "/run/user/$UID"     = { dest = "/run/user/$UID",      mode = "tmpfs" }
+"/tmp/gopath"        = { dest = "/tmp/gopath",         mode = "tmpfs" }
+"/tmp/gocache"       = { dest = "/tmp/gocache",        mode = "tmpfs" }
 
 [env]
 clearenv = true
