@@ -66,6 +66,7 @@ in `~/.config/inner/config.toml`.
 
 - **Built-in commands are never shadowed.** If an alias name collides with an existing `inner` subcommand (e.g. `run`, `profile`, `config`), the built-in takes precedence and the alias is ignored.
 - Aliases are expanded **one level only** — aliases cannot expand into other aliases.
+- A relative profile path in a project alias (`-p .config/inner/profiles/dev.toml`) is resolved against the directory of the project that defines the alias, so the alias works from any subdirectory. Arguments after `--` are passed through unchanged.
 
 ## Token expansion
 

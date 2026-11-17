@@ -174,6 +174,7 @@ func (l *Loader) loadProjectConfig(path string) (*GlobalConfig, error) {
 	if _, err := toml.Decode(string(data), cfg); err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
+	resolveProjectPaths(cfg, projectRootOf(path))
 	return cfg, nil
 }
 

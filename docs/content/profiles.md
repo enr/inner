@@ -1823,6 +1823,8 @@ default_profile = "claude-interactive"
 
 The precedence is: **`-p` flag > `default_profile` in the project config (`.config/inner.toml` and the other [project files](commands.md#inner-config)) > `default_profile` in `~/.config/inner/config.toml` > `"default"`** (hard fallback). `inner verify` and `inner profile show` without a profile follow the same chain.
 
+`default_profile` can also be a path to a profile file. In a project config a relative path is resolved against the project's directory, so subdirectories that inherit the config find the same file.
+
 ---
 
 ## Managing Profiles

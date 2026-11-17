@@ -768,6 +768,8 @@ inner.toml                       # top-level committed config
 inner.local.toml                 # top-level local overrides (not committed)
 ```
 
+A project config applies to every directory below it, so a relative profile path in it — in `default_profile` or in the `-p` / `--profile` value of an alias — is resolved against that project's directory (the one holding `.config/`), not against the current working directory. With `default_profile = ".config/inner/profiles/dev.toml"` in `~/Projects/.config/inner/config.toml`, `inner run` in `~/Projects/foo` loads `~/Projects/.config/inner/profiles/dev.toml`.
+
 ### `inner config show`
 
 Print all active configuration layers (if present):
