@@ -43,6 +43,20 @@ func TestTrust_untrustedProjectConfigIsIgnored(t *testing.T) {
 	}
 }
 
+func TestTrust_untrustedProjectConfigIsRefusedWhenAsked(t *testing.T) {
+	l, warn, project := trustFixture(t)
+	l.RefuseUntrustedConfig = true
+	// Skipping inner.toml would fall back to the "default" profile instead of
+	// the one it names: the run must stop, not start another sandbox.
+	_, err := l.Build("")
+	if err == nil || !strings.Contains(err.Error(), "not trusted") || !strings.Contains(err.Error(), filepath.Join(project, "inner.toml")) {
+		t.Fatalf("Build err = %v, want untrusted config refusal", err)
+	}
+	if warn.Len() != 0 {
+		t.Fatalf("refused config also warned: %q", warn.String())
+	}
+}
+
 func TestTrust_untrustedProjectProfileIsRefused(t *testing.T) {
 	l, _, _ := trustFixture(t)
 	// The project profile shadows the user's "safe" by name: refused, not

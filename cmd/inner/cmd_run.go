@@ -76,7 +76,9 @@ func (a *App) runSandbox(w io.Writer, flags runCLIFlags, extraArgs []string) err
 		fmt.Fprintf(w, colorizeW(w, ansiBoldYellow, "warning")+": setup init: %v\n", err)
 	}
 
-	// 2. Load RunConfig from profile.
+	// 2. Load RunConfig from profile. An untrusted project config is refused
+	// here, not skipped: skipping it could select another profile.
+	a.loader.RefuseUntrustedConfig = true
 	profileName := flags.profile
 	if profileName == "" {
 		profileName = a.loader.DefaultProfileName()

@@ -46,8 +46,11 @@ directory the host shell sources, or rewrite the profile the user runs next with
 
 So the production `Loader` (`RequireTrust`) honors such a file only when its
 sha256 matches the one recorded by `inner trust` in `~/.config/inner/trusted`
-(`internal/config/trust.go`). A config file that does not match is skipped with a
-warning; a profile that does not match is an error. The bytes checked are the
+(`internal/config/trust.go`). A profile that does not match is an error. A config
+file that does not match is an error for the commands that start a sandbox
+(`run`, `verify` set `RefuseUntrustedConfig`), because skipping it can change the
+sandbox — another `default_profile`, other limits; for every other command it is
+skipped with a warning. The bytes checked are the
 bytes decoded — the file is read once — so a sandbox still running cannot swap
 the content between the check and the parse. Files under the user and system
 config directories are exempt, as is the temporary copy of a downloaded profile

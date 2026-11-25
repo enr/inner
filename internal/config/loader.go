@@ -27,6 +27,11 @@ type Loader struct {
 	// WarnMarker prefixes those warnings; empty = "inner: warning:". The CLI
 	// sets a coloured "[warning]" to match its other warnings.
 	WarnMarker string
+	// RefuseUntrustedConfig turns a skipped untrusted project config file into
+	// an error. Commands that start a sandbox set it: skipping the file could
+	// silently pick another profile (its default_profile) or other settings,
+	// so the user would get a sandbox they did not ask for.
+	RefuseUntrustedConfig bool
 
 	warned      map[string]bool
 	trustExempt string // canonical path of a downloaded profile being built untrusted

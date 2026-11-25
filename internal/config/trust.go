@@ -256,13 +256,20 @@ func (l *Loader) warnUntrusted(path string) {
 	fmt.Fprintf(l.Warn, "%s ignoring %s: project config not trusted (new or changed since `inner trust`); review it, then run: inner trust %s\n", marker, path, path)
 }
 
+// untrustedConfigError is returned for a project config file that is not
+// approved, when the Loader refuses rather than skips it.
+func untrustedConfigError(path string) error {
+	return fmt.Errorf("project config %s is not trusted (new or changed since `inner trust`; a sandbox can write the working directory), and ignoring it could change the sandbox (e.g. its default_profile): review it, then run: inner trust %s", path, path)
+}
+
 // untrustedProfileError is returned for a project profile that is not approved.
 func untrustedProfileError(path string) error {
 	return fmt.Errorf("profile %s is a project file and is not trusted (new or changed since `inner trust`; a sandbox can write the working directory): review it, then run: inner trust %s", path, path)
 }
 
 // readProjectConfig reads a project config file, enforcing trust. It returns
-// nil data (no error) when the file is missing or skipped as untrusted. The
+// nil data (no error) when the file is missing or skipped as untrusted, and an
+// error for an untrusted file when RefuseUntrustedConfig is set. The
 // bytes returned are the ones checked: decoding them, rather than re-reading
 // the file, leaves no window for a running sandbox to swap the content.
 func (l *Loader) readProjectConfig(path string) ([]byte, error) {
@@ -275,6 +282,9 @@ func (l *Loader) readProjectConfig(path string) ([]byte, error) {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
 	if l.projectConfigNeedsTrust(canon) && !l.trusted(canon, data) {
+		if l.RefuseUntrustedConfig {
+			return nil, untrustedConfigError(path)
+		}
 		l.warnUntrusted(path)
 		return nil, nil
 	}

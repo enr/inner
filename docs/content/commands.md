@@ -861,7 +861,11 @@ file** (`inner.toml`, `.config/inner.toml`, `.config/inner/config.toml` and thei
 profile** (`.config/inner/profiles/*.toml`, or any profile path under the working
 directory) only after it has been approved:
 
-- an unapproved project config file is **ignored**, with a warning;
+- an unapproved project config file is **refused** by `inner run` and
+  `inner verify`: ignoring it could start a different sandbox (for example the
+  ancestor's `default_profile` instead of the project's), so the run stops and says
+  which file to review. Other commands (`inner config show`, `inner profile list`,
+  aliases, …) **ignore** it, with a warning;
 - an unapproved project profile is **refused**: the run stops and says which file
   to review.
 

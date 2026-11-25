@@ -19,6 +19,8 @@ import (
 // binary itself as the entrypoint and passes --inside so the binary re-executes
 // the checks from within the sandboxed environment.
 func (a *App) runVerifyOutside(w io.Writer, profileName string, suggest, asJSON bool) error {
+	// Like `inner run`: an untrusted project config is refused, not skipped.
+	a.loader.RefuseUntrustedConfig = true
 	if profileName == "" {
 		// The profile a bare `inner run` would use, so `inner verify` certifies
 		// that one and not a "default" profile nobody installed.
