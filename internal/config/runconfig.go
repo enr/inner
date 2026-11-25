@@ -64,9 +64,9 @@ type RunConfig struct {
 	// processes is readable — defeating the clearenv secret hygiene. Only
 	// disable as an escape hatch for TUI/terminal regressions on unusual
 	// kernel/bwrap combinations (see SandboxConfig.PidNamespace).
-	PidNamespace  bool
-	Entrypoint    Entrypoint
-	Git           *GitConfig // sanitization config (strip sections, overrides)
+	PidNamespace bool
+	Entrypoint   Entrypoint
+	Git          *GitConfig // sanitization config (strip sections, overrides)
 	// GitConfigPath is the host path of the sanitized global git config,
 	// written by git.Sanitize into a directory of its own together with the
 	// copies of its [includeIf] targets. The isolator binds that whole
